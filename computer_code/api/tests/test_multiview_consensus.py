@@ -166,6 +166,13 @@ class MultiviewConsensusTests(unittest.TestCase):
                 max_reprojection_rms_px=1e-5,
             )
 
+    def test_ambiguity_rms_tolerance_must_be_nonnegative(self):
+        with self.assertRaisesRegex(ValueError, "ambiguity_rms_tolerance_px"):
+            triangulate_consensus(
+                [self.project(i) for i in range(4)], self.poses, self.Ks,
+                ambiguity_rms_tolerance_px=-0.001,
+            )
+
     def test_configurable_parallax_gate_rejects_weak_geometry(self):
         observations = [self.project(i) for i in range(4)]
         with self.assertRaisesRegex(ValueError, "parallax"):
