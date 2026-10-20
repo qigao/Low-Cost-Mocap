@@ -146,20 +146,18 @@ class MultiviewConsensusTests(unittest.TestCase):
         ]
         intrinsics = [self.K.copy() for _ in poses]
         point_a = np.array([-0.25, 0.1, 3.2])
-        point_b = np.array([0.55, -0.3, 4.6])
+        # Put point_b on the same camera-2 ray as point_a. Camera 2 therefore
+        # supports both spatially distinct hypotheses, while cameras 0/1 and
+        # 3/4 support different hypotheses.
+        camera_center_2 = np.array([0.0, 0.7, 0.0])
+        point_b = camera_center_2 + 1.5 * (point_a - camera_center_2)
         observations = []
         for camera_id, (pose, intrinsic) in enumerate(zip(poses, intrinsics)):
-            if camera_id in (0, 1, 2, 3):
-                point = point_a
-            else:
-                point = point_b
+            point = point_a if camera_id in (0, 1, 2) else point_b
             camera_point = pose["R"] @ point + pose["t"]
             pixel = intrinsic @ camera_point
             observations.append(pixel[:2] / pixel[2])
-        # Camera 3 is deliberately placed near the decision boundary: use a
-        # relaxed threshold so it can support either candidate while the
-        # disjoint subsets still expose the two incompatible 3-D solutions.
-        observations[3] = self.project(3, point_b)
+        observations[5] = None
 
         with self.assertRaisesRegex(ValueError, "ambiguous multiview consensus"):
             triangulate_consensus(
