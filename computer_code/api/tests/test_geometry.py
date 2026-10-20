@@ -39,6 +39,20 @@ class TriangulationTests(unittest.TestCase):
         _, metrics = triangulate_point(observations, self.poses, self.Ks)
         self.assertGreater(metrics["max_parallax_angle_deg"], 0.1)
 
+    def test_noisy_observations_report_nonzero_residual_and_recover_depth(self):
+        observations = [self.project(i) for i in range(3)]
+        observations[0] = observations[0] + np.array([0.15, -0.10])
+        observations[1] = observations[1] + np.array([-0.10, 0.12])
+        observations[2] = observations[2] + np.array([0.08, 0.05])
+        point, metrics = triangulate_point(
+            observations, self.poses, self.Ks,
+            max_reprojection_rms_px=0.5,
+        )
+        self.assertGreater(point[2], 0.0)
+        self.assertLess(np.linalg.norm(point - self.truth), 0.02)
+        self.assertGreater(metrics["reprojection_rms_px"], 0.0)
+        self.assertLess(metrics["reprojection_rms_px"], 0.5)
+
     def test_rejects_nearly_parallel_viewing_rays(self):
         poses = [
             {"R": np.eye(3), "t": np.array([0.0, 0.0, 0.0])},
