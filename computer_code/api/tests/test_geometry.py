@@ -175,5 +175,50 @@ class TriangulationTests(unittest.TestCase):
                     ),
                 )
 
+    def test_triangulation_with_rotated_cameras_and_varied_focal_lengths(self):
+        truth = np.array([0.35, -0.22, 6.0])
+        centers = (
+            np.array([0.0, 0.0, 0.0]),
+            np.array([1.1, 0.05, 0.0]),
+            np.array([-0.25, 0.9, 0.0]),
+            np.array([0.65, -0.55, 0.0]),
+        )
+        # Small world-to-camera yaw rotations; translation is derived from
+        # the camera center so the pose convention stays explicit.
+        yaw_angles = (0.0, 0.025, -0.035, 0.018)
+
+        for focal in (500.0, 800.0, 1200.0):
+            with self.subTest(focal_length=focal):
+                K = np.array([
+                    [focal, 0.0, 320.0],
+                    [0.0, focal, 240.0],
+                    [0.0, 0.0, 1.0],
+                ])
+                poses = []
+                observations = []
+                for center, yaw in zip(centers, yaw_angles):
+                    c, s = np.cos(yaw), np.sin(yaw)
+                    R = np.array([
+                        [c, 0.0, s],
+                        [0.0, 1.0, 0.0],
+                        [-s, 0.0, c],
+                    ])
+                    t = -(R @ center)
+                    pose = {"R": R, "t": t}
+                    camera_point = R @ truth + t
+                    projected = K @ camera_point
+                    observations.append(projected[:2] / projected[2])
+                    poses.append(pose)
+
+                estimate, metrics = triangulate_point(
+                    observations, poses, [K.copy() for _ in poses],
+                    max_reprojection_rms_px=1e-6,
+                )
+                np.testing.assert_allclose(estimate, truth, atol=1e-8)
+                self.assertLess(metrics["reprojection_rms_px"], 1e-7)
+                self.assertGreater(metrics["max_parallax_angle_deg"], 0.1)
+                self.assertEqual(metrics["camera_ids"], [0, 1, 2, 3])
+
+
 if __name__ == "__main__":
     unittest.main()
