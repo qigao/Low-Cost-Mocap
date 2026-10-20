@@ -31,27 +31,31 @@ def triangulate_point(
     min_views: int = 2,
     max_reprojection_rms_px: float | None = None,
     min_depth: float = 1e-9,
+    min_parallax_angle_deg: float = 0.1,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Triangulate one point from a camera-indexed sparse observation list.
+    """Triangulate one point from sparse camera-indexed observations.
 
     observations[i] belongs to camera i; use None when that camera has no
-    detection. Missing observations are never compacted before indexing poses
-    and intrinsics. Invalid or degenerate solutions raise ValueError.
-
-    Returns (XYZ_world, metrics), where metrics includes per-camera residuals,
-    valid camera indices, reprojection RMS in pixels, and camera-space depths.
+    detection. Invalid or weak-baseline solutions raise ValueError. The
+    parallax gate is the largest pairwise angle between world-space viewing
+    rays; it guards against depth estimates from nearly parallel rays.
     """
     n = len(observations)
     if len(camera_poses) != n or len(intrinsics) != n:
         raise ValueError("observations, camera_poses, and intrinsics must have equal length")
     if min_views < 2:
         raise ValueError("min_views must be at least 2")
-    if max_reprojection_rms_px is not None and max_reprojection_rms_px < 0:
-        raise ValueError("max_reprojection_rms_px must be non-negative")
-    if min_depth < 0:
-        raise ValueError("min_depth must be non-negative")
+    if max_reprojection_rms_px is not None and (
+        not np.isfinite(max_reprojection_rms_px) or max_reprojection_rms_px < 0
+    ):
+        raise ValueError("max_reprojection_rms_px must be finite and non-negative")
+    if not np.isfinite(min_depth) or min_depth < 0:
+        raise ValueError("min_depth must be finite and non-negative")
+    if not np.isfinite(min_parallax_angle_deg) or not 0 <= min_parallax_angle_deg <= 180:
+        raise ValueError("min_parallax_angle_deg must be finite and between 0 and 180")
 
     valid: list[tuple[int, np.ndarray, np.ndarray]] = []
+    rays: list[np.ndarray] = []
     for camera_id, xy in enumerate(observations):
         if xy is None:
             continue
@@ -61,9 +65,27 @@ def triangulate_point(
         K, R, t = _camera_arrays(camera_poses[camera_id], intrinsics[camera_id])
         P = K @ np.column_stack((R, t))
         valid.append((camera_id, point, P))
+        ray_camera = np.linalg.solve(K, np.array([point[0], point[1], 1.0]))
+        ray_world = R.T @ ray_camera
+        ray_norm = float(np.linalg.norm(ray_world))
+        if not np.isfinite(ray_norm) or ray_norm <= 1e-15:
+            raise ValueError(f"viewing ray for camera {camera_id} is degenerate")
+        rays.append(ray_world / ray_norm)
 
     if len(valid) < min_views:
         raise ValueError(f"need at least {min_views} valid camera observations; got {len(valid)}")
+
+    max_parallax_deg = 0.0
+    for i in range(len(rays)):
+        for j in range(i + 1, len(rays)):
+            cosine = float(np.clip(np.dot(rays[i], rays[j]), -1.0, 1.0))
+            angle = float(np.degrees(np.arccos(abs(cosine))))
+            max_parallax_deg = max(max_parallax_deg, angle)
+    if max_parallax_deg < min_parallax_angle_deg:
+        raise ValueError(
+            f"triangulation parallax {max_parallax_deg:.6g} deg is below "
+            f"minimum {min_parallax_angle_deg:.6g} deg"
+        )
 
     rows = []
     for _, (u, v), P in valid:
@@ -107,6 +129,7 @@ def triangulate_point(
         "reprojection_errors_px": residuals,
         "reprojection_rms_px": rms,
         "depths": depths,
+        "max_parallax_angle_deg": max_parallax_deg,
         "design_matrix_singular_values": singular_values.tolist(),
     }
     return xyz, metrics
