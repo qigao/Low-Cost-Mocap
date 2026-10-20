@@ -120,10 +120,9 @@ def triangulate_consensus(
                 if score[1] > best[0][1]:
                     best = (score, xyz, inliers, residuals, depths)
 
-        # Once a hypothesis explains every available observation, smaller
-        # subsets cannot improve consensus cardinality.
-        if best is not None and best[0][0] == len(points):
-            break
+        # Do not stop at full support: smaller subsets can still produce a
+        # spatially distinct hypothesis with the same support. Those candidates
+        # must be retained for the ambiguity gate below.
 
     if best is None:
         raise ValueError("no multiview hypothesis satisfies parallax, inlier, and positive-depth checks")
