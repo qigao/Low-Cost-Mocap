@@ -166,20 +166,24 @@ class MultiviewConsensusTests(unittest.TestCase):
                 max_reprojection_rms_px=1e-5,
             )
 
-    def test_full_support_does_not_skip_competing_subset_hypotheses(self):
-        # With a permissive inlier threshold, the all-view fit and subset fits
-        # can all classify every camera as an inlier while implying different
-        # 3-D points. Full support must not short-circuit ambiguity detection.
+    def test_full_support_candidates_are_refit_to_the_same_support(self):
+        # With a permissive threshold, every seed classifies all cameras as
+        # inliers. Refitting each candidate to that identical support must
+        # converge to the same solution rather than inventing ambiguity from
+        # differences between the original subset seeds.
         observations = [self.project(i) for i in range(4)]
         observations[3] = observations[3] + np.array([12.0, -8.0])
 
-        with self.assertRaisesRegex(ValueError, "ambiguous multiview consensus"):
-            triangulate_consensus(
-                observations, self.poses, self.Ks,
-                min_views=3, inlier_threshold_px=100.0,
-                max_reprojection_rms_px=100.0,
-                ambiguity_rms_tolerance_px=100.0,
-            )
+        xyz, metrics = triangulate_consensus(
+            observations, self.poses, self.Ks,
+            min_views=3, inlier_threshold_px=100.0,
+            max_reprojection_rms_px=100.0,
+            ambiguity_rms_tolerance_px=100.0,
+        )
+        self.assertEqual(metrics["inlier_camera_ids"], [0, 1, 2, 3])
+        self.assertEqual(metrics["outlier_camera_ids"], [])
+        self.assertTrue(np.isfinite(xyz).all())
+        self.assertLessEqual(metrics["reprojection_rms_px"], 100.0)
 
     def test_ambiguity_rms_tolerance_must_be_finite_and_nonnegative(self):
         for tolerance in (-0.001, np.nan, np.inf, -np.inf):
