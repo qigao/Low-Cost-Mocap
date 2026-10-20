@@ -139,6 +139,35 @@ class MultiviewConsensusTests(unittest.TestCase):
                 max_reprojection_rms_px=1e-5,
             )
 
+    def test_rejects_competing_hypotheses_with_partial_overlap(self):
+        poses = self.poses + [
+            {"R": np.eye(3), "t": np.array([-0.35, 0.65, 0.0])},
+            {"R": np.eye(3), "t": np.array([0.95, -0.55, 0.0])},
+        ]
+        intrinsics = [self.K.copy() for _ in poses]
+        point_a = np.array([-0.25, 0.1, 3.2])
+        point_b = np.array([0.55, -0.3, 4.6])
+        observations = []
+        for camera_id, (pose, intrinsic) in enumerate(zip(poses, intrinsics)):
+            if camera_id in (0, 1, 2, 3):
+                point = point_a
+            else:
+                point = point_b
+            camera_point = pose["R"] @ point + pose["t"]
+            pixel = intrinsic @ camera_point
+            observations.append(pixel[:2] / pixel[2])
+        # Camera 3 is deliberately placed near the decision boundary: use a
+        # relaxed threshold so it can support either candidate while the
+        # disjoint subsets still expose the two incompatible 3-D solutions.
+        observations[3] = self.project(3, point_b)
+
+        with self.assertRaisesRegex(ValueError, "ambiguous multiview consensus"):
+            triangulate_consensus(
+                observations, poses, intrinsics,
+                min_views=3, inlier_threshold_px=0.1,
+                max_reprojection_rms_px=1e-5,
+            )
+
     def test_configurable_parallax_gate_rejects_weak_geometry(self):
         observations = [self.project(i) for i in range(4)]
         with self.assertRaisesRegex(ValueError, "parallax"):
