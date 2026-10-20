@@ -35,13 +35,14 @@ def triangulate_consensus(
     inlier_threshold_px: float = 2.0,
     max_reprojection_rms_px: float = 1.0,
     min_depth: float = 1e-9,
+    min_parallax_angle_deg: float = 0.1,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Robustly triangulate sparse camera-indexed observations.
 
     Tries camera subsets to seed a 3-D hypothesis, scores it against every
-    supplied observation, and refits using consensus inliers. Returns per-camera
-    residuals and explicit inlier/outlier camera IDs. Raises ValueError if no
-    hypothesis has enough positive-depth, reprojection-consistent views.
+    supplied observation, and refits using consensus inliers. The same minimum
+    viewing-ray parallax gate is applied during hypothesis generation and refit.
+    Returns per-camera residuals and explicit inlier/outlier camera IDs.
     """
     n = len(observations)
     if len(camera_poses) != n or len(intrinsics) != n:
@@ -54,6 +55,8 @@ def triangulate_consensus(
         raise ValueError("max_reprojection_rms_px must be finite and non-negative")
     if not np.isfinite(min_depth) or min_depth < 0:
         raise ValueError("min_depth must be finite and non-negative")
+    if not np.isfinite(min_parallax_angle_deg) or not 0 <= min_parallax_angle_deg <= 180:
+        raise ValueError("min_parallax_angle_deg must be finite and between 0 and 180")
 
     points: dict[int, np.ndarray] = {}
     for camera_id, observation in enumerate(observations):
@@ -77,6 +80,7 @@ def triangulate_consensus(
                 xyz, _ = triangulate_point(
                     sparse, camera_poses, intrinsics,
                     min_views=min_views, min_depth=min_depth,
+                    min_parallax_angle_deg=min_parallax_angle_deg,
                 )
             except (ValueError, np.linalg.LinAlgError):
                 continue
@@ -105,7 +109,7 @@ def triangulate_consensus(
             break
 
     if best is None:
-        raise ValueError("no multiview hypothesis satisfies inlier and positive-depth checks")
+        raise ValueError("no multiview hypothesis satisfies parallax, inlier, and positive-depth checks")
 
     _, xyz, inliers, _, _ = best
     # Refit on consensus inliers, then re-evaluate every observation.
@@ -113,7 +117,7 @@ def triangulate_consensus(
     xyz, fit_metrics = triangulate_point(
         sparse, camera_poses, intrinsics,
         min_views=min_views, max_reprojection_rms_px=max_reprojection_rms_px,
-        min_depth=min_depth,
+        min_depth=min_depth, min_parallax_angle_deg=min_parallax_angle_deg,
     )
     residuals: dict[int, float] = {}
     depths: dict[int, float] = {}
@@ -140,5 +144,6 @@ def triangulate_consensus(
         "reprojection_errors_px": residuals,
         "reprojection_rms_px": rms,
         "depths": depths,
+        "max_parallax_angle_deg": fit_metrics["max_parallax_angle_deg"],
         "fit_metrics": fit_metrics,
     }
