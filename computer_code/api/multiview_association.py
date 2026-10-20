@@ -51,7 +51,8 @@ def sampson_errors(left_points: object, right_points: object, fundamental: objec
     )
     result = np.full_like(numerator, np.inf, dtype=np.float64)
     np.divide(numerator, denominator, out=result, where=denominator > 1e-15)
-    return result
+    # The quadratic form above is indexed [right, left]; expose costs as [left, right].
+    return result.T
 
 
 def associate_pairwise(
