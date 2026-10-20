@@ -98,5 +98,28 @@ class TriangulationTests(unittest.TestCase):
             triangulate_point(observations, self.poses, self.Ks)
 
 
+    def test_parallax_decreases_as_target_depth_increases(self):
+        near = np.array([0.2, -0.1, 5.0])
+        far = np.array([0.2, -0.1, 10.0])
+
+        near_observations = [self.project(i, near) for i in range(3)]
+        far_observations = [self.project(i, far) for i in range(3)]
+
+        near_point, near_metrics = triangulate_point(
+            near_observations, self.poses, self.Ks,
+        )
+        far_point, far_metrics = triangulate_point(
+            far_observations, self.poses, self.Ks,
+        )
+
+        np.testing.assert_allclose(near_point, near, atol=1e-9)
+        np.testing.assert_allclose(far_point, far, atol=1e-8)
+        self.assertGreater(
+            near_metrics["max_parallax_angle_deg"],
+            far_metrics["max_parallax_angle_deg"],
+        )
+        self.assertGreater(far_metrics["max_parallax_angle_deg"], 0.1)
+
+
 if __name__ == "__main__":
     unittest.main()
