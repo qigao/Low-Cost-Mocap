@@ -79,7 +79,7 @@ def triangulate_point(
     for i in range(len(rays)):
         for j in range(i + 1, len(rays)):
             cosine = float(np.clip(np.dot(rays[i], rays[j]), -1.0, 1.0))
-            angle = float(np.degrees(np.arccos(abs(cosine))))
+            angle = float(np.degrees(np.arccos(cosine)))
             max_parallax_deg = max(max_parallax_deg, angle)
     if max_parallax_deg < min_parallax_angle_deg:
         raise ValueError(
