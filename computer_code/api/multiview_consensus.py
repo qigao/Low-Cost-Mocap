@@ -43,7 +43,10 @@ def triangulate_consensus(
     Tries camera subsets to seed a 3-D hypothesis, scores it against every
     supplied observation, and refits using consensus inliers. The same minimum
     viewing-ray parallax gate is applied during hypothesis generation and refit.
-    Returns per-camera residuals and explicit inlier/outlier camera IDs.
+    Distinct, equally supported hypotheses with disjoint or partially overlapping
+    camera support are rejected when their RMS values are within the configured
+    ambiguity_rms_tolerance_px. Returns per-camera residuals and explicit
+    inlier/outlier camera IDs for an unambiguous fit.
     """
     n = len(observations)
     if len(camera_poses) != n or len(intrinsics) != n:
