@@ -110,12 +110,10 @@ def triangulate_consensus(
                 best = (score, xyz, inliers, residuals, depths)
                 competing_hypotheses = [(xyz.copy(), tuple(inliers), inlier_rms)]
             elif score[0] == best[0][0]:
-                # Track only hypotheses whose fit quality is effectively tied
-                # with the current best. A disjoint inlier set is evidence that
-                # two different marker hypotheses explain separate camera groups.
-                best_rms = -best[0][1]
-                if abs(inlier_rms - best_rms) <= ambiguity_rms_tolerance_px:
-                    competing_hypotheses.append((xyz.copy(), tuple(inliers), inlier_rms))
+                # Retain all hypotheses at the current maximum support. Apply
+                # the RMS tie tolerance only after the final best RMS is known;
+                # otherwise a later, much better fit could hide a competitor.
+                competing_hypotheses.append((xyz.copy(), tuple(inliers), inlier_rms))
                 if score[1] > best[0][1]:
                     best = (score, xyz, inliers, residuals, depths)
 
