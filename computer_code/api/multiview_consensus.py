@@ -138,7 +138,7 @@ def triangulate_consensus(
     for candidate_xyz, candidate_inliers, candidate_rms in competing_hypotheses:
         if len(candidate_inliers) != best_count:
             continue
-        if set(candidate_inliers).intersection(best_inliers):
+        if set(candidate_inliers) == set(best_inliers):
             continue
         if abs(candidate_rms - best_rms) > ambiguity_rms_tolerance_px:
             continue
