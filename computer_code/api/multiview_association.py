@@ -64,7 +64,7 @@ def associate_pairwise(
     """Find minimum-cost one-to-one matches, leaving detections unmatched.
 
     max_sampson_error_px is a distance threshold in pixels; the assignment
-    cost uses its square because Sampson errors are squared pixel distances.
+    cost uses squared Sampson distance internally.
     Dummy columns let any left detection remain unmatched instead of forcing
     a geometrically invalid match.
     """
@@ -92,6 +92,6 @@ def associate_pairwise(
         matches.append(PairMatch(
             left_index=int(row),
             right_index=int(col),
-            sampson_error_px=float(errors[row, col]),
+            sampson_error_px=float(np.sqrt(errors[row, col])),
         ))
     return sorted(matches, key=lambda match: match.left_index)
