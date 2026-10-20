@@ -88,6 +88,35 @@ class MultiviewConsensusTests(unittest.TestCase):
         self.assertGreater(metrics["reprojection_rms_px"], 0.0)
         self.assertLess(metrics["reprojection_rms_px"], 0.5)
 
+    def test_multiple_outliers_and_missing_view_preserve_camera_ids(self):
+        poses = self.poses + [
+            {"R": np.eye(3), "t": np.array([-0.35, 0.65, 0.0])},
+            {"R": np.eye(3), "t": np.array([0.95, -0.55, 0.0])},
+        ]
+        intrinsics = [self.K.copy() for _ in poses]
+        observations = []
+        for pose, intrinsic in zip(poses, intrinsics):
+            camera_point = pose["R"] @ self.truth + pose["t"]
+            pixel = intrinsic @ camera_point
+            observations.append(pixel[:2] / pixel[2])
+
+        observations[3] = observations[3] + np.array([62.0, -41.0])
+        observations[4] = observations[4] + np.array([-48.0, 57.0])
+        observations[5] = None
+
+        xyz, metrics = triangulate_consensus(
+            observations, poses, intrinsics,
+            min_views=3, inlier_threshold_px=0.5,
+            max_reprojection_rms_px=1e-5,
+        )
+        np.testing.assert_allclose(xyz, self.truth, atol=1e-8)
+        self.assertEqual(metrics["inlier_camera_ids"], [0, 1, 2])
+        self.assertEqual(metrics["outlier_camera_ids"], [3, 4])
+        self.assertEqual(metrics["fit_metrics"]["camera_ids"], [0, 1, 2])
+        self.assertNotIn(5, metrics["reprojection_errors_px"])
+        self.assertGreater(metrics["reprojection_errors_px"][3], 40.0)
+        self.assertGreater(metrics["reprojection_errors_px"][4], 40.0)
+
     def test_configurable_parallax_gate_rejects_weak_geometry(self):
         observations = [self.project(i) for i in range(4)]
         with self.assertRaisesRegex(ValueError, "parallax"):
