@@ -139,5 +139,41 @@ class TriangulationTests(unittest.TestCase):
         self.assertGreater(far_noisy_metrics["reprojection_rms_px"], 0.0)
 
 
+    def test_depth_error_grows_across_depth_and_pixel_noise_matrix(self):
+        # Keep the rig and perturbation direction fixed so the test isolates
+        # the conditioning effect of range and measurement noise.
+        depths = (4.0, 5.0, 6.0, 8.0, 10.0)
+        noise_levels = (0.05, 0.1, 0.2, 0.4)
+
+        errors_by_noise = {}
+        for noise_px in noise_levels:
+            depth_errors = []
+            for depth in depths:
+                truth = np.array([0.2, -0.1, depth])
+                observations = [self.project(i, truth) for i in range(3)]
+                observations[2] = observations[2] + np.array([noise_px, -noise_px])
+                estimate, _ = triangulate_point(observations, self.poses, self.Ks)
+                depth_errors.append(abs(float(estimate[2]) - depth))
+
+            # For this fixed rig and perturbation direction, range should
+            # monotonically amplify the same pixel error into depth error.
+            self.assertTrue(
+                all(later > earlier for earlier, later in zip(depth_errors, depth_errors[1:])),
+                msg=f"depth errors were not increasing for {noise_px}px noise: {depth_errors}",
+            )
+            errors_by_noise[noise_px] = depth_errors
+
+        for lower_noise, higher_noise in zip(noise_levels, noise_levels[1:]):
+            for depth_index, depth in enumerate(depths):
+                self.assertGreater(
+                    errors_by_noise[higher_noise][depth_index],
+                    errors_by_noise[lower_noise][depth_index],
+                    msg=(
+                        f"depth error did not grow with pixel noise at z={depth}: "
+                        f"{errors_by_noise[lower_noise][depth_index]} vs "
+                        f"{errors_by_noise[higher_noise][depth_index]}"
+                    ),
+                )
+
 if __name__ == "__main__":
     unittest.main()
