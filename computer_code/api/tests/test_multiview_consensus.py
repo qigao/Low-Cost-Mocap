@@ -68,5 +68,14 @@ class MultiviewConsensusTests(unittest.TestCase):
             )
 
 
+    def test_configurable_parallax_gate_rejects_weak_geometry(self):
+        observations = [self.project(i) for i in range(4)]
+        with self.assertRaisesRegex(ValueError, "parallax"):
+            triangulate_consensus(
+                observations, self.poses, self.Ks,
+                min_views=3, min_parallax_angle_deg=45.0,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
