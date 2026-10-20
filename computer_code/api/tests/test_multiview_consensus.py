@@ -166,6 +166,21 @@ class MultiviewConsensusTests(unittest.TestCase):
                 max_reprojection_rms_px=1e-5,
             )
 
+    def test_full_support_does_not_skip_competing_subset_hypotheses(self):
+        # With a permissive inlier threshold, the all-view fit and subset fits
+        # can all classify every camera as an inlier while implying different
+        # 3-D points. Full support must not short-circuit ambiguity detection.
+        observations = [self.project(i) for i in range(4)]
+        observations[3] = observations[3] + np.array([12.0, -8.0])
+
+        with self.assertRaisesRegex(ValueError, "ambiguous multiview consensus"):
+            triangulate_consensus(
+                observations, self.poses, self.Ks,
+                min_views=3, inlier_threshold_px=100.0,
+                max_reprojection_rms_px=100.0,
+                ambiguity_rms_tolerance_px=100.0,
+            )
+
     def test_ambiguity_rms_tolerance_must_be_finite_and_nonnegative(self):
         for tolerance in (-0.001, np.nan, np.inf, -np.inf):
             with self.subTest(tolerance=tolerance):
