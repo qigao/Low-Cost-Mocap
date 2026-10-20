@@ -34,6 +34,25 @@ class TriangulationTests(unittest.TestCase):
         self.assertLess(metrics["reprojection_rms_px"], 1e-8)
         self.assertEqual(metrics["camera_ids"], [0, 1, 2])
 
+    def test_reports_parallax_for_well_conditioned_views(self):
+        observations = [self.project(i) for i in range(3)]
+        _, metrics = triangulate_point(observations, self.poses, self.Ks)
+        self.assertGreater(metrics["max_parallax_angle_deg"], 0.1)
+
+    def test_rejects_nearly_parallel_viewing_rays(self):
+        poses = [
+            {"R": np.eye(3), "t": np.array([0.0, 0.0, 0.0])},
+            {"R": np.eye(3), "t": np.array([-1e-5, 0.0, 0.0])},
+        ]
+        point = np.array([0.2, -0.1, 5.0])
+        observations = []
+        for pose in poses:
+            camera = pose["R"] @ point + pose["t"]
+            pixel = self.K @ camera
+            observations.append(pixel[:2] / pixel[2])
+        with self.assertRaisesRegex(ValueError, "parallax"):
+            triangulate_point(observations, poses, [self.K, self.K])
+
     def test_missing_middle_camera_keeps_camera_indices(self):
         observations = [self.project(0), None, self.project(2)]
         point, metrics = triangulate_point(observations, self.poses, self.Ks)
