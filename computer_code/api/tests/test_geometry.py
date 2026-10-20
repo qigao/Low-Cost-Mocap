@@ -220,5 +220,52 @@ class TriangulationTests(unittest.TestCase):
                 self.assertEqual(metrics["camera_ids"], [0, 1, 2, 3])
 
 
+    def test_rotated_camera_geometry_remains_stable_under_subpixel_noise(self):
+        truth = np.array([0.35, -0.22, 6.0])
+        centers = (
+            np.array([0.0, 0.0, 0.0]),
+            np.array([1.1, 0.05, 0.0]),
+            np.array([-0.25, 0.9, 0.0]),
+            np.array([0.65, -0.55, 0.0]),
+        )
+        yaw_angles = (0.0, 0.025, -0.035, 0.018)
+        noise = (
+            np.array([0.12, -0.08]),
+            np.array([-0.09, 0.11]),
+            np.array([0.06, 0.04]),
+            np.array([-0.05, -0.07]),
+        )
+        K = np.array([
+            [800.0, 0.0, 320.0],
+            [0.0, 800.0, 240.0],
+            [0.0, 0.0, 1.0],
+        ])
+        poses = []
+        observations = []
+        for center, yaw, perturbation in zip(centers, yaw_angles, noise):
+            c, s = np.cos(yaw), np.sin(yaw)
+            R = np.array([
+                [c, 0.0, s],
+                [0.0, 1.0, 0.0],
+                [-s, 0.0, c],
+            ])
+            t = -(R @ center)
+            pose = {"R": R, "t": t}
+            camera_point = R @ truth + t
+            pixel = K @ camera_point
+            observations.append(pixel[:2] / pixel[2] + perturbation)
+            poses.append(pose)
+
+        estimate, metrics = triangulate_point(
+            observations, poses, [K.copy() for _ in poses],
+            max_reprojection_rms_px=0.5,
+        )
+        self.assertLess(np.linalg.norm(estimate - truth), 0.02)
+        self.assertGreater(metrics["reprojection_rms_px"], 0.0)
+        self.assertLess(metrics["reprojection_rms_px"], 0.5)
+        self.assertTrue(all(depth > 0.0 for depth in metrics["depths"].values()))
+        self.assertEqual(metrics["camera_ids"], [0, 1, 2, 3])
+
+
 if __name__ == "__main__":
     unittest.main()
