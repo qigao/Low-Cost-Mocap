@@ -68,6 +68,25 @@ class MultiviewConsensusTests(unittest.TestCase):
             )
 
 
+    def test_noisy_inliers_survive_single_view_outlier_rejection(self):
+        observations = [self.project(i) for i in range(4)]
+        observations[0] = observations[0] + np.array([0.12, -0.08])
+        observations[1] = observations[1] + np.array([-0.09, 0.11])
+        observations[2] = observations[2] + np.array([0.06, 0.04])
+        observations[3] = observations[3] + np.array([55.0, -38.0])
+
+        xyz, metrics = triangulate_consensus(
+            observations, self.poses, self.Ks,
+            min_views=3, inlier_threshold_px=0.5,
+            max_reprojection_rms_px=0.5,
+        )
+        self.assertLess(np.linalg.norm(xyz - self.truth), 0.02)
+        self.assertEqual(metrics["inlier_camera_ids"], [0, 1, 2])
+        self.assertEqual(metrics["outlier_camera_ids"], [3])
+        self.assertGreater(metrics["reprojection_errors_px"][3], 40.0)
+        self.assertGreater(metrics["reprojection_rms_px"], 0.0)
+        self.assertLess(metrics["reprojection_rms_px"], 0.5)
+
     def test_configurable_parallax_gate_rejects_weak_geometry(self):
         observations = [self.project(i) for i in range(4)]
         with self.assertRaisesRegex(ValueError, "parallax"):
