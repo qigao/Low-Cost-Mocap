@@ -107,7 +107,38 @@ def triangulate_consensus(
 
             if len(inliers) < min_views:
                 continue
-            inlier_rms = float(np.sqrt(np.mean([residuals[i] ** 2 for i in inliers])))
+
+            # Compare candidates only after fitting each candidate to its own
+            # classified support. Seed-fit residuals are not comparable when
+            # hypotheses came from different camera subsets.
+            candidate_support = tuple(inliers)
+            candidate_sparse = [
+                points.get(i) if i in candidate_support else None
+                for i in range(n)
+            ]
+            try:
+                xyz, _ = triangulate_point(
+                    candidate_sparse, camera_poses, intrinsics,
+                    min_views=min_views, min_depth=min_depth,
+                    min_parallax_angle_deg=min_parallax_angle_deg,
+                )
+            except (ValueError, np.linalg.LinAlgError):
+                continue
+
+            candidate_errors = []
+            for camera_id in candidate_support:
+                projected, depth = _project(
+                    xyz, camera_poses[camera_id], intrinsics[camera_id]
+                )
+                if depth <= min_depth or not np.isfinite(projected).all():
+                    candidate_errors = []
+                    break
+                candidate_errors.append(
+                    float(np.linalg.norm(projected - points[camera_id]))
+                )
+            if len(candidate_errors) != len(candidate_support):
+                continue
+            inlier_rms = float(np.sqrt(np.mean(np.square(candidate_errors))))
             score = (len(inliers), -inlier_rms)
             if best is None or score[0] > best[0][0]:
                 best = (score, xyz, inliers, residuals, depths)
