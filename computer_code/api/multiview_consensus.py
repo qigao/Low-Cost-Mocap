@@ -108,37 +108,73 @@ def triangulate_consensus(
             if len(inliers) < min_views:
                 continue
 
-            # Compare candidates only after fitting each candidate to its own
-            # classified support. Seed-fit residuals are not comparable when
-            # hypotheses came from different camera subsets.
+            # Stabilize support before scoring or ambiguity comparison.
+            # A one-shot refit can move a point across the inlier threshold,
+            # leaving candidate RMS and camera support describing different fits.
             candidate_support = tuple(inliers)
-            candidate_sparse = [
-                points.get(i) if i in candidate_support else None
-                for i in range(n)
-            ]
-            try:
-                xyz, _ = triangulate_point(
-                    candidate_sparse, camera_poses, intrinsics,
-                    min_views=min_views, min_depth=min_depth,
-                    min_parallax_angle_deg=min_parallax_angle_deg,
-                )
-            except (ValueError, np.linalg.LinAlgError):
+            seen_candidate_supports: set[tuple[int, ...]] = set()
+            candidate_stable = False
+            for _ in range(len(points) + 1):
+                if candidate_support in seen_candidate_supports:
+                    break
+                seen_candidate_supports.add(candidate_support)
+                candidate_sparse = [
+                    points.get(i) if i in candidate_support else None
+                    for i in range(n)
+                ]
+                try:
+                    xyz, _ = triangulate_point(
+                        candidate_sparse, camera_poses, intrinsics,
+                        min_views=min_views, min_depth=min_depth,
+                        min_parallax_angle_deg=min_parallax_angle_deg,
+                    )
+                except (ValueError, np.linalg.LinAlgError):
+                    break
+
+                updated_support = []
+                for camera_id, observed in points.items():
+                    projected, depth = _project(
+                        xyz, camera_poses[camera_id], intrinsics[camera_id]
+                    )
+                    error = (
+                        float(np.linalg.norm(projected - observed))
+                        if depth > min_depth and np.isfinite(projected).all()
+                        else float("inf")
+                    )
+                    if error <= inlier_threshold_px:
+                        updated_support.append(camera_id)
+                if len(updated_support) < min_views:
+                    break
+                updated_key = tuple(updated_support)
+                if updated_key == candidate_support:
+                    candidate_stable = True
+                    break
+                candidate_support = updated_key
+            if not candidate_stable:
                 continue
 
+            # Recompute residuals/depths for this stabilized hypothesis so
+            # every stored field refers to the same fitted 3-D point.
+            residuals = {}
+            depths = {}
             candidate_errors = []
-            for camera_id in candidate_support:
+            for camera_id, observed in points.items():
                 projected, depth = _project(
                     xyz, camera_poses[camera_id], intrinsics[camera_id]
                 )
-                if depth <= min_depth or not np.isfinite(projected).all():
-                    candidate_errors = []
-                    break
-                candidate_errors.append(
-                    float(np.linalg.norm(projected - points[camera_id]))
+                depths[camera_id] = depth
+                error = (
+                    float(np.linalg.norm(projected - observed))
+                    if depth > min_depth and np.isfinite(projected).all()
+                    else float("inf")
                 )
+                residuals[camera_id] = error
+                if camera_id in candidate_support:
+                    candidate_errors.append(error)
             if len(candidate_errors) != len(candidate_support):
                 continue
             inlier_rms = float(np.sqrt(np.mean(np.square(candidate_errors))))
+            inliers = list(candidate_support)
             score = (len(inliers), -inlier_rms)
             if best is None or score[0] > best[0][0]:
                 best = (score, xyz, inliers, residuals, depths)
