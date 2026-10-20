@@ -112,26 +112,46 @@ def triangulate_consensus(
         raise ValueError("no multiview hypothesis satisfies parallax, inlier, and positive-depth checks")
 
     _, xyz, inliers, _, _ = best
-    # Refit on consensus inliers, then re-evaluate every observation.
-    sparse = [points.get(i) if i in inliers else None for i in range(n)]
-    xyz, fit_metrics = triangulate_point(
-        sparse, camera_poses, intrinsics,
-        min_views=min_views, max_reprojection_rms_px=max_reprojection_rms_px,
-        min_depth=min_depth, min_parallax_angle_deg=min_parallax_angle_deg,
-    )
+    # Iterate refit/reclassification until the reported consensus is exactly
+    # the set used by the fit. This avoids returning fit metrics for a stale
+    # inlier set when thresholding changes membership after refitting.
+    seen_inlier_sets: set[tuple[int, ...]] = set()
+    fit_metrics: dict[str, Any] = {}
     residuals: dict[int, float] = {}
     depths: dict[int, float] = {}
-    final_inliers = []
-    for camera_id, observed in points.items():
-        projected, depth = _project(xyz, camera_poses[camera_id], intrinsics[camera_id])
-        depths[camera_id] = depth
-        error = float(np.linalg.norm(projected - observed)) if depth > min_depth else float("inf")
-        residuals[camera_id] = error
-        if depth > min_depth and error <= inlier_threshold_px:
-            final_inliers.append(camera_id)
+    final_inliers: list[int] = []
+    for _ in range(len(points) + 1):
+        inlier_key = tuple(inliers)
+        if inlier_key in seen_inlier_sets:
+            raise ValueError("consensus inlier set did not stabilize after refitting")
+        seen_inlier_sets.add(inlier_key)
+        sparse = [points.get(i) if i in inliers else None for i in range(n)]
+        xyz, fit_metrics = triangulate_point(
+            sparse, camera_poses, intrinsics,
+            min_views=min_views, max_reprojection_rms_px=max_reprojection_rms_px,
+            min_depth=min_depth, min_parallax_angle_deg=min_parallax_angle_deg,
+        )
+        residuals = {}
+        depths = {}
+        final_inliers = []
+        for camera_id, observed in points.items():
+            projected, depth = _project(xyz, camera_poses[camera_id], intrinsics[camera_id])
+            depths[camera_id] = depth
+            error = float(np.linalg.norm(projected - observed)) if depth > min_depth else float("inf")
+            residuals[camera_id] = error
+            if depth > min_depth and error <= inlier_threshold_px:
+                final_inliers.append(camera_id)
 
-    if len(final_inliers) < min_views:
-        raise ValueError("consensus became invalid after refitting")
+        if len(final_inliers) < min_views:
+            raise ValueError("consensus became invalid after refitting")
+        if final_inliers == inliers:
+            break
+        inliers = final_inliers
+    else:
+        raise ValueError("consensus inlier set did not stabilize after refitting")
+
+    # Since the fit and classification now share the same camera set, this RMS
+    # is consistent with fit_metrics' residual statistics.
     rms = float(np.sqrt(np.mean([residuals[i] ** 2 for i in final_inliers])))
     if rms > max_reprojection_rms_px:
         raise ValueError(
