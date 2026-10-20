@@ -83,6 +83,7 @@ class MultiviewConsensusTests(unittest.TestCase):
         self.assertLess(np.linalg.norm(xyz - self.truth), 0.02)
         self.assertEqual(metrics["inlier_camera_ids"], [0, 1, 2])
         self.assertEqual(metrics["outlier_camera_ids"], [3])
+        self.assertEqual(metrics["fit_metrics"]["camera_ids"], metrics["inlier_camera_ids"])
         self.assertGreater(metrics["reprojection_errors_px"][3], 40.0)
         self.assertGreater(metrics["reprojection_rms_px"], 0.0)
         self.assertLess(metrics["reprojection_rms_px"], 0.5)
