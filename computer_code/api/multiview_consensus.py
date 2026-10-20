@@ -36,6 +36,7 @@ def triangulate_consensus(
     max_reprojection_rms_px: float = 1.0,
     min_depth: float = 1e-9,
     min_parallax_angle_deg: float = 0.1,
+    ambiguity_rms_tolerance_px: float = 0.01,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Robustly triangulate sparse camera-indexed observations.
 
@@ -57,6 +58,8 @@ def triangulate_consensus(
         raise ValueError("min_depth must be finite and non-negative")
     if not np.isfinite(min_parallax_angle_deg) or not 0 <= min_parallax_angle_deg <= 180:
         raise ValueError("min_parallax_angle_deg must be finite and between 0 and 180")
+    if not np.isfinite(ambiguity_rms_tolerance_px) or ambiguity_rms_tolerance_px < 0:
+        raise ValueError("ambiguity_rms_tolerance_px must be finite and non-negative")
 
     points: dict[int, np.ndarray] = {}
     for camera_id, observation in enumerate(observations):
@@ -71,8 +74,11 @@ def triangulate_consensus(
 
     camera_ids = tuple(points)
     best = None
+    competing_hypotheses: list[tuple[np.ndarray, tuple[int, ...], float]] = []
     # Prefer hypotheses supported by more cameras; combinations are bounded by
-    # camera count, which is small for this low-cost capture rig.
+    # camera count, which is small for this low-cost capture rig. Retain distinct,
+    # equally supported hypotheses so a split-consensus case is not silently
+    # decided by combination enumeration order.
     for subset_size in range(len(camera_ids), min_views - 1, -1):
         for subset in combinations(camera_ids, subset_size):
             sparse = [points.get(i) if i in subset else None for i in range(n)]
@@ -100,8 +106,18 @@ def triangulate_consensus(
                 continue
             inlier_rms = float(np.sqrt(np.mean([residuals[i] ** 2 for i in inliers])))
             score = (len(inliers), -inlier_rms)
-            if best is None or score > best[0]:
+            if best is None or score[0] > best[0][0]:
                 best = (score, xyz, inliers, residuals, depths)
+                competing_hypotheses = [(xyz.copy(), tuple(inliers), inlier_rms)]
+            elif score[0] == best[0][0]:
+                # Track only hypotheses whose fit quality is effectively tied
+                # with the current best. A disjoint inlier set is evidence that
+                # two different marker hypotheses explain separate camera groups.
+                best_rms = -best[0][1]
+                if abs(inlier_rms - best_rms) <= ambiguity_rms_tolerance_px:
+                    competing_hypotheses.append((xyz.copy(), tuple(inliers), inlier_rms))
+                if score[1] > best[0][1]:
+                    best = (score, xyz, inliers, residuals, depths)
 
         # Once a hypothesis explains every available observation, smaller
         # subsets cannot improve consensus cardinality.
@@ -110,6 +126,28 @@ def triangulate_consensus(
 
     if best is None:
         raise ValueError("no multiview hypothesis satisfies parallax, inlier, and positive-depth checks")
+
+    # Do not silently choose one of two spatially distinct, equally supported
+    # hypotheses backed by disjoint camera sets. Nearby hypotheses are treated
+    # as the same solution; this avoids flagging small numerical differences
+    # from alternative subsets of one physical marker.
+    best_count = best[0][0]
+    best_rms = -best[0][1]
+    best_xyz = best[1]
+    best_inliers = tuple(best[2])
+    scale = max(1.0, float(np.linalg.norm(best_xyz)))
+    separation_tolerance = 1e-3 * scale
+    for candidate_xyz, candidate_inliers, candidate_rms in competing_hypotheses:
+        if len(candidate_inliers) != best_count:
+            continue
+        if set(candidate_inliers).intersection(best_inliers):
+            continue
+        if abs(candidate_rms - best_rms) > ambiguity_rms_tolerance_px:
+            continue
+        if np.linalg.norm(candidate_xyz - best_xyz) > separation_tolerance:
+            raise ValueError(
+                "ambiguous multiview consensus: distinct hypotheses have equal support"
+            )
 
     _, xyz, inliers, _, _ = best
     # Iterate refit/reclassification until the reported consensus is exactly
