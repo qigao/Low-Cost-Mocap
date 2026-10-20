@@ -120,6 +120,24 @@ class TriangulationTests(unittest.TestCase):
         )
         self.assertGreater(far_metrics["max_parallax_angle_deg"], 0.1)
 
+        # The same subpixel measurement perturbation should hurt depth more
+        # at longer range, where the viewing rays have weaker parallax.
+        near_noisy = [self.project(i, near) for i in range(3)]
+        far_noisy = [self.project(i, far) for i in range(3)]
+        near_noisy[2] = near_noisy[2] + np.array([0.1, -0.1])
+        far_noisy[2] = far_noisy[2] + np.array([0.1, -0.1])
+        near_estimate, near_noisy_metrics = triangulate_point(
+            near_noisy, self.poses, self.Ks,
+        )
+        far_estimate, far_noisy_metrics = triangulate_point(
+            far_noisy, self.poses, self.Ks,
+        )
+        near_depth_error = abs(near_estimate[2] - near[2])
+        far_depth_error = abs(far_estimate[2] - far[2])
+        self.assertGreater(far_depth_error, near_depth_error)
+        self.assertGreater(near_noisy_metrics["reprojection_rms_px"], 0.0)
+        self.assertGreater(far_noisy_metrics["reprojection_rms_px"], 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
