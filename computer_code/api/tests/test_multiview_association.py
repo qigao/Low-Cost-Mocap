@@ -1,0 +1,45 @@
+import unittest
+
+import numpy as np
+
+from multiview_association import associate_pairwise, sampson_errors
+
+
+class PairwiseAssociationTests(unittest.TestCase):
+    def setUp(self):
+        # Rectified horizontal stereo: corresponding points share y.
+        self.F = np.array([
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0],
+        ])
+
+    def test_sampson_error_is_zero_for_epipolar_consistent_points(self):
+        left = [[100.0, 50.0]]
+        right = [[130.0, 50.0]]
+        self.assertAlmostEqual(sampson_errors(left, right, self.F)[0, 0], 0.0)
+
+    def test_assignment_is_one_to_one(self):
+        left = [[100.0, 50.0], [200.0, 80.0]]
+        right = [[210.0, 80.0], [110.0, 50.0]]
+        matches = associate_pairwise(left, right, self.F, max_sampson_error_px=1.0)
+        self.assertEqual([(m.left_index, m.right_index) for m in matches], [(0, 1), (1, 0)])
+        self.assertEqual(len({m.right_index for m in matches}), len(matches))
+
+    def test_bad_candidates_remain_unmatched(self):
+        left = [[100.0, 50.0], [200.0, 80.0]]
+        right = [[110.0, 50.0], [210.0, 130.0]]
+        matches = associate_pairwise(left, right, self.F, max_sampson_error_px=2.0)
+        self.assertEqual([(m.left_index, m.right_index) for m in matches], [(0, 0)])
+
+    def test_empty_inputs_return_no_matches(self):
+        self.assertEqual(associate_pairwise([], [[10.0, 20.0]], self.F), [])
+        self.assertEqual(associate_pairwise([[10.0, 20.0]], [], self.F), [])
+
+    def test_rejects_non_finite_points(self):
+        with self.assertRaisesRegex(ValueError, "finite"):
+            associate_pairwise([[float("nan"), 2.0]], [[1.0, 2.0]], self.F)
+
+
+if __name__ == "__main__":
+    unittest.main()
