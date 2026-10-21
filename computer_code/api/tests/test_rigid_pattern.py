@@ -42,6 +42,16 @@ class RigidPatternTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "RMS"):
             fit_rigid_pattern(self.model, scaled, max_rms_error=0.005)
 
+    def test_rigid_fit_is_invariant_to_small_model_units(self):
+        # Coordinates may be expressed in meters, millimeters, or smaller
+        # units; the rank check must not depend on an absolute coordinate scale.
+        model = self.model * 1e-12
+        observed = (self.rotation @ model.T).T + self.translation
+        R, t, metrics = fit_rigid_pattern(model, observed)
+        np.testing.assert_allclose(R, self.rotation, atol=1e-10)
+        np.testing.assert_allclose(t, self.translation, atol=1e-10)
+        self.assertLess(metrics["rms_error"], 1e-10)
+
     def test_rejects_collinear_marker_subset(self):
         line_model = np.array([[0., 0., 0.], [1., 0., 0.], [2., 0., 0.]])
         line_observed = line_model + [0., 0., 1.]
