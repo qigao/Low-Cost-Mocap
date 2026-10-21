@@ -11,6 +11,10 @@ import json
 from pathlib import Path
 
 from board_patterns import BoardPatternRegistry
+from pattern_observability import (
+    analyze_pattern_observability, observability_to_dict,
+    require_every_phase_observable,
+)
 
 
 def describe_patterns(registry: BoardPatternRegistry) -> dict:
@@ -48,6 +52,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trigger", type=int, help="Actual common hardware trigger ID")
     parser.add_argument("--epoch", type=int, help="Known shared LED code epoch")
     parser.add_argument("--expect-sha256", help="Reject if expected pattern revision differs")
+    parser.add_argument(
+        "--phase-report", action="store_true",
+        help="Report per-trigger illuminated count and spatial rank for all boards"
+    )
+    parser.add_argument(
+        "--require-every-phase", action="store_true",
+        help="Fail if any board lacks enough noncollinear LEDs at any trigger phase"
+    )
     args = parser.parse_args(argv)
     flags = (args.board is not None, args.trigger is not None, args.epoch is not None)
     if any(flags) and not all(flags):
@@ -57,6 +69,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.expect_sha256 is not None and args.expect_sha256 != registry.config_sha256:
             raise ValueError("board pattern configuration SHA-256 mismatch")
         output = describe_patterns(registry)
+        if args.require_every_phase:
+            report = require_every_phase_observable(registry)
+        elif args.phase_report:
+            report = analyze_pattern_observability(registry)
+        else:
+            report = None
+        if report is not None:
+            output["observability"] = observability_to_dict(report)
         if all(flags):
             output["selected_trigger"] = args.trigger
             output["selected_board"] = args.board
