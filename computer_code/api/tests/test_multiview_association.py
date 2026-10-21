@@ -51,6 +51,20 @@ class PairwiseAssociationTests(unittest.TestCase):
                     rtol=1e-12, atol=1e-12,
                 )
 
+    def test_rejects_threshold_whose_square_overflows(self):
+        with self.assertRaisesRegex(ValueError, "squared must be finite and positive"):
+            associate_pairwise(
+                [[100.0, 50.0]], [[130.0, 50.0]], self.F,
+                max_sampson_error_px=1e200,
+            )
+
+    def test_rejects_threshold_whose_square_underflows(self):
+        with self.assertRaisesRegex(ValueError, "squared must be finite and positive"):
+            associate_pairwise(
+                [[100.0, 50.0]], [[130.0, 50.0]], self.F,
+                max_sampson_error_px=1e-200,
+            )
+
     def test_rejects_zero_fundamental_matrix(self):
         with self.assertRaisesRegex(ValueError, "non-zero"):
             sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], np.zeros((3, 3)))
