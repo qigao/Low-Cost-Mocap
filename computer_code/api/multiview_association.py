@@ -22,7 +22,12 @@ class PairMatch:
 def _points_array(points: object, name: str) -> np.ndarray:
     array = np.asarray(points, dtype=np.float64)
     if array.size == 0:
-        return np.empty((0, 2), dtype=np.float64)
+        # Accept the conventional empty sequence and an explicitly shaped
+        # (0, 2) array, but don't silently reinterpret malformed empty arrays
+        # such as (2, 0) or (0, 3) as valid point sets.
+        if array.shape == (0,) or array.shape == (0, 2):
+            return np.empty((0, 2), dtype=np.float64)
+        raise ValueError(f"{name} must have shape (N, 2)")
     if array.ndim != 2 or array.shape[1] != 2:
         raise ValueError(f"{name} must have shape (N, 2)")
     if not np.isfinite(array).all():
