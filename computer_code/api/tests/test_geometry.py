@@ -152,6 +152,8 @@ class TriangulationTests(unittest.TestCase):
         invalid_points = (
             ["100", "200"],
             [True, False],
+            [320, True],
+            [np.float64(320.0), np.bool_(False)],
             [100.0 + 0j, 200.0 + 0j],
         )
         for point in invalid_points:
