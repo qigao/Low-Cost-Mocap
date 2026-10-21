@@ -72,6 +72,13 @@ class PairwiseAssociationTests(unittest.TestCase):
         self.assertEqual(associate_pairwise([], [[10.0, 20.0]], self.F), [])
         self.assertEqual(associate_pairwise([[10.0, 20.0]], [], self.F), [])
 
+    def test_empty_point_arrays_must_have_valid_shape(self):
+        self.assertEqual(sampson_errors(np.empty((0, 2)), [[1.0, 2.0]], self.F).shape, (0, 1))
+        for malformed in (np.empty((2, 0)), np.empty((0, 3))):
+            with self.subTest(shape=malformed.shape):
+                with self.assertRaisesRegex(ValueError, "shape"):
+                    sampson_errors(malformed, [[1.0, 2.0]], self.F)
+
     def test_rejects_finite_coordinates_outside_safe_sampson_range(self):
         with self.assertRaisesRegex(ValueError, "safe float64 Sampson range"):
             sampson_errors([[1e200, 1e200]], [[-1e200, 1e200]], self.F)
