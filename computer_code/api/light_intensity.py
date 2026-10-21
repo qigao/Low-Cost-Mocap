@@ -12,6 +12,7 @@ from typing import Sequence
 import numpy as np
 
 from geometry import _observation_array
+from light_tracking import TrackEvidence
 from temporal_pattern import LightSample, _nonnegative_int
 
 
@@ -94,6 +95,38 @@ def sample_light_roi(
         foreground_median, background_median, contrast,
         int(np.count_nonzero(foreground)),
         int(np.count_nonzero(background)),
+    )
+
+
+def sample_tracked_light_roi(
+    image: object,
+    evidence: TrackEvidence,
+    *,
+    predicted_roi_qualified: bool = False,
+    foreground_radius_px: int = 2,
+    background_radius_px: int = 6,
+) -> ROIContrast | None:
+    """Return an erasure for unmatched lights unless prediction is certified.
+
+    The light tracker alone does NOT establish that a predicted dark ROI still
+    contains the same physical light on a moving drone. By default, only an
+    actual detection can authorize a raw-ROI sample. A calibrated external
+    motion quality gate must explicitly certify predicted-only ROI sampling.
+    """
+    if not isinstance(evidence, TrackEvidence):
+        raise ValueError("evidence must be TrackEvidence")
+    if not isinstance(predicted_roi_qualified, (bool, np.bool_)):
+        raise ValueError("predicted_roi_qualified must be boolean")
+    if evidence.observed_xy is None:
+        if not predicted_roi_qualified:
+            return None
+        center = evidence.predicted_xy
+    else:
+        center = evidence.observed_xy
+    return sample_light_roi(
+        image, center,
+        foreground_radius_px=foreground_radius_px,
+        background_radius_px=background_radius_px,
     )
 
 

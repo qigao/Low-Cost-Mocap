@@ -10,7 +10,7 @@ import numpy as np
 
 from geometry import triangulate_point
 from light_intensity import (
-    BinaryIntensityCalibration, sample_light_roi, quantize_roi_track,
+    BinaryIntensityCalibration, sample_tracked_light_roi, quantize_roi_track,
 )
 from light_tracking import BoundedLightTracker
 from rigid_pattern import fit_rigid_pattern
@@ -103,7 +103,11 @@ class RealisticSyntheticLightPipelineTests(unittest.TestCase):
                     # positions remain valid during off phases. Real moving
                     # scenes require an independent motion quality gate:
                     # a missing detection cannot automatically mean OFF.
-                    roi = sample_light_roi(image, entry.predicted_xy)
+                    if entry.observed_xy is None:
+                        self.assertIsNone(sample_tracked_light_roi(image, entry))
+                    roi = sample_tracked_light_roi(
+                        image, entry, predicted_roi_qualified=True
+                    )
                     measured[camera].setdefault(entry.track_id, []).append(
                         (trigger, roi)
                     )

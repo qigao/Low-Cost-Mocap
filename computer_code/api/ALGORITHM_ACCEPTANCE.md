@@ -39,7 +39,9 @@ requirements.
   capacity fail closed without mutating the previous accepted track state.
   A local track ID is never automatically a physical marker ID. Missing
   bright detections are marked as absent evidence, NOT known dark phases.
-  Sampling a predicted dark ROI is valid only after an independent motion
+  The sample_tracked_light_roi helper explicitly returns an erasure for
+  unmatched tracks by default. Sampling a predicted dark ROI requires an
+  affirmative predicted_roi_qualified flag from a separate measured motion
   uncertainty / light-tracker quality gate, not from this tracker alone.
 - light_intensity.sample_light_roi extracts foreground-minus-annulus
   contrast from raw grayscale frames at an independently tracked light

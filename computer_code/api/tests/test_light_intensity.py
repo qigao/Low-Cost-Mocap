@@ -4,10 +4,12 @@ import numpy as np
 
 from light_intensity import (
     sample_light_roi,
+    sample_tracked_light_roi,
     BinaryIntensityCalibration,
     quantize_roi_track,
 )
 from temporal_pattern import TemporalCodebook, decode_temporal_marker
+from light_tracking import TrackEvidence
 
 
 class RawLightEvidenceTests(unittest.TestCase):
@@ -83,6 +85,34 @@ class RawLightEvidenceTests(unittest.TestCase):
             BinaryIntensityCalibration(0.0, 100.0).classify(np.inf)
         with self.assertRaisesRegex(ValueError, "ROI evidence"):
             quantize_roi_track([(0, 10.0)], BinaryIntensityCalibration(0.0, 100.0))
+
+    def test_predicted_dark_roi_requires_independent_motion_qualification(self):
+        image = self.make_image(18.0)
+        missing = TrackEvidence(
+            track_id=3, camera_id=0, trigger_id=18,
+            predicted_xy=(24.0, 24.0),
+            observed_xy=None, missed_triggers=2,
+        )
+        self.assertIsNone(sample_tracked_light_roi(image, missing))
+        # A purely synthetic static-scene verifier may explicitly qualify
+        # this position; that is NOT inferred by the tracker itself.
+        accepted = sample_tracked_light_roi(
+            image, missing, predicted_roi_qualified=True
+        )
+        self.assertAlmostEqual(accepted.contrast, 0.0)
+        observed = TrackEvidence(
+            track_id=3, camera_id=0, trigger_id=19,
+            predicted_xy=(20.0, 24.0),
+            observed_xy=(24.0, 24.0), missed_triggers=0,
+        )
+        image_on = self.make_image(18.0, 120.0)
+        self.assertGreater(
+            sample_tracked_light_roi(image_on, observed).contrast, 100.0
+        )
+        with self.assertRaisesRegex(ValueError, "boolean"):
+            sample_tracked_light_roi(
+                image, missing, predicted_roi_qualified="yes"
+            )
 
     def test_absence_is_not_converted_into_off_bit(self):
         calibration = BinaryIntensityCalibration(0.0, 120.0)
