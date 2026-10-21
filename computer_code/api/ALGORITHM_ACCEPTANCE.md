@@ -68,6 +68,13 @@ requirements.
   earlier cycle, a borrowed track or a predicted-only dark position cannot
   become a new 3D point. The lower-level grouping API still accepts IDs
   directly for standalone tests and is not a hardware trust source.
+- spatiotemporal_reconstruction maps the validated, synchronized 2D
+  marker tuple to **physical camera IDs** before triangulation, never
+  dense array indexes that break for camera IDs like 2/5/9. It reports
+  physical camera IDs for per-view residuals and depths, rejects mismatched
+  calibration mappings and fails the entire reconstruction on any admitted
+  marker violating geometry gates. A rigid-pattern fit uses original marker
+  IDs and never claims measured metric scale from synthetic camera baselines.
 - group_synchronized_detections requires decoded 2D marker observations
   to reference the exact FrameStamp of an admitted shared-trigger batch.
   Borrowed frames from different triggers, clocks, or timestamps fail closed
