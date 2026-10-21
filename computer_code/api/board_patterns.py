@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -103,6 +104,7 @@ class BoardPatternRegistry:
     period_triggers: int
     max_bit_errors: int
     pose_phase: int | None
+    config_sha256: str
 
     @classmethod
     def from_mapping(cls, raw: object) -> "BoardPatternRegistry":
@@ -186,9 +188,42 @@ class BoardPatternRegistry:
                 min_visible, R, t,
             )
         codebook = TemporalCodebook(codes, max_bit_errors=errors)
+        # Hash validated *semantic* content, not JSON whitespace/order. A
+        # controller can echo this fingerprint when a pattern is provisioned;
+        # the fingerprint alone is not hardware authenticity or time sync.
+        manifest = {
+            "version": 1,
+            "period_triggers": period,
+            "max_bit_errors": errors,
+            "pose_phase": pose_phase,
+            "boards": {
+                board_id: {
+                    "type": board.board_type,
+                    "min_visible_markers": board.min_visible_markers,
+                    "body_from_board": {
+                        "rotation": board.rotation_body_from_board.tolist(),
+                        "translation_m": board.translation_body_from_board_m.tolist(),
+                    },
+                    "markers": {
+                        str(marker): {
+                            "xyz_m": board.marker_xyz_m[marker],
+                            "code": "".join(map(str, codes[marker])),
+                        }
+                        for marker in board.marker_xyz_m
+                    },
+                }
+                for board_id, board in boards.items()
+            },
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                manifest, sort_keys=True, separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
         return cls(
             MappingProxyType(boards), MappingProxyType(owners),
-            codebook, period, errors, pose_phase,
+            codebook, period, errors, pose_phase, fingerprint,
         )
 
     @classmethod
