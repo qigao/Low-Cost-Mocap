@@ -96,7 +96,6 @@ class PairwiseAssociationTests(unittest.TestCase):
             [[100, True]],
             [[np.float64(100.0), np.bool_(False)]],
             [[100.0 + 0j, 50.0 + 0j]],
-            [[10**1000, 50]],
         )
         for points in invalid:
             with self.subTest(points=repr(points)):
@@ -155,12 +154,21 @@ class PairwiseAssociationTests(unittest.TestCase):
             self.F.astype(str),
             self.F.astype(bool),
             self.F.astype(complex) + 1j,
-            np.array([[10**1000] + [0] * 2, [0] * 3, [0] * 3], dtype=object),
         )
         for fundamental in invalid:
             with self.subTest(dtype=fundamental.dtype):
                 with self.assertRaisesRegex(ValueError, "fundamental matrix must contain real numeric values"):
                     sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], fundamental)
+
+    def test_rejects_integer_inputs_outside_float64_range(self):
+        huge = 10**1000
+        with self.assertRaisesRegex(ValueError, "finite float64 coordinates"):
+            sampson_errors([[huge, 50]], [[130.0, 50.0]], self.F)
+        fundamental = np.array(
+            [[huge, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=object
+        )
+        with self.assertRaisesRegex(ValueError, "finite 3x3 matrix"):
+            sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], fundamental)
 
     def test_rejects_zero_fundamental_matrix(self):
         with self.assertRaisesRegex(ValueError, "non-zero"):
