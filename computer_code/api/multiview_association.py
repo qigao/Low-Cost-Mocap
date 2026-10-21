@@ -20,6 +20,15 @@ class PairMatch:
 
 
 def _points_array(points: object, name: str) -> np.ndarray:
+    # Validate original scalar types before NumPy can promote mixed inputs such
+    # as [[100, True]] to integers or coerce numeric strings to floats.
+    raw_items = np.asarray(points, dtype=object).reshape(-1)
+    if any(
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        for value in raw_items
+    ):
+        raise ValueError(f"{name} must contain real numeric coordinates")
     array = np.asarray(points, dtype=np.float64)
     if array.size == 0:
         # Accept the conventional empty sequence and an explicitly shaped
