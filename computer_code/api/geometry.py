@@ -87,11 +87,17 @@ def triangulate_point(
         raise ValueError("min_views must be an integer at least 2")
 
     def finite_real_scalar(value: object) -> bool:
-        return (
-            not isinstance(value, (bool, np.bool_))
-            and isinstance(value, (int, float, np.integer, np.floating))
-            and bool(np.isfinite(value))
-        )
+        if (
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, float, np.integer, np.floating))
+        ):
+            return False
+        # NumPy's isfinite cannot safely inspect arbitrary-size Python ints.
+        # Convert explicitly and fail closed when the value exceeds float64.
+        try:
+            return bool(np.isfinite(float(value)))
+        except (OverflowError, TypeError, ValueError):
+            return False
 
     if max_reprojection_rms_px is not None and (
         not finite_real_scalar(max_reprojection_rms_px)
