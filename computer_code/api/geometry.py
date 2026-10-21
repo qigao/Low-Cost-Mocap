@@ -37,6 +37,17 @@ def _camera_arrays(pose: Mapping[str, Any], intrinsic: Any) -> tuple[np.ndarray,
 
 def _observation_array(xy: Any, camera_id: int) -> np.ndarray:
     """Validate a pixel observation without silently coercing non-real inputs."""
+    # Inspect scalar types before NumPy inference: mixed values such as
+    # [320, True] can otherwise be promoted to an integer array, erasing bool.
+    raw_items = np.asarray(xy, dtype=object).reshape(-1)
+    if any(
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        for value in raw_items
+    ):
+        raise ValueError(
+            f"observation for camera {camera_id} must contain real numeric coordinates"
+        )
     raw = np.asarray(xy)
     if raw.dtype.kind not in "iuf":
         raise ValueError(
