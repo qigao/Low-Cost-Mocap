@@ -35,6 +35,19 @@ def _camera_arrays(pose: Mapping[str, Any], intrinsic: Any) -> tuple[np.ndarray,
     return K, R, t
 
 
+def _observation_array(xy: Any, camera_id: int) -> np.ndarray:
+    """Validate a pixel observation without silently coercing non-real inputs."""
+    raw = np.asarray(xy)
+    if raw.dtype.kind not in "iuf":
+        raise ValueError(
+            f"observation for camera {camera_id} must contain real numeric coordinates"
+        )
+    point = np.asarray(raw, dtype=np.float64).reshape(-1)
+    if point.shape != (2,) or not np.isfinite(point).all():
+        raise ValueError(f"observation for camera {camera_id} must be a finite (x, y) pair")
+    return point
+
+
 def triangulate_point(
     observations: Sequence[Sequence[float] | None],
     camera_poses: Sequence[Mapping[str, Any]],
@@ -87,9 +100,7 @@ def triangulate_point(
     for camera_id, xy in enumerate(observations):
         if xy is None:
             continue
-        point = np.asarray(xy, dtype=np.float64).reshape(-1)
-        if point.shape != (2,) or not np.isfinite(point).all():
-            raise ValueError(f"observation for camera {camera_id} must be a finite (x, y) pair")
+        point = _observation_array(xy, camera_id)
         K, R, t = _camera_arrays(camera_poses[camera_id], intrinsics[camera_id])
         P = K @ np.column_stack((R, t))
         valid.append((camera_id, point, P))
