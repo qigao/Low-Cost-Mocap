@@ -29,7 +29,10 @@ def _points_array(points: object, name: str) -> np.ndarray:
         for value in raw_items
     ):
         raise ValueError(f"{name} must contain real numeric coordinates")
-    array = np.asarray(points, dtype=np.float64)
+    try:
+        array = np.asarray(points, dtype=np.float64)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must contain finite float64 coordinates") from exc
     if array.size == 0:
         # Accept the conventional empty sequence and an explicitly shaped
         # (0, 2) array, but don't silently reinterpret malformed empty arrays
@@ -55,7 +58,12 @@ def sampson_errors(left_points: object, right_points: object, fundamental: objec
         for value in raw_fundamental
     ):
         raise ValueError("fundamental matrix must contain real numeric values")
-    F = np.asarray(fundamental, dtype=np.float64)
+    try:
+        F = np.asarray(fundamental, dtype=np.float64)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "fundamental matrix must be a finite 3x3 matrix"
+        ) from exc
     if F.shape != (3, 3) or not np.isfinite(F).all():
         raise ValueError("fundamental matrix must be a finite 3x3 matrix")
     if not np.any(F):
