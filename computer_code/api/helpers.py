@@ -212,34 +212,45 @@ def calculate_reprojection_errors(image_points, object_points, camera_poses):
 
 
 def calculate_reprojection_error(image_points, object_point, camera_poses):
+    """Mean squared pixel reprojection error, preserving original camera IDs.
+
+    Missing observations do not renumber cameras: each surviving observation
+    must retain its own intrinsic matrix and world-to-camera extrinsics.
+    """
     cameras = Cameras.instance()
-
-    image_points = np.array(image_points)
-    none_indicies = np.where(np.all(image_points == None, axis=1))[0]
-    image_points = np.delete(image_points, none_indicies, axis=0)
-    camera_poses = np.delete(camera_poses, none_indicies, axis=0)
-
-    if len(image_points) <= 1:
+    observations = np.asarray(image_points, dtype=object)
+    if observations.shape != (len(camera_poses), 2):
+        raise ValueError("image_points must be one (x, y) pair per camera")
+    if object_point is None:
+        return None
+    try:
+        xyz = np.asarray(object_point, dtype=np.float64).reshape(-1)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if xyz.shape != (3,) or not np.isfinite(xyz).all():
         return None
 
-    image_points_t = image_points.transpose((0,1))
-
-    errors = np.array([])
-    for i, camera_pose in enumerate(camera_poses):
-        if np.all(image_points[i] == None, axis=0):
+    residuals = []
+    for camera_id, (observed, pose) in enumerate(zip(observations, camera_poses)):
+        if all(coordinate is None for coordinate in observed):
             continue
-        projected_img_points, _ = cv.projectPoints(
-            np.expand_dims(object_point, axis=0).astype(np.float32), 
-            np.array(camera_pose["R"], dtype=np.float64), 
-            np.array(camera_pose["t"], dtype=np.float64), 
-            cameras.get_camera_params(i)["intrinsic_matrix"], 
-            np.array([])
+        if any(coordinate is None for coordinate in observed):
+            raise ValueError(f"camera {camera_id} has an incomplete pixel observation")
+        pixel = np.asarray(observed, dtype=np.float64)
+        if not np.isfinite(pixel).all():
+            raise ValueError(f"camera {camera_id} has nonfinite pixel coordinates")
+        intrinsic = cameras.get_camera_params(camera_id)["intrinsic_matrix"]
+        projected, _ = cv.projectPoints(
+            xyz.reshape(1, 3),
+            np.asarray(pose["R"], dtype=np.float64),
+            np.asarray(pose["t"], dtype=np.float64).reshape(3),
+            intrinsic, np.array([]),
         )
-        projected_img_point = projected_img_points[:,0,:][0]
-        errors = np.concatenate([errors, (image_points_t[i]-projected_img_point).flatten() ** 2])
-    
-    return errors.mean()
-
+        error = pixel - np.asarray(projected, dtype=np.float64).reshape(2)
+        residuals.extend(np.square(error).tolist())
+    if len(residuals) < 4:
+        return None
+    return float(np.mean(residuals))
 
 def bundle_adjustment(image_points, camera_poses, socketio):
     cameras = Cameras.instance()
@@ -291,41 +302,63 @@ def bundle_adjustment(image_points, camera_poses, socketio):
     
 
 def triangulate_point(image_points, camera_poses):
-    image_points = np.array(image_points)
+    """Direct SVD triangulation using original camera identities.
+
+    Sparse camera observations retain the intrinsic and extrinsic matrices
+    of their original slots. The homogeneous design matrix is decomposed
+    directly; squaring it into A.T @ A loses numerical conditioning.
+    """
+    observations = np.asarray(image_points, dtype=object)
+    if observations.shape != (len(camera_poses), 2):
+        raise ValueError("image_points must be one (x, y) pair per camera")
     cameras = Cameras.instance()
-    none_indicies = np.where(np.all(image_points == None, axis=1))[0]
-    image_points = np.delete(image_points, none_indicies, axis=0)
-    camera_poses = np.delete(camera_poses, none_indicies, axis=0)
 
-    if len(image_points) <= 1:
+    rows = []
+    valid_views = 0
+    for camera_id, (observed, pose) in enumerate(zip(observations, camera_poses)):
+        if all(coordinate is None for coordinate in observed):
+            continue
+        if any(coordinate is None for coordinate in observed):
+            raise ValueError(f"camera {camera_id} has an incomplete pixel observation")
+        pixel = np.asarray(observed, dtype=np.float64)
+        intrinsic = np.asarray(
+            cameras.get_camera_params(camera_id)["intrinsic_matrix"], dtype=np.float64
+        )
+        rotation = np.asarray(pose["R"], dtype=np.float64)
+        translation = np.asarray(pose["t"], dtype=np.float64).reshape(-1)
+        if (
+            intrinsic.shape != (3, 3) or rotation.shape != (3, 3)
+            or translation.shape != (3,)
+            or not np.isfinite(pixel).all()
+            or not np.isfinite(intrinsic).all()
+            or not np.isfinite(rotation).all()
+            or not np.isfinite(translation).all()
+        ):
+            raise ValueError(f"camera {camera_id} contains invalid triangulation inputs")
+        projection = intrinsic @ np.column_stack((rotation, translation))
+        u, v = pixel
+        rows.append(u * projection[2, :] - projection[0, :])
+        rows.append(v * projection[2, :] - projection[1, :])
+        valid_views += 1
+
+    if valid_views < 2:
         return [None, None, None]
-
-    Ps = [] # projection matricies
-
-    for i, camera_pose in enumerate(camera_poses):
-        RT = np.c_[camera_pose["R"], camera_pose["t"]]
-        P = cameras.camera_params[i]["intrinsic_matrix"] @ RT
-        Ps.append(P)
-
-    # https://temugeb.github.io/computer_vision/2021/02/06/direct-linear-transorms.html
-    def DLT(Ps, image_points):
-        A = []
-
-        for P, image_point in zip(Ps, image_points):
-            A.append(image_point[1]*P[2,:] - P[1,:])
-            A.append(P[0,:] - image_point[0]*P[2,:])
-            
-        A = np.array(A).reshape((len(Ps)*2,4))
-        B = A.transpose() @ A
-        U, s, Vh = linalg.svd(B, full_matrices = False)
-        object_point = Vh[3,0:3]/Vh[3,3]
-
-        return object_point
-
-    object_point = DLT(Ps, image_points)
-
-    return object_point
-
+    A = np.asarray(rows, dtype=np.float64)
+    if not np.isfinite(A).all():
+        return [None, None, None]
+    _, singular_values, vh = linalg.svd(A, full_matrices=False)
+    if (
+        singular_values[0] == 0.0
+        or singular_values[2] <= 1e-12 * singular_values[0]
+    ):
+        return [None, None, None]
+    homogeneous = vh[-1]
+    if abs(homogeneous[3]) <= 1e-12 * max(1.0, np.linalg.norm(homogeneous[:3])):
+        return [None, None, None]
+    xyz = homogeneous[:3] / homogeneous[3]
+    if not np.isfinite(xyz).all():
+        return [None, None, None]
+    return xyz
 
 def triangulate_points(image_points, camera_poses):
     object_points = []
