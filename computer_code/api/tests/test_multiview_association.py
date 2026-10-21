@@ -52,6 +52,22 @@ class PairwiseAssociationTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertLess(matches[0].sampson_error_px, 1.0)
 
+    def test_assignment_maximizes_valid_match_count_before_error(self):
+        # The exact match (left 0 -> right 0) conflicts with two valid
+        # cross-matches. Prefer two sub-threshold matches over one zero-cost
+        # match plus an unmatched detection.
+        offset = np.sqrt(1.8)
+        left = [[100.0, 50.0], [100.0, 50.0 - offset]]
+        right = [[100.0, 50.0], [100.0, 50.0 + offset]]
+        matches = associate_pairwise(
+            left, right, self.F, max_sampson_error_px=1.0
+        )
+        self.assertEqual(
+            [(m.left_index, m.right_index) for m in matches], [(0, 1), (1, 0)]
+        )
+        for match in matches:
+            self.assertLess(match.sampson_error_px, 1.0)
+
     def test_empty_inputs_return_no_matches(self):
         self.assertEqual(associate_pairwise([], [[10.0, 20.0]], self.F), [])
         self.assertEqual(associate_pairwise([[10.0, 20.0]], [], self.F), [])
