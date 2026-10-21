@@ -80,7 +80,7 @@ def triangulate_point(
         ray_camera = np.linalg.solve(K, np.array([point[0], point[1], 1.0]))
         ray_world = R.T @ ray_camera
         ray_norm = float(np.linalg.norm(ray_world))
-        if not np.isfinite(ray_norm) or ray_norm <= 1e-15:
+        if not np.isfinite(ray_norm) or ray_norm <= np.finfo(np.float64).tiny:
             raise ValueError(f"viewing ray for camera {camera_id} is degenerate")
         rays.append(ray_world / ray_norm)
 
@@ -126,7 +126,12 @@ def triangulate_point(
         if depth <= min_depth:
             raise ValueError(f"triangulated point is behind camera {camera_id} (depth={depth:g})")
         projected_h = K @ camera_xyz
-        if abs(projected_h[2]) <= 1e-12:
+        denominator_scale = float(np.linalg.norm(K[2, :]) * np.linalg.norm(camera_xyz))
+        if (
+            not np.isfinite(projected_h).all()
+            or denominator_scale == 0.0
+            or abs(projected_h[2]) <= np.finfo(np.float64).eps * denominator_scale * 3.0
+        ):
             raise ValueError(f"projection is singular for camera {camera_id}")
         projected = projected_h[:2] / projected_h[2]
         residuals[camera_id] = float(np.linalg.norm(projected - observed))
