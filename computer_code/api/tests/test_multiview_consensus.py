@@ -290,6 +290,16 @@ class MultiviewConsensusTests(unittest.TestCase):
                         ambiguity_rms_tolerance_px=tolerance,
                     )
 
+    def test_rejects_parallax_threshold_above_acute_angle_range(self):
+        observations = [self.project(i) for i in range(4)]
+        for threshold in (90.000001, 120.0, 180.0):
+            with self.subTest(threshold=threshold):
+                with self.assertRaisesRegex(ValueError, "between 0 and 90"):
+                    triangulate_consensus(
+                        observations, self.poses, self.Ks,
+                        min_parallax_angle_deg=threshold,
+                    )
+
     def test_configurable_parallax_gate_rejects_weak_geometry(self):
         observations = [self.project(i) for i in range(4)]
         with self.assertRaisesRegex(ValueError, "parallax"):
