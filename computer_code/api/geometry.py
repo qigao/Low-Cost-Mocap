@@ -18,8 +18,12 @@ def _camera_arrays(pose: Mapping[str, Any], intrinsic: Any) -> tuple[np.ndarray,
         raise ValueError("K and R must be 3x3; t must contain 3 values")
     if not (np.isfinite(K).all() and np.isfinite(R).all() and np.isfinite(t).all()):
         raise ValueError("camera parameters must be finite")
-    if abs(np.linalg.det(K)) < 1e-12:
-        raise ValueError("intrinsic matrix is singular")
+    # K is a projective camera matrix: multiplying it by any nonzero scalar
+    # must not change validity. An absolute determinant threshold incorrectly
+    # rejects well-conditioned intrinsics expressed at a smaller scale.
+    singular_values = np.linalg.svd(K, compute_uv=False)
+    if singular_values[-1] <= np.finfo(np.float64).eps * singular_values[0] * 3.0:
+        raise ValueError("intrinsic matrix is singular or ill-conditioned")
     return K, R, t
 
 
