@@ -113,9 +113,17 @@ def associate_pairwise(
     if (
         isinstance(max_sampson_error_px, (bool, np.bool_))
         or not isinstance(max_sampson_error_px, (int, float, np.integer, np.floating))
-        or not np.isfinite(max_sampson_error_px)
-        or max_sampson_error_px <= 0
     ):
+        raise ValueError("max_sampson_error_px must be a finite positive real scalar")
+    # Python integers can exceed float64 before np.isfinite sees them; convert
+    # explicitly and normalize conversion overflow into the public ValueError.
+    try:
+        threshold = float(max_sampson_error_px)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "max_sampson_error_px must be a finite positive real scalar"
+        ) from exc
+    if not np.isfinite(threshold) or threshold <= 0:
         raise ValueError("max_sampson_error_px must be a finite positive real scalar")
     left = _points_array(left_points, "left_points")
     right = _points_array(right_points, "right_points")
@@ -124,7 +132,7 @@ def associate_pairwise(
     if n_left == 0 or n_right == 0:
         return []
 
-    threshold_sq = max_sampson_error_px * max_sampson_error_px
+    threshold_sq = threshold * threshold
     if (
         not np.isfinite(threshold_sq)
         or threshold_sq == 0.0
