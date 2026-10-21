@@ -18,8 +18,9 @@ identity is revalidated periodically.
 `identity_locked_board_tracker.IdentityLockedBoardTracker` adds this bounded
 identity-lock software stage. It consumes *current* `StampedTrackROI` evidence
 from the existing `BoundedLightTracker` and `sample_tracked_light_roi`
-algorithms, and is initially seeded by `AdmittedMarker` records obtained
-from `admit_track_marker_at_frame()` with the current registered codebook.
+algorithms, and is initially seeded by `LocalTrackCycle` histories. The tracker itself
+runs `admit_track_marker_at_frame()` with the active codebook; a caller
+cannot inject a foreign decoded marker ID.
 
 ## Single-batch API
 
@@ -46,7 +47,7 @@ tracker = IdentityLockedBoardTracker(
 first = tracker.advance(
     physical_frame_stamps,              # verified exposure-associated metadata
     current_stamped_track_roi_evidence, # current camera-local LED observations
-    revalidations=cycle_admitted_markers,
+    revalidation_traces=cycle_local_track_histories,
     controller_config_sha256=registry.config_sha256,
 )
 
@@ -67,7 +68,8 @@ for board_id, status in next_frame.boards.items():
 ## Contracts and failure modes
 
 - A lock is `(physical camera_id, local_track_id) -> global marker_id`,
-  seeded/revalidated only by a matching current `AdmittedMarker` and actual
+  seeded/revalidated only after internally decoding matching `LocalTrackCycle`
+  evidence against the active registry and an actual
   ON ROI centroid. A competing marker on the same camera and local track, or
   two tracks claiming the same marker, fails closed.
 - `config_sha256` is carried with the lock. The optional

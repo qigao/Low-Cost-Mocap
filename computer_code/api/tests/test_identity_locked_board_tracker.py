@@ -13,7 +13,7 @@ from board_patterns import BoardPatternRegistry
 from identity_locked_board_tracker import IdentityLockedBoardTracker
 from light_intensity import BinaryIntensityCalibration, ROIContrast, StampedTrackROI
 from light_tracking import TrackEvidence
-from marker_admission import admit_track_marker_at_frame
+from board_recognizer import LocalTrackCycle
 from temporal_pattern import FrameStamp
 
 
@@ -147,11 +147,9 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
                 # initial lock at the current camera exposure.
                 if not self.registry.codebook.patterns[marker][phase]:
                     continue
-                out.append(admit_track_marker_at_frame(
-                    trace, self.registry.codebook, self.brightness[camera],
-                    camera_id=camera, local_track_id=local_id,
-                    target_frame=self.stamp(camera, trigger),
-                    trigger_epoch=self.epoch,
+                out.append(LocalTrackCycle(
+                    camera, local_id,
+                    self.stamp(camera, trigger), tuple(trace),
                 ))
         return out
 
@@ -159,7 +157,7 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
         frames, rois = self.samples(self.first)
         admitted = self.validations(self.first)
         result = self.tracker.advance(
-            frames, rois, revalidations=admitted,
+            frames, rois, revalidation_traces=admitted,
             controller_config_sha256=self.registry.config_sha256,
         )
         self.assertEqual(len(result.active_locks), 24)
@@ -205,7 +203,7 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
             frames, rois = self.samples(trigger)
             result = self.tracker.advance(
                 frames, rois,
-                revalidations=self.validations(trigger)
+                revalidation_traces=self.validations(trigger)
                 if trigger == self.first + 16 else (),
             )
         self.assertEqual(result.trigger_id, 1031)
@@ -313,17 +311,45 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
             self.tracker.advance(frames, rois)
         current = self.first + 16
         frames, rois = self.samples(current)
-        admissions = self.validations(current)
-        first = admissions[0]
-        new_marker = 101 if first.detection.marker_id == 100 else 100
-        modified = replace(
-            first, detection=replace(first.detection, marker_id=new_marker)
-        )
+        traces = self.validations(current)
+        first = traces[0]
+        previous_marker = first.local_track_id - 1000
+        new_marker = 101 if previous_marker == 100 else 100
+        # The trace really carries another configured LED's complete
+        # codeword, but keeps the same camera-local motion track. The
+        # service must *decode* the conflict and refuse an ID swap.
+        forged_samples = []
+        for sample in first.trace:
+            phase = (sample.frame_stamp.trigger_id - self.epoch) % self.registry.period_triggers
+            new_bit = self.registry.codebook.patterns[new_marker][phase]
+            contrast = 120.0 if new_bit else 0.0
+            forged_samples.append(replace(
+                sample, roi=ROIContrast(contrast, 0.0, contrast, 10, 30),
+                predicted_roi_qualified=True,
+            ))
+        modified = replace(first, trace=tuple(forged_samples))
         with self.assertRaisesRegex(ValueError, "conflicting"):
-            self.tracker.advance(frames, rois, revalidations=[modified])
+            self.tracker.advance(frames, rois, revalidation_traces=[modified])
         self.assertEqual(self.tracker.last_trigger_id, current - 1)
-        accepted = self.tracker.advance(frames, rois, revalidations=admissions)
+        accepted = self.tracker.advance(frames, rois, revalidation_traces=traces)
         self.assertTrue(all(x.state == "TRACKING" for x in accepted.boards.values()))
+
+    def test_revalidation_requires_local_full_trace_not_fabricated_marker_id(self):
+        self.bootstrap()
+        frames, rois = self.samples(self.first + 1)
+        # Supplying the old external AdmittedMarker shape or an incomplete
+        # single sample cannot inject a new global marker identity.
+        with self.assertRaisesRegex(ValueError, "LocalTrackCycle"):
+            self.tracker.advance(frames, rois, revalidation_traces=[object()])
+        key = self.validations(self.first)[0]
+        single_sample = replace(
+            key, target_frame=frames[0], trace=(rois[0],)
+        )
+        with self.assertRaises(ValueError):
+            self.tracker.advance(
+                frames, rois, revalidation_traces=[single_sample]
+            )
+        self.assertEqual(self.tracker.last_trigger_id, self.first)
 
     def test_clock_change_and_missing_triggers_fail_before_state_commit(self):
         self.bootstrap()

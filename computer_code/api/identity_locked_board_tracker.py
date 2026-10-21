@@ -2,7 +2,7 @@
 
 Software-only: this does NOT create hardware exposure triggers, authenticate a
 controller, or switch the live drone serial path. A lock comes from a
-previously validated full-code-cycle AdmittedMarker, not a guessed position.
+a locally re-decoded code-history trace using the active registry, not a guessed marker ID.
 Later frames use the active codebook phase and *actually observed* ON centroids.
 No predicted/dark pixel is ever labeled as a measured 2D or 6DoF observation.
 
@@ -20,11 +20,11 @@ import numpy as np
 
 from board_patterns import BoardPatternRegistry
 from board_recognizer import (
-    BoardOutcome, BoardRecognitionResult, recognize_boards,
+    BoardOutcome, BoardRecognitionResult, LocalTrackCycle, recognize_boards,
 )
 from geometry import _observation_array
 from light_intensity import BinaryIntensityCalibration, StampedTrackROI
-from marker_admission import AdmittedMarker
+from marker_admission import admit_track_marker_at_frame
 from spatiotemporal_reconstruction import (
     SynchronizedGeometry, reconstruct_synchronized_markers,
 )
@@ -228,14 +228,15 @@ class IdentityLockedBoardTracker:
         frames: Sequence[FrameStamp],
         tracked_roi: Sequence[StampedTrackROI],
         *,
-        revalidations: Sequence[AdmittedMarker] = (),
+        revalidation_traces: Sequence[LocalTrackCycle] = (),
         controller_config_sha256: str | None = None,
     ) -> LockedBoardFrame:
         """Process one real exposure batch, atomically, with no pose caching.
 
         After the first code-cycle admission, subsequent frames use locked
         IDs with *actual ON detections*, not predicted or OFF positions.
-        Revalidation must refer to the same current frame and local track.
+        Revalidation decodes the *raw track cycle* under the active registry,
+        and must refer to the same current frame and local track.
         The current code phase and calibrated observed light bit must agree.
         Locks expire after max_identity_age_triggers without new code evidence.
         """
@@ -312,20 +313,31 @@ class IdentityLockedBoardTracker:
         ]
         newly_confirmed = []
         seen_revalidations = set()
-        for admission in revalidations:
-            if not isinstance(admission, AdmittedMarker):
-                raise ValueError("revalidations must contain AdmittedMarker")
-            camera = _nonnegative_int(admission.camera_id, "admission camera_id")
+        for candidate in revalidation_traces:
+            if not isinstance(candidate, LocalTrackCycle):
+                raise ValueError("revalidation_traces must contain LocalTrackCycle")
+            camera = _nonnegative_int(candidate.camera_id, "revalidation camera_id")
             local_id = _nonnegative_int(
-                admission.local_track_id, "admission local_track_id"
+                candidate.local_track_id, "revalidation local_track_id"
             )
             key = (camera, local_id)
             if key in seen_revalidations:
                 raise ValueError("duplicate code revalidation for a local track")
             seen_revalidations.add(key)
             roi = seen_roi.get(key)
-            if roi is None or admission.detection.frame_stamp != roi.frame_stamp:
+            if roi is None or candidate.target_frame != roi.frame_stamp:
                 raise ValueError("revalidated identity lacks current tracked frame evidence")
+            # Critical trust boundary: there is no caller-supplied marker ID.
+            # Decode from the full stamped local trace using *this* active
+            # registry's codebook and the registered camera calibration.
+            admission = admit_track_marker_at_frame(
+                candidate.trace,
+                self.registry.codebook,
+                self.brightness_calibration_by_camera_id[camera],
+                camera_id=camera, local_track_id=local_id,
+                target_frame=roi.frame_stamp,
+                trigger_epoch=self.trigger_epoch,
+            )
             marker = _nonnegative_int(
                 admission.detection.marker_id, "admitted marker_id"
             )
