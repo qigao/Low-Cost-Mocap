@@ -84,9 +84,9 @@ def triangulate_consensus(
         raise ValueError("min_depth must be a finite non-negative real scalar")
     if (
         not finite_real_scalar(min_parallax_angle_deg)
-        or not 0 <= min_parallax_angle_deg <= 180
+        or not 0 <= min_parallax_angle_deg <= 90
     ):
-        raise ValueError("min_parallax_angle_deg must be a finite real scalar between 0 and 180")
+        raise ValueError("min_parallax_angle_deg must be a finite real scalar between 0 and 90")
     if (
         not finite_real_scalar(ambiguity_rms_tolerance_px)
         or ambiguity_rms_tolerance_px < 0
