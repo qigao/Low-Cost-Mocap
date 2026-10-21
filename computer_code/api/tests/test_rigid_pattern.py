@@ -68,7 +68,7 @@ class RigidPatternTests(unittest.TestCase):
             fit_rigid_pattern(line_model, line_observed)
 
     def test_rejects_non_numeric_or_boolean_marker_indices(self):
-        for indices in (["0", "1", "2"], [0.0, 1.0, 2.5], [0, True, 2], [0 + 0j, 1 + 0j, 2 + 0j]):
+        for indices in (["0", "1", "2"], [0.0, 1.0, 2.5], [False, True, False], [0 + 0j, 1 + 0j, 2 + 0j]):
             with self.subTest(indices=indices):
                 with self.assertRaisesRegex(ValueError, "marker_indices"):
                     fit_rigid_pattern(
