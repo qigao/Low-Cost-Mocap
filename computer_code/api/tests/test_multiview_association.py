@@ -36,18 +36,15 @@ class PairwiseAssociationTests(unittest.TestCase):
         self.assertEqual(associate_pairwise([], [[10.0, 20.0]], self.F), [])
         self.assertEqual(associate_pairwise([[10.0, 20.0]], [], self.F), [])
 
-    def test_overflowing_finite_coordinates_produce_infinite_cost_not_nan(self):
-        errors = sampson_errors(
-            [[1e200, 1e200]], [[-1e200, 1e200]], self.F
-        )
-        self.assertTrue(np.isinf(errors[0, 0]))
-        self.assertFalse(np.isnan(errors).any())
+    def test_rejects_finite_coordinates_outside_safe_sampson_range(self):
+        with self.assertRaisesRegex(ValueError, "safe float64 Sampson range"):
+            sampson_errors([[1e200, 1e200]], [[-1e200, 1e200]], self.F)
 
-    def test_overflowing_finite_coordinates_remain_unmatched(self):
-        matches = associate_pairwise(
-            [[1e200, 1e200]], [[-1e200, 1e200]], self.F
-        )
-        self.assertEqual(matches, [])
+    def test_association_rejects_coordinates_outside_safe_sampson_range(self):
+        with self.assertRaisesRegex(ValueError, "safe float64 Sampson range"):
+            associate_pairwise(
+                [[1e200, 1e200]], [[-1e200, 1e200]], self.F
+            )
 
     def test_rejects_non_finite_points(self):
         with self.assertRaisesRegex(ValueError, "finite"):
