@@ -173,6 +173,36 @@ class TriangulationTests(unittest.TestCase):
                 min_parallax_angle_deg=0.1,
             )
 
+    def test_tiny_antiparallel_parallax_retains_angle_precision(self):
+        # For this geometry |dot(ray_0, ray_1)| rounds to 1.0 in float64.
+        # atan2(cross_norm, |dot|) still reports the nonzero acute angle.
+        R = np.diag([-1.0, 1.0, -1.0])
+        poses = [
+            {"R": np.eye(3), "t": np.zeros(3)},
+            {"R": R, "t": np.array([0.0, 0.0, 10.0])},
+        ]
+        point = np.array([1e-8, 0.0, 5.0])
+        observations = []
+        for pose in poses:
+            projection = self.K @ (pose["R"] @ point + pose["t"])
+            observations.append(projection[:2] / projection[2])
+        _, metrics = triangulate_point(
+            observations, poses, [self.K, self.K],
+            min_parallax_angle_deg=0.0,
+        )
+        self.assertGreater(metrics["max_parallax_angle_deg"], 0.0)
+        self.assertLess(metrics["max_parallax_angle_deg"], 1e-6)
+
+    def test_rejects_parallax_threshold_above_acute_angle_range(self):
+        observations = [self.project(i) for i in range(3)]
+        for threshold in (90.000001, 120.0, 180.0):
+            with self.subTest(threshold=threshold):
+                with self.assertRaisesRegex(ValueError, "between 0 and 90"):
+                    triangulate_point(
+                        observations, self.poses, self.Ks,
+                        min_parallax_angle_deg=threshold,
+                    )
+
     def test_missing_middle_camera_keeps_camera_indices(self):
         observations = [self.project(0), None, self.project(2)]
         point, metrics = triangulate_point(observations, self.poses, self.Ks)
