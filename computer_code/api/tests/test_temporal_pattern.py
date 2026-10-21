@@ -121,6 +121,62 @@ class TemporalIdentityTests(unittest.TestCase):
         self.assertEqual(decoded.bit_errors, 1)
         self.assertGreaterEqual(decoded.competing_error_margin, 1)
 
+    def test_missing_trigger_phases_are_counted_as_erasures(self):
+        code = self.patterns[10]
+        samples = [
+            LightSample(900 + phase, code[phase])
+            for phase in (0, 1, 2, 3, 4)
+        ]
+        decoded = decode_temporal_marker(
+            samples, self.codes, trigger_epoch=900, min_valid_samples=5,
+        )
+        self.assertEqual(decoded.marker_id, 10)
+        self.assertEqual(decoded.valid_samples, 5)
+        self.assertEqual(decoded.erased_samples, 3)
+        self.assertEqual(decoded.bit_errors, 0)
+
+    def test_all_one_flip_and_erasure_masks_never_accept_wrong_marker(self):
+        # Exhaust every subset with >=4 observed phases and every allowed
+        # single-bit error. Wrong decoded identities are forbidden even
+        # if the decoder must reject most heavily erased sequences.
+        accepted = 0
+        ambiguous = 0
+        for marker, code in self.patterns.items():
+            for mask in range(1 << self.codes.period):
+                phases = [
+                    phase for phase in range(self.codes.period)
+                    if mask & (1 << phase)
+                ]
+                if len(phases) < 4:
+                    continue
+                for flipped in [None] + phases:
+                    samples = [
+                        LightSample(
+                            1100 + phase,
+                            1 - code[phase] if phase == flipped else code[phase],
+                        )
+                        for phase in phases
+                    ]
+                    try:
+                        decoded = decode_temporal_marker(
+                            samples, self.codes, trigger_epoch=1100,
+                            min_valid_samples=4,
+                        )
+                    except ValueError:
+                        ambiguous += 1
+                        continue
+                    self.assertEqual(
+                        decoded.marker_id, marker,
+                        msg=f"wrong identity source={marker} mask={mask} "
+                            f"flipped={flipped}",
+                    )
+                    self.assertEqual(
+                        decoded.erased_samples, self.codes.period - len(phases)
+                    )
+                    accepted += 1
+        self.assertGreater(accepted, 0)
+        self.assertGreater(ambiguous, 0)
+
     def test_codes_are_explicitly_phase_anchored_to_trigger_epoch(self):
         truth = self.patterns[11]
         samples = [LightSample(200 + index, bit)

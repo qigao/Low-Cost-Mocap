@@ -245,7 +245,9 @@ def decode_temporal_marker(
         marker_id=marker,
         cycle_index=next(iter(cycle_indices)),
         valid_samples=len(observed),
-        erased_samples=len(seen) - len(observed),
+        # Both explicit None entries and omitted trigger phases are
+        # missing measurements in the actual code period.
+        erased_samples=codebook.period - len(observed),
         bit_errors=best,
         competing_error_margin=difference,
     )

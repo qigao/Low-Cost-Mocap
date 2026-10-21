@@ -35,7 +35,10 @@ requirements.
   ambiguous results. Every alternative marker with an error count
   within the full configured bit-error budget blocks decoding, even if the
   apparent winner has fewer errors; partial erasures cannot silently weaken
-  this uniqueness gate. It does not search for a convenient phase shift.
+  this uniqueness gate. Missing trigger phases count as erasures,
+  including omitted records with no explicit None. Exhaustive one-bit-error
+  and erasure-mask tests require all accepted IDs to match the true source.
+  It does not search for a convenient phase shift.
 - light_tracking.BoundedLightTracker uses bounded camera-local predicted
   motion, globally one-to-one assignment and explicit alternative-assignment
   checks. Near-crossing ambiguity, duplicate detections and exhausted track
