@@ -10,7 +10,10 @@ from types import MappingProxyType
 import numpy as np
 
 from board_patterns import BoardPatternRegistry
-from board_recognizer import recognize_boards, recognize_admitted_boards
+from board_recognizer import (
+    LocalTrackCycle, recognize_boards, recognize_admitted_boards,
+    recognize_tracked_boards,
+)
 from light_intensity import BinaryIntensityCalibration, ROIContrast, StampedTrackROI
 from light_tracking import TrackEvidence
 from marker_admission import admit_track_marker_at_frame
@@ -170,7 +173,7 @@ class BoardRecognitionTests(unittest.TestCase):
         p = self.K[camera] @ (pose["R"] @ xyz + pose["t"])
         return tuple((p[:2] / p[2]).tolist())
 
-    def admissions(self):
+    def admissions(self, *, as_traces=False):
         out = []
         for final in self.frames:
             camera = final.camera_id
@@ -196,11 +199,14 @@ class BoardRecognitionTests(unittest.TestCase):
                     trace.append(StampedTrackROI(
                         stamp, track, roi, predicted_roi_qualified=not bool(bit),
                     ))
-                out.append(admit_track_marker_at_frame(
-                    trace, self.registry.codebook, self.calibration,
-                    camera_id=camera, local_track_id=marker,
-                    target_frame=final, trigger_epoch=self.epoch,
-                ))
+                if as_traces:
+                    out.append(LocalTrackCycle(camera, marker, final, tuple(trace)))
+                else:
+                    out.append(admit_track_marker_at_frame(
+                        trace, self.registry.codebook, self.calibration,
+                        camera_id=camera, local_track_id=marker,
+                        target_frame=final, trigger_epoch=self.epoch,
+                    ))
         return out
 
     def recognize(self, admissions=None):
@@ -284,6 +290,64 @@ class BoardRecognitionTests(unittest.TestCase):
         unknown_id = replace(a, detection=replace(a.detection, marker_id=999))
         with self.assertRaisesRegex(ValueError, "not registered"):
             self.recognize([unknown_id])
+
+    def test_preferred_trace_service_decodes_from_registered_codebook(self):
+        tracks = self.admissions(as_traces=True)
+        result = recognize_tracked_boards(
+            tracks, self.frames, [2, 5, 9],
+            self.cameras, self.K,
+            {camera: self.calibration for camera in (2, 5, 9)},
+            self.registry,
+            trigger_epoch=self.epoch,
+            max_exposure_skew_ns=60,
+            controller_config_sha256=self.registry.config_sha256,
+            max_reprojection_rms_px=1e-5,
+            max_rigid_rms_world_units=1e-5,
+        )
+        self.assertEqual(result.config_sha256, self.registry.config_sha256)
+        self.assertEqual(len(result.config_sha256), 64)
+        self.assertEqual(result.boards["board_A"].status, "recognized")
+        self.assertEqual(result.boards["board_B"].status, "recognized")
+
+    def test_controller_registry_revision_mismatch_is_rejected_before_decode(self):
+        tracks = self.admissions(as_traces=True)
+        with self.assertRaisesRegex(ValueError, "configuration SHA-256 mismatch"):
+            recognize_tracked_boards(
+                tracks, self.frames, [2, 5, 9],
+                self.cameras, self.K,
+                {camera: self.calibration for camera in (2, 5, 9)},
+                self.registry,
+                trigger_epoch=self.epoch,
+                max_exposure_skew_ns=60,
+                controller_config_sha256="0" * 64,
+            )
+        with self.assertRaisesRegex(ValueError, "cover exactly"):
+            recognize_tracked_boards(
+                [], self.frames, [2, 5, 9],
+                self.cameras, self.K, {2: self.calibration},
+                self.registry,
+                trigger_epoch=self.epoch, max_exposure_skew_ns=60,
+            )
+
+    def test_trace_service_rejects_borrowed_frame_and_duplicate_track(self):
+        tracks = self.admissions(as_traces=True)
+        with self.assertRaisesRegex(ValueError, "duplicate local light trace"):
+            recognize_tracked_boards(
+                [tracks[0], tracks[0]], self.frames, [2, 5, 9],
+                self.cameras, self.K,
+                {camera: self.calibration for camera in (2, 5, 9)},
+                self.registry,
+                trigger_epoch=self.epoch, max_exposure_skew_ns=60,
+            )
+        with self.assertRaisesRegex(ValueError, "current frame batch"):
+            recognize_tracked_boards(
+                [replace(tracks[0], target_frame=self.frames[1])],
+                self.frames, [2, 5, 9],
+                self.cameras, self.K,
+                {camera: self.calibration for camera in (2, 5, 9)},
+                self.registry,
+                trigger_epoch=self.epoch, max_exposure_skew_ns=60,
+            )
 
     def test_wrong_phase_refuses_pose_and_next_cycle_has_no_stale_result(self):
         non_pose_frames = [

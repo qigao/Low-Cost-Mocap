@@ -13,7 +13,8 @@ from types import MappingProxyType
 import numpy as np
 
 from board_patterns import BoardPatternRegistry
-from marker_admission import AdmittedMarker
+from light_intensity import BinaryIntensityCalibration, StampedTrackROI
+from marker_admission import AdmittedMarker, admit_track_marker_at_frame
 from spatiotemporal_reconstruction import (
     SynchronizedGeometry,
     reconstruct_synchronized_markers,
@@ -52,6 +53,16 @@ class BoardRecognitionResult:
     trigger_id: int
     camera_ids: tuple[int, ...]
     boards: Mapping[str, BoardOutcome]
+    config_sha256: str
+
+
+@dataclass(frozen=True)
+class LocalTrackCycle:
+    """One physical camera-local tracked light's captured code-cycle history."""
+    camera_id: int
+    local_track_id: int
+    target_frame: FrameStamp
+    trace: tuple[StampedTrackROI, ...]
 
 
 def _readonly(array: np.ndarray) -> np.ndarray:
@@ -151,7 +162,8 @@ def recognize_boards(
             board_id, "recognized", ids, excluded, pose
         )
     return BoardRecognitionResult(
-        trigger, tuple(reconstruction.camera_ids), MappingProxyType(outcomes)
+        trigger, tuple(reconstruction.camera_ids), MappingProxyType(outcomes),
+        registry.config_sha256,
     )
 
 
@@ -237,5 +249,103 @@ def recognize_admitted_boards(
         )
     return recognize_boards(
         reconstruction, registry,
+        max_rigid_rms_world_units=max_rigid_rms_world_units,
+    )
+
+
+
+def recognize_tracked_boards(
+    track_cycles: Sequence[LocalTrackCycle],
+    frames: Sequence[FrameStamp],
+    expected_camera_ids: Sequence[int],
+    camera_poses_by_id: Mapping,
+    intrinsics_by_id: Mapping,
+    contrast_calibration_by_camera_id: Mapping[int, BinaryIntensityCalibration],
+    registry: BoardPatternRegistry,
+    *,
+    trigger_epoch: int,
+    max_exposure_skew_ns: int,
+    controller_config_sha256: str | None = None,
+    previous_trigger_id: int | None = None,
+    allow_trigger_gaps: bool = False,
+    min_valid_samples: int = 4,
+    max_reprojection_rms_px: float = 1.0,
+    max_rigid_rms_world_units: float = 0.02,
+) -> BoardRecognitionResult:
+    """Preferred service boundary: decode using this registry's codebook.
+
+    Inputs contain no caller-supplied marker IDs. Camera-specific intensity
+    thresholds and a single immutable global codebook are used for every
+    local light. A controller-reported configuration fingerprint can be
+    compared but is NOT hardware authentication or exposure provenance.
+    """
+    if not isinstance(registry, BoardPatternRegistry):
+        raise ValueError("registry must be BoardPatternRegistry")
+    epoch = _nonnegative_int(trigger_epoch, "trigger_epoch")
+    if controller_config_sha256 is not None:
+        if (
+            not isinstance(controller_config_sha256, str)
+            or controller_config_sha256 != registry.config_sha256
+        ):
+            raise ValueError("LED controller pattern configuration SHA-256 mismatch")
+    camera_ids = tuple(
+        _nonnegative_int(camera, "expected camera_id")
+        for camera in expected_camera_ids
+    )
+    if not camera_ids or len(set(camera_ids)) != len(camera_ids):
+        raise ValueError("expected_camera_ids must be unique and nonempty")
+    if (
+        not isinstance(contrast_calibration_by_camera_id, Mapping)
+        or set(contrast_calibration_by_camera_id) != set(camera_ids)
+    ):
+        raise ValueError("contrast calibration must cover exactly the camera IDs")
+    if not all(
+        isinstance(contrast_calibration_by_camera_id[camera], BinaryIntensityCalibration)
+        for camera in camera_ids
+    ):
+        raise ValueError("every camera requires a BinaryIntensityCalibration")
+
+    frame_by_camera = {}
+    for frame in frames:
+        if not isinstance(frame, FrameStamp):
+            raise ValueError("frames must contain FrameStamp")
+        if frame.camera_id in frame_by_camera:
+            raise ValueError("duplicate camera frame in board recognition")
+        frame_by_camera[frame.camera_id] = frame
+    # This checks the exact bytes/fields of the declared frame stamps. Their
+    # physical acquisition clock remains an independent hardware gate.
+    seen_local: set[tuple[int, int]] = set()
+    admitted = []
+    for entry in track_cycles:
+        if not isinstance(entry, LocalTrackCycle):
+            raise ValueError("track_cycles must contain LocalTrackCycle entries")
+        camera = _nonnegative_int(entry.camera_id, "camera_id")
+        track = _nonnegative_int(entry.local_track_id, "local_track_id")
+        if (
+            camera not in frame_by_camera
+            or entry.target_frame != frame_by_camera[camera]
+        ):
+            raise ValueError("local light trace does not belong to current frame batch")
+        local_key = (camera, track)
+        if local_key in seen_local:
+            raise ValueError("duplicate local light trace for camera and track")
+        seen_local.add(local_key)
+        admitted.append(admit_track_marker_at_frame(
+            entry.trace, registry.codebook,
+            contrast_calibration_by_camera_id[camera],
+            camera_id=camera,
+            local_track_id=track,
+            target_frame=entry.target_frame,
+            trigger_epoch=epoch,
+            min_valid_samples=min_valid_samples,
+        ))
+    return recognize_admitted_boards(
+        admitted, frames, camera_ids, camera_poses_by_id,
+        intrinsics_by_id, registry,
+        trigger_epoch=epoch,
+        max_exposure_skew_ns=max_exposure_skew_ns,
+        previous_trigger_id=previous_trigger_id,
+        allow_trigger_gaps=allow_trigger_gaps,
+        max_reprojection_rms_px=max_reprojection_rms_px,
         max_rigid_rms_world_units=max_rigid_rms_world_units,
     )
