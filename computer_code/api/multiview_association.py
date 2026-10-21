@@ -39,6 +39,10 @@ def sampson_errors(left_points: object, right_points: object, fundamental: objec
         raise ValueError("fundamental matrix must be a finite 3x3 matrix")
     if not np.any(F):
         raise ValueError("fundamental matrix must be non-zero")
+    # Fundamental matrices are defined only up to a non-zero scale. Normalize
+    # before forming quadratic terms so the absolute denominator guard below
+    # cannot make otherwise equivalent matrices behave differently.
+    F = F / np.max(np.abs(F))
     if left.shape[0] == 0 or right.shape[0] == 0:
         return np.empty((left.shape[0], right.shape[0]), dtype=np.float64)
 
