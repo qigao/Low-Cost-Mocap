@@ -71,10 +71,19 @@ class CalibratedBundleTests(unittest.TestCase):
             observations, initial_poses, self.K,
             min_tracks=10, max_nfev=300,
         )
-        self.assertEqual(metrics["admitted_track_indices"], list(range(15)))
-        self.assertEqual(metrics["signed_residual_count"], 2 * int(np.sum(
-            np.any(np.asarray(observations, dtype=object) != None, axis=2)
-        )))
+        visible_mask = np.all(
+            np.asarray(observations, dtype=object) != None, axis=2
+        )
+        # Track 9 loses cameras 0 and 1; a single remaining view must be
+        # excluded at admission, not silently fitted as a triangulated point.
+        expected = np.flatnonzero(visible_mask.sum(axis=1) >= 2).tolist()
+        self.assertEqual(expected, [i for i in range(15) if i != 9])
+        self.assertEqual(metrics["admitted_track_indices"], expected)
+        self.assertEqual(metrics["excluded_track_indices"], [9])
+        self.assertEqual(
+            metrics["signed_residual_count"],
+            2 * int(visible_mask[expected].sum()),
+        )
         self.assertTrue(metrics["camera_zero_pose_fixed"])
         self.assertTrue(metrics["camera_one_translation_fixed"])
         self.assertTrue(metrics["intrinsics_fixed"])
