@@ -28,6 +28,22 @@ Then run `yarn run dev` to start the webserver. You will be given a url view the
 
 In another terminal window, run `python3 api/index.py` to start the backend server. This is what receives the camera streams and does motion capture computations.
 
+## Multi-board LED pattern configuration (experimental software)
+
+Multiple LED boards are configured with one globally unique marker ID and
+temporal code per LED, plus board-local measured 3D positions. A shared code
+epoch and optional common ON pose phase let independent camera observations
+join the correct board without distance-only drone-index heuristics.
+
+- [Board pattern registry and recognition guide](computer_code/api/BOARD_PATTERNS.md)
+- [Two-board example JSON](computer_code/api/board-patterns.example.json)
+- Software-only checker: `cd computer_code/api && python board_pattern_cli.py board-patterns.example.json`
+
+**Important:** These are standalone software modules and tests. The legacy
+camera capture and serial flight-control code has **not** been switched.
+Real sensor-exposure synchronization, physical scale and motion-to-control
+safety remain in [hardware validation Issues #2–#7](docs/HARDWARE_VALIDATION.md).
+
 ## Documentation
 The documentation for this project is admittedly pretty lacking, if anyone would like to put type definitions in the Python code that would be amazing and probably go a long way to helping the readability of the code. Feel free to also use the [discussion](https://github.com/jyjblrd/Mocap-Drones/discussions) tab to ask questions.
 
