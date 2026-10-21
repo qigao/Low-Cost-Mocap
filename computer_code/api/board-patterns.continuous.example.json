@@ -2,7 +2,6 @@
   "version": 1,
   "period_triggers": 16,
   "max_bit_errors": 1,
-  "pose_phase": 15,
   "boards": {
     "board_A": {
       "type": "high-visibility-quad3d",
