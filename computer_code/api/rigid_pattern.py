@@ -66,7 +66,13 @@ def fit_rigid_pattern(
     observed_center = observed.mean(axis=0)
     X = paired_model - model_center
     Y = observed - observed_center
-    if np.linalg.matrix_rank(X, tol=1e-10) < 2:
+    # Use a relative singular-value threshold so degeneracy detection is
+    # invariant to the coordinate units used for the marker layout.
+    centered_singular_values = np.linalg.svd(X, compute_uv=False)
+    if (
+        centered_singular_values[0] == 0.0
+        or centered_singular_values[1] <= 1e-10 * centered_singular_values[0]
+    ):
         raise ValueError("model marker subset is collinear or degenerate")
 
     U, singular_values, Vt = np.linalg.svd(X.T @ Y)
