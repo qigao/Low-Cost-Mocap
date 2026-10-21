@@ -1,7 +1,7 @@
 import numpy as np
-from scipy import linalg, optimize, signal
+from scipy import linalg, signal
 import cv2 as cv
-from scipy.spatial.transform import Rotation
+from bundle_geometry import refine_calibrated_bundle
 import copy
 import json
 import os
@@ -253,53 +253,23 @@ def calculate_reprojection_error(image_points, object_point, camera_poses):
     return float(np.mean(residuals))
 
 def bundle_adjustment(image_points, camera_poses, socketio):
+    """Optimize calibrated poses and points without mutating camera parameters.
+
+    Retain the existing hardware API boundary. The numerical implementation
+    lives in the pure bundle_geometry module, which holds the first camera
+    and second camera's translation vector fixed as an explicit scale gauge.
+    The calling calibration event emits one final result only on success.
+    """
     cameras = Cameras.instance()
-
-    def params_to_camera_poses(params):
-        focal_distances = []
-        num_cameras = int((params.size-1)/7)+1
-        camera_poses = [{
-            "R": np.eye(3),
-            "t": np.array([0,0,0], dtype=np.float32)
-        }]
-        focal_distances.append(params[0])
-        for i in range(0, num_cameras-1):
-            focal_distances.append(params[i*7+1])
-            camera_poses.append({
-                "R": Rotation.as_matrix(Rotation.from_rotvec(params[i*7 + 2 : i*7 + 3 + 2])),
-                "t": params[i*7 + 3 + 2 : i*7 + 6 + 2]
-            })
-
-        return camera_poses, focal_distances
-
-    def residual_function(params):
-        camera_poses, focal_distances = params_to_camera_poses(params)
-        for i in range(0, len(camera_poses)):
-            intrinsic = cameras.get_camera_params(i)["intrinsic_matrix"]
-            intrinsic[0, 0] = focal_distances[i]
-            intrinsic[1, 1] = focal_distances[i]
-            # cameras.set_camera_params(i, intrinsic)
-        object_points = triangulate_points(image_points, camera_poses)
-        errors = calculate_reprojection_errors(image_points, object_points, camera_poses)
-        errors = errors.astype(np.float32)
-        socketio.emit("camera-pose", {"camera_poses": camera_pose_to_serializable(camera_poses)})
-        
-        return errors
-
-    focal_distance = cameras.get_camera_params(0)["intrinsic_matrix"][0,0]
-    init_params = np.array([focal_distance])
-    for i, camera_pose in enumerate(camera_poses[1:]):
-        rot_vec = Rotation.as_rotvec(Rotation.from_matrix(camera_pose["R"])).flatten()
-        focal_distance = cameras.get_camera_params(i)["intrinsic_matrix"][0,0]
-        init_params = np.concatenate([init_params, [focal_distance]])
-        init_params = np.concatenate([init_params, rot_vec])
-        init_params = np.concatenate([init_params, camera_pose["t"].flatten()])
-
-    res = optimize.least_squares(
-        residual_function, init_params, verbose=2, loss="cauchy", ftol=1E-2
+    intrinsics = [
+        cameras.get_camera_params(camera_id)["intrinsic_matrix"]
+        for camera_id in range(len(camera_poses))
+    ]
+    refined_poses, _metrics = refine_calibrated_bundle(
+        image_points, camera_poses, intrinsics
     )
-    return params_to_camera_poses(res.x)[0]
-    
+    return refined_poses
+
 
 def triangulate_point(image_points, camera_poses):
     """Direct SVD triangulation using original camera identities.

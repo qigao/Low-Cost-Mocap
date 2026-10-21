@@ -144,6 +144,44 @@ class CalibrationAdapterTests(unittest.TestCase):
         self.assertIn("error", self.emitted[0][1])
         self.assertIn("camera pair 1/2", self.emitted[0][1]["error"])
 
+    def test_calibration_event_uses_real_gauge_fixed_bundle_solver(self):
+        from bundle_geometry import refine_calibrated_bundle
+
+        actual_metrics = []
+        def real_bundle(image_points, camera_poses, socketio):
+            refined, metrics = refine_calibrated_bundle(
+                image_points, camera_poses, self.K, min_tracks=12
+            )
+            actual_metrics.append(metrics)
+            return refined
+
+        self.handler.__globals__["bundle_adjustment"] = real_bundle
+        frames = np.stack(self.observations, axis=1).tolist()
+        self.handler({"cameraPoints": frames})
+        self.assertEqual(len(self.emitted), 1)
+        self.assertEqual(self.intrinsic_pairs, [(0, 1), (1, 2)])
+        self.assertNotIn("error", self.emitted[0][1])
+        self.assertEqual(len(actual_metrics), 1)
+        self.assertEqual(actual_metrics[0]["signed_residual_count"], 2 * 20 * 3)
+        self.assertTrue(actual_metrics[0]["camera_one_translation_fixed"])
+        self.assertTrue(actual_metrics[0]["intrinsics_fixed"])
+        self.assertFalse(actual_metrics[0]["translation_scale_known"])
+        for actual, expected in zip(
+            self.emitted[0][1]["camera_poses"], self.poses
+        ):
+            np.testing.assert_allclose(actual["R"], expected["R"], atol=1e-6)
+            np.testing.assert_allclose(actual["t"], expected["t"], atol=1e-6)
+
+    def test_bundle_failure_does_not_publish_partial_camera_pose(self):
+        def failing_bundle(image_points, camera_poses, socketio):
+            raise ValueError("bundle did not converge")
+
+        self.handler.__globals__["bundle_adjustment"] = failing_bundle
+        self.handler({"cameraPoints": np.stack(self.observations, axis=1).tolist()})
+        self.assertEqual(len(self.emitted), 1)
+        self.assertEqual(self.emitted[0][0], "camera-pose")
+        self.assertEqual(self.emitted[0][1], {"error": "bundle did not converge"})
+
     def test_invalid_ransac_result_fails_closed(self):
         self.cv.findFundamentalMat = lambda *_args: (None, None)
         self.handler({"cameraPoints": np.stack(self.observations, axis=1).tolist()})
