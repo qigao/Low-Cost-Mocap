@@ -89,6 +89,21 @@ class PairwiseAssociationTests(unittest.TestCase):
                 [[1e200, 1e200]], [[-1e200, 1e200]], self.F
             )
 
+    def test_rejects_non_real_numeric_point_coordinates(self):
+        invalid = (
+            [["100", "50"]],
+            [[True, False]],
+            [[100, True]],
+            [[np.float64(100.0), np.bool_(False)]],
+            [[100.0 + 0j, 50.0 + 0j]],
+        )
+        for points in invalid:
+            with self.subTest(points=repr(points)):
+                with self.assertRaisesRegex(ValueError, "real numeric coordinates"):
+                    sampson_errors(points, [[130.0, 50.0]], self.F)
+                with self.assertRaisesRegex(ValueError, "real numeric coordinates"):
+                    associate_pairwise(points, [[130.0, 50.0]], self.F)
+
     def test_rejects_non_finite_points(self):
         with self.assertRaisesRegex(ValueError, "finite"):
             associate_pairwise([[float("nan"), 2.0]], [[1.0, 2.0]], self.F)
