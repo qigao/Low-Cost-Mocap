@@ -40,6 +40,17 @@ class PairwiseAssociationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite"):
             associate_pairwise([[float("nan"), 2.0]], [[1.0, 2.0]], self.F)
 
+    def test_sampson_errors_are_invariant_to_fundamental_matrix_scale(self):
+        left = [[100.0, 50.0], [200.0, 80.0]]
+        right = [[130.0, 50.0], [210.0, 80.0]]
+        baseline = sampson_errors(left, right, self.F)
+        for scale in (1e-12, 1e12):
+            with self.subTest(scale=scale):
+                np.testing.assert_allclose(
+                    sampson_errors(left, right, self.F * scale), baseline,
+                    rtol=1e-12, atol=1e-12,
+                )
+
     def test_rejects_zero_fundamental_matrix(self):
         with self.assertRaisesRegex(ValueError, "non-zero"):
             sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], np.zeros((3, 3)))
