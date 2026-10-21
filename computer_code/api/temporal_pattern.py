@@ -259,6 +259,14 @@ class IdentifiedDetection:
 
 
 @dataclass(frozen=True)
+class StampedIdentifiedDetection:
+    """A decoded marker location bound to its originating frame stamp."""
+    frame_stamp: FrameStamp
+    marker_id: int
+    xy: Any
+
+
+@dataclass(frozen=True)
 class GroupedMarkers:
     observations_by_marker_id: Mapping[int, tuple[np.ndarray | None, ...]]
     excluded_marker_ids: tuple[int, ...]
@@ -275,6 +283,9 @@ def group_decoded_observations(
 
     Any duplicate (camera, marker) identity fails closed; identities with
     fewer than min_views are reported as excluded, never silently triangulated.
+
+    This low-level helper assumes frames already align. Moving targets must
+    use group_synchronized_detections to enforce same-trigger admission.
     """
     cameras = _nonnegative_int(camera_count, "camera_count")
     views = _nonnegative_int(min_views, "min_views")
@@ -310,3 +321,56 @@ def group_decoded_observations(
         else:
             admitted[marker] = tuple(values)
     return GroupedMarkers(MappingProxyType(admitted), tuple(excluded))
+
+
+def group_synchronized_detections(
+    detections: Sequence[StampedIdentifiedDetection],
+    frames: Sequence[FrameStamp],
+    expected_camera_ids: Sequence[int],
+    *,
+    max_exposure_skew_ns: int,
+    previous_trigger_id: int | None = None,
+    allow_trigger_gaps: bool = False,
+    min_views: int = 2,
+    allowed_marker_ids: Sequence[int] | None = None,
+) -> tuple[SynchronizedBatch, GroupedMarkers]:
+    """Bind decoded 2D marker locations to one admitted exposure batch.
+
+    It rejects observations borrowed from another trigger, camera, timestamp
+    or clock domain, preserving expected_camera_ids order even when those
+    physical IDs are not consecutive. A separate trusted camera adapter must
+    still prove real hardware exposure provenance.
+    """
+    batch = validate_trigger_batch(
+        frames, expected_camera_ids,
+        max_exposure_skew_ns=max_exposure_skew_ns,
+        previous_trigger_id=previous_trigger_id,
+        allow_trigger_gaps=allow_trigger_gaps,
+    )
+    frame_by_camera = {frame.camera_id: frame for frame in frames}
+    camera_position = {
+        camera_id: offset for offset, camera_id in enumerate(batch.camera_ids)
+    }
+    aligned = []
+    for detection in detections:
+        if not isinstance(detection, StampedIdentifiedDetection):
+            raise ValueError("detections must contain StampedIdentifiedDetection records")
+        stamp = detection.frame_stamp
+        if (
+            not isinstance(stamp, FrameStamp)
+            or stamp.camera_id not in frame_by_camera
+            or stamp != frame_by_camera[stamp.camera_id]
+        ):
+            raise ValueError(
+                "marker observation frame does not belong to synchronized trigger batch"
+            )
+        aligned.append(IdentifiedDetection(
+            camera_id=camera_position[stamp.camera_id],
+            marker_id=detection.marker_id,
+            xy=detection.xy,
+        ))
+    grouped = group_decoded_observations(
+        aligned, camera_count=len(batch.camera_ids), min_views=min_views,
+        allowed_marker_ids=allowed_marker_ids,
+    )
+    return batch, grouped

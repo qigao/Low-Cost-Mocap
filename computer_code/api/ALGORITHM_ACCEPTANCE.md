@@ -51,6 +51,12 @@ requirements.
   position. BinaryIntensityCalibration applies per-camera ON/OFF references
   and a dead zone; uncertain samples stay erasures before temporal decoding.
   This requires a separate stable light tracker and reference calibration.
+- group_synchronized_detections requires decoded 2D marker observations
+  to reference the exact FrameStamp of an admitted shared-trigger batch.
+  Borrowed frames from different triggers, clocks, or timestamps fail closed
+  before triangulation. Camera IDs may be noncontiguous and remain ordered
+  as declared in the admitted batch. This is a software consistency guard,
+  not proof of hardware timestamp provenance.
 - group_decoded_observations associates positively decoded marker IDs across
   cameras, preserving absent views and rejecting duplicate IDs in one view.
   geometry.triangulate_point and rigid_pattern.fit_rigid_pattern can then

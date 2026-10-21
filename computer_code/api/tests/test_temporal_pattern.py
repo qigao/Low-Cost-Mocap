@@ -7,6 +7,8 @@ from temporal_pattern import (
     TemporalCodebook,
     LightSample,
     IdentifiedDetection,
+    StampedIdentifiedDetection,
+    group_synchronized_detections,
     validate_trigger_batch,
     decode_temporal_marker,
     group_decoded_observations,
@@ -236,6 +238,83 @@ class CrossCameraIdentityTests(unittest.TestCase):
         self.assertEqual(grouped.excluded_marker_ids, (10,))
         np.testing.assert_array_equal(grouped.observations_by_marker_id[9][0],
                                       np.array([250, 238]))
+
+    def test_synchronized_group_retains_noncontiguous_camera_ids(self):
+        frames = [
+            FrameStamp(2, 900, 5_000_000, "rig-exposure"),
+            FrameStamp(5, 900, 5_000_010, "rig-exposure"),
+            FrameStamp(9, 900, 5_000_020, "rig-exposure"),
+        ]
+        observations = [
+            StampedIdentifiedDetection(frames[2], 7, (330., 240.)),
+            StampedIdentifiedDetection(frames[0], 8, (110., 230.)),
+            StampedIdentifiedDetection(frames[1], 7, (325., 238.)),
+            StampedIdentifiedDetection(frames[0], 7, (320., 235.)),
+            StampedIdentifiedDetection(frames[1], 8, (112., 233.)),
+            StampedIdentifiedDetection(frames[2], 99, (400., 250.)),
+        ]
+        batch, grouped = group_synchronized_detections(
+            observations, frames, [2, 5, 9],
+            max_exposure_skew_ns=40,
+            previous_trigger_id=899, allowed_marker_ids=[7, 8, 99],
+        )
+        self.assertEqual(batch.trigger_id, 900)
+        self.assertEqual(batch.camera_ids, (2, 5, 9))
+        self.assertEqual(tuple(grouped.observations_by_marker_id), (7, 8))
+        self.assertEqual(grouped.excluded_marker_ids, (99,))
+        self.assertIsNone(grouped.observations_by_marker_id[8][2])
+        np.testing.assert_array_equal(
+            grouped.observations_by_marker_id[7][0],
+            np.array([320., 235.]),
+        )
+
+    def test_synchronized_group_rejects_borrowed_frame_metadata(self):
+        frames = [
+            FrameStamp(0, 200, 1_000_000, "rig-exposure"),
+            FrameStamp(1, 200, 1_000_004, "rig-exposure"),
+        ]
+        invalid = [
+            FrameStamp(0, 199, 1_000_000, "rig-exposure"),
+            FrameStamp(1, 201, 1_000_004, "rig-exposure"),
+            FrameStamp(1, 200, 1_000_005, "rig-exposure"),
+            FrameStamp(1, 200, 1_000_004, "host-dequeue"),
+        ]
+        for wrong in invalid:
+            with self.subTest(wrong=repr(wrong)):
+                detections = [
+                    StampedIdentifiedDetection(frames[0], 2, (110., 200.)),
+                    StampedIdentifiedDetection(wrong, 2, (115., 203.)),
+                ]
+                with self.assertRaisesRegex(ValueError, "synchronized trigger batch"):
+                    group_synchronized_detections(
+                        detections, frames, [0, 1],
+                        max_exposure_skew_ns=10,
+                    )
+        valid = [
+            StampedIdentifiedDetection(frames[0], 2, (110., 200.)),
+            StampedIdentifiedDetection(frames[1], 2, (115., 203.)),
+        ]
+        batch, grouped = group_synchronized_detections(
+            valid, frames, [0, 1],
+            max_exposure_skew_ns=10, allowed_marker_ids=[2],
+        )
+        self.assertEqual(batch.trigger_id, 200)
+        self.assertEqual(tuple(grouped.observations_by_marker_id), (2,))
+
+    def test_synchronized_group_rejects_reused_camera_marker(self):
+        frames = [
+            FrameStamp(0, 100, 10_000, "rig-exposure"),
+            FrameStamp(1, 100, 10_001, "rig-exposure"),
+        ]
+        repeated = [
+            StampedIdentifiedDetection(frames[0], 5, (110., 200.)),
+            StampedIdentifiedDetection(frames[0], 5, (111., 200.)),
+            StampedIdentifiedDetection(frames[1], 5, (115., 203.)),
+        ]
+        with self.assertRaisesRegex(ValueError, "duplicate decoded marker"):
+            group_synchronized_detections(
+                repeated, frames, [0, 1], max_exposure_skew_ns=5,
+            )
 
     def test_duplicate_marker_in_single_camera_is_rejected(self):
         detections = [
