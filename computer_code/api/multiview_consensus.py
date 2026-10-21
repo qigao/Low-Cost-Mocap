@@ -21,7 +21,12 @@ def _project(point: np.ndarray, pose: Mapping[str, Any], intrinsic: Any) -> tupl
     if depth <= 0.0:
         return np.array([np.nan, np.nan]), depth
     projected_h = K @ camera_point
-    if abs(projected_h[2]) <= 1e-12:
+    denominator_scale = float(np.linalg.norm(K[2, :]) * np.linalg.norm(camera_point))
+    if (
+        not np.isfinite(projected_h).all()
+        or denominator_scale == 0.0
+        or abs(projected_h[2]) <= np.finfo(np.float64).eps * denominator_scale * 3.0
+    ):
         return np.array([np.nan, np.nan]), depth
     return projected_h[:2] / projected_h[2], depth
 
