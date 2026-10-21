@@ -32,7 +32,10 @@ requirements.
   Pairwise Hamming distance must exceed twice the intended bit-error budget,
   and codes must actually blink. decode_temporal_marker uses the explicitly
   shared trigger_epoch, supports erasures and limited bit errors and refuses
-  ambiguous results. It does not search for a convenient phase shift.
+  ambiguous results. Every alternative marker with an error count
+  within the full configured bit-error budget blocks decoding, even if the
+  apparent winner has fewer errors; partial erasures cannot silently weaken
+  this uniqueness gate. It does not search for a convenient phase shift.
 - light_tracking.BoundedLightTracker uses bounded camera-local predicted
   motion, globally one-to-one assignment and explicit alternative-assignment
   checks. Near-crossing ambiguity, duplicate detections and exhausted track

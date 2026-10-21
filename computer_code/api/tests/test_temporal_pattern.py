@@ -132,6 +132,45 @@ class TemporalIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "precedes"):
             decode_temporal_marker(samples, self.codes, trigger_epoch=201)
 
+    def test_erasure_and_bit_flip_must_not_change_marker_identity(self):
+        # With all phases, codes 10/11 are Hamming-distance 4. After
+        # erasing distinguishing phases 3, 4, 5, a flip at phase 2 turns
+        # the five observed bits of marker 10 into an *exact* match for
+        # marker 11. Both codes remain inside the allowed one-bit budget.
+        # A legacy best-vs-runner-up margin of 1 silently returned 11.
+        true_pattern = self.patterns[10]
+        observed_phases = {0, 1, 2, 6, 7}
+        samples = [
+            LightSample(
+                700 + phase,
+                (1 - bit if phase == 2 else bit)
+                if phase in observed_phases else None,
+            )
+            for phase, bit in enumerate(true_pattern)
+        ]
+        with self.assertRaisesRegex(ValueError, "ambiguous temporal"):
+            decode_temporal_marker(
+                samples, self.codes,
+                trigger_epoch=700, min_valid_samples=5,
+            )
+
+    def test_unique_code_inside_error_budget_still_decodes(self):
+        true_pattern = self.patterns[12]
+        samples = [
+            LightSample(
+                800 + phase,
+                None if phase in (1, 6)
+                else (1 - bit if phase == 0 else bit),
+            )
+            for phase, bit in enumerate(true_pattern)
+        ]
+        result = decode_temporal_marker(
+            samples, self.codes, trigger_epoch=800, min_valid_samples=6
+        )
+        self.assertEqual(result.marker_id, 12)
+        self.assertEqual(result.bit_errors, 1)
+        self.assertGreaterEqual(result.competing_error_margin, 2)
+
     def test_ambiguous_erasures_do_not_pick_first_marker(self):
         # All four patterns start with zero, so one observed phase cannot
         # identify a physical marker. Never choose the lowest marker ID.

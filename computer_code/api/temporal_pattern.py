@@ -234,7 +234,12 @@ def decode_temporal_marker(
     difference = candidates[1][0] - best
     if best > codebook.max_bit_errors:
         raise ValueError("no temporal marker matches the allowed bit-error budget")
-    if difference < margin:
+    # With erasures, the originally separated codewords can become close.
+    # A smaller error count alone does NOT identify the source: any code
+    # within the declared bit-flip budget could have produced the samples.
+    # Require exactly one candidate inside that budget even if the winner
+    # itself has zero errors and the runner-up is just one error away.
+    if candidates[1][0] <= codebook.max_bit_errors or difference < margin:
         raise ValueError("ambiguous temporal marker code after erasures")
     return DecodedMarker(
         marker_id=marker,
