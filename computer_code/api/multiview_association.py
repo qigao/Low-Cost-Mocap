@@ -39,6 +39,15 @@ def sampson_errors(left_points: object, right_points: object, fundamental: objec
         raise ValueError("fundamental matrix must be a finite 3x3 matrix")
     if not np.any(F):
         raise ValueError("fundamental matrix must be non-zero")
+    # Keep homogeneous-coordinate products and their squared terms inside the
+    # float64 range. Larger finite coordinates are not safely scoreable by this
+    # direct pixel-domain formulation, so reject them before matrix arithmetic.
+    max_safe_coordinate = np.sqrt(np.finfo(np.float64).max) / 8.0
+    if (
+        np.max(np.abs(left), initial=0.0) > max_safe_coordinate
+        or np.max(np.abs(right), initial=0.0) > max_safe_coordinate
+    ):
+        raise ValueError("point coordinates exceed safe float64 Sampson range")
     # Fundamental matrices are defined only up to a non-zero scale. Normalize
     # before forming quadratic terms so the absolute denominator guard below
     # cannot make otherwise equivalent matrices behave differently.
