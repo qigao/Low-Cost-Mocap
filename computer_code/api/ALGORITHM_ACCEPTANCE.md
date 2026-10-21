@@ -94,6 +94,25 @@ requirements.
   independent detector permutations, a bit flip, erasures, and a marker
   missing entirely from one camera.
 
+## Offline recorded-evidence replay (preparation, not hardware acceptance)
+
+- offline_capture_acceptance.replay_trigger_batches compares each recorded
+  multi-camera stamp set with a separately logged reference trigger ID,
+  returning admitted/rejected counts, reference gaps, declared timestamp
+  skew and named rejection reasons. Clock-domain names and trigger fields
+  remain untrusted software claims unless an independently verified hardware
+  capture pipeline supplies them.
+- replay_labeled_temporal_trials compares decoded marker IDs with external
+  ground-truth labels, counting correct accepts, false accepts and
+  rejections separately. A zero observed false-ID count still produces
+  a **nonzero one-sided 95% Wilson bound**, conditional on independent trials.
+  Correlated video frames do not constitute independent binomial trials;
+  report the physical capture design and independent labeling protocol.
+- Neither helper can declare a real rig hardware-qualified; its report
+  hardware_provenance_verified field is always false. Supply actual recorded
+  evidence, timebase provenance, shutter timings and calibration certificates
+  separately before requesting a hardware or production gate.
+
 ## Hardware and timing gates NOT YET VERIFIED
 
 1. Obtain **exposure-associated hardware trigger IDs** from every camera
