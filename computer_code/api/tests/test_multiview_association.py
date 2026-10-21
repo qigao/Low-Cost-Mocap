@@ -96,6 +96,7 @@ class PairwiseAssociationTests(unittest.TestCase):
             [[100, True]],
             [[np.float64(100.0), np.bool_(False)]],
             [[100.0 + 0j, 50.0 + 0j]],
+            [[10**1000, 50]],
         )
         for points in invalid:
             with self.subTest(points=repr(points)):
@@ -154,6 +155,7 @@ class PairwiseAssociationTests(unittest.TestCase):
             self.F.astype(str),
             self.F.astype(bool),
             self.F.astype(complex) + 1j,
+            np.array([[10**1000] + [0] * 2, [0] * 3, [0] * 3], dtype=object),
         )
         for fundamental in invalid:
             with self.subTest(dtype=fundamental.dtype):
