@@ -29,6 +29,7 @@ class BoundedLightTrackerTests(unittest.TestCase):
         tracker = BoundedLightTracker(
             camera_id=0, max_motion_px_per_trigger=4.0,
             ambiguity_margin_fraction=0.05,
+            minimum_detection_separation_px=0.0,
         )
         tracker.update(100, [[10., 20.], [12., 20.]])
         with self.assertRaisesRegex(ValueError, "ambiguous light-track"):
@@ -50,6 +51,29 @@ class BoundedLightTrackerTests(unittest.TestCase):
         self.assertEqual(tracker.update(13, [])[0].missed_triggers, 2)
         self.assertEqual(tracker.update(14, []), ())
         self.assertEqual(tracker.active_track_ids, ())
+
+    def test_reacquires_after_exact_allowed_off_gap(self):
+        tracker = BoundedLightTracker(
+            camera_id=0, max_missing_triggers=2,
+            max_motion_px_per_trigger=4.0,
+        )
+        tracker.update(30, [[10., 10.]])
+        tracker.update(31, [])
+        tracker.update(32, [])
+        restored = tracker.update(33, [[10., 10.]])
+        self.assertEqual(restored[0].track_id, 0)
+        self.assertEqual(restored[0].missed_triggers, 0)
+
+    def test_expired_track_does_not_consume_capacity_for_new_marker(self):
+        tracker = BoundedLightTracker(
+            camera_id=0, max_tracks=1,
+            max_missing_triggers=1,
+        )
+        tracker.update(30, [[10., 10.]])
+        tracker.update(31, [])
+        output = tracker.update(32, [[30., 30.]])
+        self.assertEqual(tuple(item.track_id for item in output), (1,))
+        self.assertEqual(tracker.active_track_ids, (1,))
 
     def test_unmatched_bright_spot_born_as_separate_local_track(self):
         tracker = BoundedLightTracker(

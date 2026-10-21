@@ -193,18 +193,27 @@ class BoundedLightTracker:
                 raise ValueError("ambiguous light-track association")
 
         matched_cols = {col for _, col in selected}
+        matched_rows = {row for row, _ in selected}
         births = [col for col in range(detection_count) if col not in matched_cols]
-        if len(staged) + len(births) > self.max_tracks:
+        # A track can be reacquired after up to max_missing_triggers OFF
+        # frames, but expires if the next frame also lacks a detection.
+        expiring_rows = {
+            row for row, ident in enumerate(identifiers)
+            if row not in matched_rows
+            and trigger - staged[ident].last_observed_trigger > self.max_missing_triggers
+        }
+        if len(staged) - len(expiring_rows) + len(births) > self.max_tracks:
             raise ValueError("active light-track capacity exceeded")
-        # An unmatched detection too close to an existing prediction might
-        # be the same physical light. Do not silently invent a second track.
+        # Expired tracks must neither consume capacity nor block a new
+        # physical light detected near their stale extrapolation.
         for col in births:
-            for predicted in predictions:
+            for row, predicted in enumerate(predictions):
+                if row in expiring_rows:
+                    continue
                 if np.linalg.norm(positions[col] - predicted) <= self.min_separation:
                     raise ValueError("ambiguous new light-track birth")
 
         evidence = {}
-        matched_rows = {row for row, _ in selected}
         for row, col in selected:
             ident = identifiers[row]
             state = staged[ident]
@@ -223,6 +232,9 @@ class BoundedLightTracker:
                 continue
             state = staged[ident]
             missed = trigger - state.last_observed_trigger
+            if row in expiring_rows:
+                del staged[ident]
+                continue
             evidence[ident] = TrackEvidence(
                 ident, self.camera_id, trigger,
                 tuple(predictions[row].tolist()), None, missed,
