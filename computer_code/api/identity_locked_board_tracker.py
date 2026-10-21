@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+import hashlib
+import json
 from types import MappingProxyType
 
 import numpy as np
@@ -22,8 +24,9 @@ from board_patterns import BoardPatternRegistry
 from board_recognizer import (
     BoardOutcome, BoardRecognitionResult, LocalTrackCycle, recognize_boards,
 )
-from geometry import _observation_array
-from light_intensity import BinaryIntensityCalibration, StampedTrackROI
+from geometry import _camera_arrays, _observation_array
+from light_intensity import BinaryIntensityCalibration, ROIContrast, StampedTrackROI
+from light_tracking import TrackEvidence
 from marker_admission import admit_track_marker_at_frame
 from spatiotemporal_reconstruction import (
     SynchronizedGeometry, reconstruct_synchronized_markers,
@@ -51,6 +54,8 @@ class BoardFrameStatus:
     evidence_kind: str  # MEASURED or INVALID (prediction is not implemented)
     measurement_trigger_id: int | None
     measurement_age_triggers: int | None
+    last_measurement_exposure_timestamp_ns: int | None
+    measurement_age_ns: int | None
     outcome: BoardOutcome
 
 
@@ -58,7 +63,9 @@ class BoardFrameStatus:
 class LockedBoardFrame:
     trigger_id: int
     camera_ids: tuple[int, ...]
+    latest_exposure_timestamp_ns: int
     pattern_sha256: str
+    calibration_sha256: str
     boards: Mapping[str, BoardFrameStatus]
     active_locks: tuple[MarkerIdentityLock, ...]
     newly_confirmed_marker_ids: tuple[int, ...]
@@ -118,10 +125,35 @@ class IdentityLockedBoardTracker:
             )
         ):
             raise ValueError("brightness calibration must cover exactly physical camera IDs")
-        self.camera_poses_by_id = camera_poses_by_id
-        self.intrinsics_by_id = intrinsics_by_id
-        self.brightness_calibration_by_camera_id = (
-            brightness_calibration_by_camera_id
+        # Freeze valid calibration with the tracker. Mutating a caller's
+        # NumPy array after initialization must not silently change an
+        # accepted 2D->3D model mid-session.
+        frozen_poses = {}
+        frozen_intrinsics = {}
+        calibration_manifest = []
+        for camera in self.camera_ids:
+            K, R, t = _camera_arrays(
+                camera_poses_by_id[camera], intrinsics_by_id[camera]
+            )
+            K, R, t = K.copy(), R.copy(), t.copy()
+            for item in (K, R, t):
+                item.setflags(write=False)
+            frozen_poses[camera] = MappingProxyType({"R": R, "t": t})
+            frozen_intrinsics[camera] = K
+            calibration_manifest.append({
+                "camera_id": camera, "K": K.tolist(),
+                "R": R.tolist(), "t": t.tolist(),
+            })
+        self.camera_poses_by_id = MappingProxyType(frozen_poses)
+        self.intrinsics_by_id = MappingProxyType(frozen_intrinsics)
+        self.calibration_sha256 = hashlib.sha256(
+            json.dumps(
+                calibration_manifest, sort_keys=True,
+                separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+        ).hexdigest()
+        self.brightness_calibration_by_camera_id = MappingProxyType(
+            dict(brightness_calibration_by_camera_id)
         )
         self.max_exposure_skew_ns = _nonnegative_int(
             max_exposure_skew_ns, "max_exposure_skew_ns"
@@ -139,9 +171,7 @@ class IdentityLockedBoardTracker:
         if not isinstance(allow_trigger_gaps, (bool, np.bool_)):
             raise ValueError("allow_trigger_gaps must be boolean")
         self.allow_trigger_gaps = bool(allow_trigger_gaps)
-        # Rigid fitting itself validates finite nonnegative limit values.
-        from board_recognizer import recognize_boards as _recognize_boards
-        from rigid_pattern import fit_rigid_pattern
+        # Validate all scalar policies before accepting any exposure.
         if not isinstance(max_reprojection_rms_px, (int, float, np.integer, np.floating)) or isinstance(max_reprojection_rms_px, (bool, np.bool_)):
             raise ValueError("max_reprojection_rms_px must be a finite positive number")
         if not isinstance(max_rigid_rms_world_units, (int, float, np.integer, np.floating)) or isinstance(max_rigid_rms_world_units, (bool, np.bool_)):
@@ -161,6 +191,7 @@ class IdentityLockedBoardTracker:
         self._clock_domain: str | None = None
         self._last_exposure_by_camera_id: dict[int, int] = {}
         self._last_measured_trigger: dict[str, int] = {}
+        self._last_measured_exposure_ns: dict[str, int] = {}
 
     @property
     def last_trigger_id(self) -> int | None:
@@ -280,6 +311,10 @@ class IdentityLockedBoardTracker:
                 raise ValueError("tracked_roi must contain StampedTrackROI")
             stamp = entry.frame_stamp
             evidence = entry.track_evidence
+            if not isinstance(evidence, TrackEvidence):
+                raise ValueError("ROI evidence must contain TrackEvidence")
+            if entry.roi is not None and not isinstance(entry.roi, ROIContrast):
+                raise ValueError("ROI evidence must be ROIContrast or None")
             if not isinstance(stamp, FrameStamp) or stamp.camera_id not in stamps:
                 raise ValueError("ROI stamp has unexpected camera")
             if stamp != stamps[stamp.camera_id]:
@@ -418,19 +453,29 @@ class IdentityLockedBoardTracker:
         )
 
         states = {}
+        latest_exposure_ns = max(f.exposure_timestamp_ns for f in frames)
         staged_last = dict(self._last_measured_trigger)
+        staged_times = dict(self._last_measured_exposure_ns)
         for board_id, outcome in board_result.boards.items():
             if outcome.pose is not None:
                 staged_last[board_id] = batch.trigger_id
+                staged_times[board_id] = latest_exposure_ns
                 state = "TRACKING"
                 kind = "MEASURED"
                 age = 0
+                age_ns = 0
                 measurement_trigger = batch.trigger_id
+                measurement_time = latest_exposure_ns
             else:
                 last_measure = staged_last.get(board_id)
                 age = (
                     batch.trigger_id - last_measure
                     if last_measure is not None else None
+                )
+                measurement_time = staged_times.get(board_id)
+                age_ns = (
+                    latest_exposure_ns - measurement_time
+                    if measurement_time is not None else None
                 )
                 if age is None:
                     state = "DISCOVER"
@@ -441,12 +486,15 @@ class IdentityLockedBoardTracker:
                 kind = "INVALID"  # never relabel old pose as a new one
                 measurement_trigger = last_measure
             states[board_id] = BoardFrameStatus(
-                board_id, state, kind, measurement_trigger, age, outcome
+                board_id, state, kind, measurement_trigger, age,
+                measurement_time, age_ns, outcome,
             )
         frame = LockedBoardFrame(
             trigger_id=batch.trigger_id,
             camera_ids=batch.camera_ids,
+            latest_exposure_timestamp_ns=latest_exposure_ns,
             pattern_sha256=self.registry.config_sha256,
+            calibration_sha256=self.calibration_sha256,
             boards=MappingProxyType(states),
             active_locks=tuple(stage[key] for key in sorted(stage)),
             newly_confirmed_marker_ids=tuple(sorted(set(newly_confirmed))),
@@ -466,4 +514,5 @@ class IdentityLockedBoardTracker:
             stamp.camera_id: stamp.exposure_timestamp_ns for stamp in frames
         }
         self._last_measured_trigger = staged_last
+        self._last_measured_exposure_ns = staged_times
         return frame

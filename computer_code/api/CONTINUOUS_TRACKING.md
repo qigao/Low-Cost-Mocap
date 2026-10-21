@@ -75,6 +75,9 @@ for board_id, status in next_frame.boards.items():
 - `config_sha256` is carried with the lock. The optional
   `controller_config_sha256` must match before any frame updates. A matching
   string is only a **software revision check**, not hardware authenticity.
+- Camera calibration is frozen to a per-tracker, read-only snapshot with a
+  deterministic `calibration_sha256` in every frame. External caller array
+  mutation does not silently replace its geometry during active tracking.
 - Each current exposure must use a monotonically increasing trigger number
   and declared shared clock domain, with monotonic per-camera timestamps and
   bounded cross-camera skew. All input metadata must be independently proven
@@ -93,6 +96,10 @@ for board_id, status in next_frame.boards.items():
   `DEGRADED/INVALID`: temporarily missing measurement within configured age.
   `LOST/INVALID`: missing for too long.
   `DISCOVER/INVALID`: never accepted a board pose.
+  The emitted frame records a declared exposure timestamp, calibrated
+  model revision, source measurement trigger and measurement age in triggers
+  **and nanoseconds**. These are metadata for downstream deadline checks,
+  not evidence that the host clock matches an actual sensor exposure.
   Predicted 6DoF output is **not implemented**. The status field never
   labels a held/forecast pose as optically measured.
 - The service retains only bounded code identity metadata and last-success

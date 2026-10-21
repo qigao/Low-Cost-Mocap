@@ -243,6 +243,10 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
                 self.assertEqual(
                     board.measurement_age_triggers, trigger - self.first
                 )
+                self.assertEqual(
+                    board.measurement_age_ns, (trigger - self.first) * 100_000
+                )
+                self.assertIsNotNone(board.last_measurement_exposure_timestamp_ns)
         frames, rois = self.samples(self.first + 4)
         recovered = self.tracker.advance(frames, rois)
         self.assertTrue(all(
@@ -350,6 +354,29 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
                 frames, rois, revalidation_traces=[single_sample]
             )
         self.assertEqual(self.tracker.last_trigger_id, self.first)
+
+    def test_calibration_arrays_are_frozen_and_report_a_revision(self):
+        first = self.bootstrap()
+        self.assertEqual(len(first.calibration_sha256), 64)
+        self.assertEqual(first.calibration_sha256, self.tracker.calibration_sha256)
+        self.assertFalse(self.tracker.intrinsics_by_id[2].flags.writeable)
+        self.assertFalse(self.tracker.camera_poses_by_id[2]["R"].flags.writeable)
+        before = self.tracker.intrinsics_by_id[2][0, 0]
+        self.K[2][0, 0] += 10
+        self.assertEqual(self.tracker.intrinsics_by_id[2][0, 0], before)
+        self.K[2][0, 0] -= 10
+
+    def test_bad_roi_and_track_types_roll_back_before_state_commit(self):
+        self.bootstrap()
+        frames, rois = self.samples(self.first + 1)
+        for candidate in (
+            replace(rois[0], roi="on"),
+            replace(rois[0], track_evidence=None),
+        ):
+            with self.subTest(candidate=repr(candidate)):
+                with self.assertRaisesRegex(ValueError, "ROI evidence"):
+                    self.tracker.advance(frames, [candidate] + rois[1:])
+                self.assertEqual(self.tracker.last_trigger_id, self.first)
 
     def test_clock_change_and_missing_triggers_fail_before_state_commit(self):
         self.bootstrap()
