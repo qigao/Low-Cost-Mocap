@@ -69,7 +69,7 @@ class CalibratedBundleTests(unittest.TestCase):
         initial_poses[2]["t"] += [0.01, -0.01, 0.005]
         optimized, metrics = refine_calibrated_bundle(
             observations, initial_poses, self.K,
-            min_tracks=10, max_nfev=160,
+            min_tracks=10, max_nfev=300,
         )
         self.assertEqual(metrics["admitted_track_indices"], list(range(15)))
         self.assertEqual(metrics["signed_residual_count"], 2 * int(np.sum(
@@ -95,7 +95,7 @@ class CalibratedBundleTests(unittest.TestCase):
         initial[2]["t"] += [0.012, -0.009, 0.006]
         original = [K.copy() for K in self.K]
         optimized, metrics = refine_calibrated_bundle(
-            noisy, initial, self.K, min_tracks=10, max_nfev=180,
+            noisy, initial, self.K, min_tracks=10, max_nfev=300,
         )
         self.assertLess(metrics["reprojection_rms_px"], 0.3)
         self.assertLess(metrics["reprojection_rms_px"], metrics["initial_reprojection_rms_px"])

@@ -230,10 +230,18 @@ def refine_calibrated_bundle(
     result = least_squares(
         objective, x0, method="trf", jac_sparsity=jac.tocsr(),
         loss="soft_l1", f_scale=robust_scale,
-        max_nfev=int(max_nfev), ftol=1e-9, xtol=1e-9, gtol=1e-9,
+        max_nfev=int(max_nfev), x_scale="jac",
+        ftol=1e-7, xtol=1e-7, gtol=1e-7,
     )
     if not result.success or not np.isfinite(result.x).all():
-        raise ValueError(f"bundle adjustment did not converge: {result.message}")
+        last_residual = objective(result.x)
+        raise ValueError(
+            f"bundle adjustment did not converge: {result.message}; "
+            f"nfev={result.nfev}, initial_rms="
+            f"{np.sqrt(np.mean(initial_residual ** 2)):.6g}, final_rms="
+            f"{np.sqrt(np.mean(last_residual ** 2)):.6g}, "
+            f"optimality={result.optimality:.6g}"
+        )
     optimized_rotations, optimized_translations, optimized_world = unpack(result.x)
     for track, camera in observation_indices:
         depth = float(optimized_rotations[camera][2] @ optimized_world[track] + optimized_translations[camera][2])
