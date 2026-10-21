@@ -29,8 +29,12 @@ Load [board-patterns.example.json](board-patterns.example.json):
   The recognizer exports both world-from-board and world-from-body poses.
 
 The JSON loader rejects unknown fields, repeated JSON keys, non-canonical
-IDs, duplicate LEDs across boards, invalid codes/coordinates, a mirrored
-body frame, and collinear model geometry. Registry mappings are read-only.
+IDs, duplicate LEDs across boards, invalid codes/coordinates, mirrored
+body frames, and collinear model geometry. Registry mappings are read-only.
+All validated configuration values are hashed into one stable
+`registry.config_sha256`. A controller can report its provisioned revision
+for comparison, but matching strings cannot themselves prove hardware
+authenticity or exposure synchronization.
 
 ## Assign the LED controller states
 
@@ -48,47 +52,73 @@ led_states = registry.led_states_at_trigger(
 # {100: True, 101: True, 102: True, 103: True}
 ```
 
-This produces **desired bits**, NOT a hardware transport or proof of camera
-sync. The LED controller and cameras must share an independently validated
-hardware trigger/epoch ([HW-01](https://github.com/qigao/Low-Cost-Mocap/issues/2)
-and [HW-03](https://github.com/qigao/Low-Cost-Mocap/issues/4)).
+The configuration CLI can validate the entire codebook and print a
+read-only table with the registry SHA-256, marker ID assignments and
+one trigger's desired LED states:
+
+```sh
+cd computer_code/api
+python board_pattern_cli.py board-patterns.example.json
+python board_pattern_cli.py board-patterns.example.json \
+  --board board_A --epoch 1000 --trigger 1015
+```
+
+Use `--expect-sha256 <revision>` to reject a different deployed pattern.
+This outputs **desired bits**, NOT firmware programming, a hardware transport,
+or proof of camera sync. The LED controller and cameras must share an
+independently validated trigger/epoch
+([HW-01](https://github.com/qigao/Low-Cost-Mocap/issues/2) and
+[HW-03](https://github.com/qigao/Low-Cost-Mocap/issues/4)).
 
 ## Server-side multi-board recognition
 
-1. Obtain a hardware-proven exposure `FrameStamp` for every physical camera.
-2. Maintain each LED's local track, sample calibrated raw ROI contrast, and
-   preserve erasures. `admit_track_marker_at_frame()` converts each proven
-   local track into a `StampedIdentifiedDetection` with an actual ON-frame
-   centroid and a globally decoded marker ID from that same code cycle.
-3. Call `recognize_admitted_boards()`. It validates common-trigger frames,
-   the common pose phase and local-track uniqueness; then groups LEDs by
-   their registered board IDs, triangulates positions with calibration
-   selected by physical camera ID, and fits each board separately.
-4. Each board reports one of `recognized`, `insufficient_markers`,
-   `geometry_rejected` or `not_visible`. All unsuccessful outcomes have
-   `pose=None`. No last-good pose is silently used for a new frame.
+1. Obtain hardware-proven exposure `FrameStamp` records for the cameras.
+2. Track each local LED through ON/OFF frames and record calibrated, stamped
+   ROI evidence and explicit erasures as `LocalTrackCycle` records. A
+   predicted dark ROI requires a separately measured motion-quality gate.
+3. Prefer `recognize_tracked_boards()`: it decodes **directly from these local
+   traces using the active registry codebook**. A caller cannot supply a
+   marker ID or reuse an old decoder's result as a new board identity.
+   It checks local-track uniqueness and can compare a controller-reported
+   `config_sha256` against the server registry.
+4. It then validates common-trigger frames and pose-phase alignment, groups
+   LEDs by the owning board, triangulates using physical camera ID
+   calibration, and independently fits each board's rigid layout.
+5. Each board returns `recognized`, `insufficient_markers`,
+   `geometry_rejected` or `not_visible`, with `pose=None` on failure. A
+   missing board never inherits the last valid frame's pose.
 
 ```python
 from board_patterns import BoardPatternRegistry
-from board_recognizer import recognize_admitted_boards
+from board_recognizer import recognize_tracked_boards
 
 registry = BoardPatternRegistry.from_json_file("board-patterns.example.json")
 
-report = recognize_admitted_boards(
-    admissions,           # admitted markers from local temporal traces
-    frames,               # validated frame stamps, one per physical camera
-    expected_camera_ids,  # e.g. [2, 5, 9]
+report = recognize_tracked_boards(
+    track_cycles,                   # LocalTrackCycle from calibrated ROI tracks
+    frames,                         # one FrameStamp per physical camera
+    expected_camera_ids,            # e.g. [2, 5, 9]
     camera_poses_by_id,
     intrinsics_by_id,
+    contrast_calibration_by_camera_id,
     registry,
     trigger_epoch=controller_epoch,
     max_exposure_skew_ns=measured_skew_limit,
+    controller_config_sha256=controller_reported_pattern_sha256,
 )
 for board_id, outcome in report.boards.items():
     if outcome.pose is not None:
-        current_board_position = outcome.pose.translation_world_from_board
-        current_body_rotation = outcome.pose.rotation_world_from_body
+        board_position = outcome.pose.translation_world_from_board
+        body_rotation = outcome.pose.rotation_world_from_body
+    else:
+        # Handle the failed/missing board explicitly; no stale pose.
+        pass
 ```
+
+The lower-level `recognize_admitted_boards()` remains available for
+standalone conformance tests and callers with already verified
+`AdmittedMarker` instances. New service integrations should use the
+preferred trace-to-ID entry point to avoid cross-configuration ID reuse.
 
 When called **only** on the common pose phase, `allow_trigger_gaps=True` must
 be explicitly selected for successive pose-phase frames; all intervening
