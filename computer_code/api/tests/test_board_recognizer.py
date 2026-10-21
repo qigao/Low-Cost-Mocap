@@ -281,6 +281,32 @@ class BoardRecognitionTests(unittest.TestCase):
         self.assertEqual(result.boards["board_B"].status, "geometry_rejected")
         self.assertIsNone(result.boards["board_B"].pose)
 
+    def test_nontrivial_board_to_body_rotation_and_mount_offset(self):
+        raw = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+        R_body_from_board = rz(0.48)
+        raw["boards"]["board_A"]["body_from_board"]["rotation"] = (
+            R_body_from_board.tolist()
+        )
+        new_registry = BoardPatternRegistry.from_mapping(raw)
+        self.assertNotEqual(new_registry.config_sha256, self.registry.config_sha256)
+        self.registry = new_registry
+        result = self.recognize()
+        pose = result.boards["board_A"].pose
+        self.assertIsNotNone(pose)
+        expected_R_body = self.R["board_A"] @ R_body_from_board.T
+        np.testing.assert_allclose(
+            pose.rotation_world_from_body, expected_R_body, atol=1e-8
+        )
+        np.testing.assert_allclose(
+            pose.translation_world_from_body,
+            self.t["board_A"]
+            - expected_R_body @ self.registry.boards[
+                "board_A"
+            ].translation_body_from_board_m,
+            atol=1e-8,
+        )
+        self.assertFalse(pose.rotation_world_from_body.flags.writeable)
+
     def test_unknown_id_and_duplicate_camera_local_track_fail_closed(self):
         admissions = self.admissions()
         a, b = admissions[0], admissions[1]
