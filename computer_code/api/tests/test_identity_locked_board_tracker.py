@@ -306,10 +306,14 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
 
     def test_conflicting_revalidation_identity_is_rejected(self):
         self.bootstrap()
-        frames, rois = self.samples(self.first + 1)
-        admissions = self.validations(self.first + 1)
-        # Codes 100/101 both ON in phase zero? One is off; forcibly
-        # changing any trusted admission's marker ID must be rejected.
+        # Full-cycle validation requires a new cycle's observed code history,
+        # not just one phase from its beginning.
+        for trigger in range(self.first + 1, self.first + 16):
+            frames, rois = self.samples(trigger)
+            self.tracker.advance(frames, rois)
+        current = self.first + 16
+        frames, rois = self.samples(current)
+        admissions = self.validations(current)
         first = admissions[0]
         new_marker = 101 if first.detection.marker_id == 100 else 100
         modified = replace(
@@ -317,7 +321,9 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "conflicting"):
             self.tracker.advance(frames, rois, revalidations=[modified])
-        self.assertEqual(self.tracker.last_trigger_id, self.first)
+        self.assertEqual(self.tracker.last_trigger_id, current - 1)
+        accepted = self.tracker.advance(frames, rois, revalidations=admissions)
+        self.assertTrue(all(x.state == "TRACKING" for x in accepted.boards.values()))
 
     def test_clock_change_and_missing_triggers_fail_before_state_commit(self):
         self.bootstrap()
