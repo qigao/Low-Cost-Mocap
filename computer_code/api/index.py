@@ -1,5 +1,6 @@
 from helpers import camera_pose_to_serializable, calculate_reprojection_errors, bundle_adjustment, Cameras, triangulate_points
 from KalmanFilter import KalmanFilter
+from calibration_geometry import compose_world_to_camera_pose, select_relative_pose_by_cheirality
 
 from flask import Flask, Response, request
 import cv2 as cv
@@ -228,53 +229,83 @@ def capture_points(data):
 
 @socketio.on("calculate-camera-pose")
 def calculate_camera_pose(data):
+    """Seed all camera extrinsics from pairwise calibrated, local-frame poses.
+
+    Every essential-matrix translation has unknown metric scale. A unit
+    adjacent-camera baseline is explicitly chosen as an initialization gauge;
+    later scale calibration must establish actual physical units.
+    """
     cameras = Cameras.instance()
-    image_points = np.array(data["cameraPoints"])
-    image_points_t = image_points.transpose((1, 0, 2))
+    try:
+        image_points = np.asarray(data["cameraPoints"], dtype=object)
+        if (
+            image_points.ndim != 3
+            or image_points.shape[1:] != (cameras.num_cameras, 2)
+        ):
+            raise ValueError("cameraPoints must have shape (frames, cameras, 2)")
+        image_points_t = image_points.transpose((1, 0, 2))
 
-    camera_poses = [{
-        "R": np.eye(3),
-        "t": np.array([[0],[0],[0]], dtype=np.float32)
-    }]
-    for camera_i in range(0, cameras.num_cameras-1):
-        camera1_image_points = image_points_t[camera_i]
-        camera2_image_points = image_points_t[camera_i+1]
-        not_none_indicies = np.where(np.all(camera1_image_points != None, axis=1) & np.all(camera2_image_points != None, axis=1))[0]
-        camera1_image_points = np.take(camera1_image_points, not_none_indicies, axis=0).astype(np.float32)
-        camera2_image_points = np.take(camera2_image_points, not_none_indicies, axis=0).astype(np.float32)
+        camera_poses = [{"R": np.eye(3), "t": np.zeros(3)}]
+        for camera_i in range(cameras.num_cameras - 1):
+            left_raw = image_points_t[camera_i]
+            right_raw = image_points_t[camera_i + 1]
+            valid_mask = np.array([
+                all(value is not None for value in p1)
+                and all(value is not None for value in p2)
+                for p1, p2 in zip(left_raw, right_raw)
+            ])
+            left = np.asarray(left_raw[valid_mask], dtype=np.float64)
+            right = np.asarray(right_raw[valid_mask], dtype=np.float64)
+            if len(left) < 8:
+                raise ValueError(
+                    f"camera pair {camera_i}/{camera_i + 1} needs at least 8 matched points"
+                )
+            fundamental, ransac_mask = cv.findFundamentalMat(
+                left, right, cv.FM_RANSAC, 1.0, 0.99999
+            )
+            if (
+                fundamental is None
+                or np.asarray(fundamental).shape != (3, 3)
+                or ransac_mask is None
+            ):
+                raise ValueError(f"camera pair {camera_i}/{camera_i + 1} has no valid fundamental matrix")
+            inliers = np.asarray(ransac_mask).reshape(-1)
+            if inliers.shape != (len(left),):
+                raise ValueError(f"camera pair {camera_i}/{camera_i + 1} has malformed RANSAC inliers")
+            left_inliers = left[inliers != 0]
+            right_inliers = right[inliers != 0]
+            if len(left_inliers) < 8:
+                raise ValueError(f"camera pair {camera_i}/{camera_i + 1} has fewer than 8 RANSAC inliers")
 
-        F, _ = cv.findFundamentalMat(camera1_image_points, camera2_image_points, cv.FM_RANSAC, 1, 0.99999)
-        E = cv.sfm.essentialFromFundamental(F, cameras.get_camera_params(0)["intrinsic_matrix"], cameras.get_camera_params(1)["intrinsic_matrix"])
-        possible_Rs, possible_ts = cv.sfm.motionFromEssential(E)
+            # Use the *current pair's* intrinsics, not K0/K1 for every pair.
+            left_intrinsic = cameras.get_camera_params(camera_i)["intrinsic_matrix"]
+            right_intrinsic = cameras.get_camera_params(camera_i + 1)["intrinsic_matrix"]
+            essential = cv.sfm.essentialFromFundamental(
+                fundamental, left_intrinsic, right_intrinsic
+            )
+            relative_rotations, relative_translations = cv.sfm.motionFromEssential(essential)
+            relative_pose, _ = select_relative_pose_by_cheirality(
+                left_inliers, right_inliers, left_intrinsic, right_intrinsic,
+                relative_rotations, relative_translations,
+                min_support=8,
+            )
+            # Relative camera extrinsics are camera_i -> camera_(i+1):
+            # R_next = R_rel @ R_prev and t_next = R_rel @ t_prev + t_rel.
+            camera_poses.append(compose_world_to_camera_pose(
+                camera_poses[-1], relative_pose, baseline_length=1.0
+            ))
 
-        R = None
-        t = None
-        max_points_infront_of_camera = 0
-        for i in range(0, 4):
-            object_points = triangulate_points(np.hstack([np.expand_dims(camera1_image_points, axis=1), np.expand_dims(camera2_image_points, axis=1)]), np.concatenate([[camera_poses[-1]], [{"R": possible_Rs[i], "t": possible_ts[i]}]]))
-            object_points_camera_coordinate_frame = np.array([possible_Rs[i].T @ object_point for object_point in object_points])
+        # This is still a projective-gauge initialization. The legacy
+        # bundle-adjustment and later measured-distance calibration remain
+        # separate acceptance gates; neither establishes hardware sync.
+        camera_poses = bundle_adjustment(image_points, camera_poses, socketio)
+    except (ValueError, np.linalg.LinAlgError) as exc:
+        socketio.emit("camera-pose", {"error": str(exc)})
+        return
 
-            points_infront_of_camera = np.sum(object_points[:,2] > 0) + np.sum(object_points_camera_coordinate_frame[:,2] > 0)
-
-            if points_infront_of_camera > max_points_infront_of_camera:
-                max_points_infront_of_camera = points_infront_of_camera
-                R = possible_Rs[i]
-                t = possible_ts[i]
-
-        R = R @ camera_poses[-1]["R"]
-        t = camera_poses[-1]["t"] + (camera_poses[-1]["R"] @ t)
-
-        camera_poses.append({
-            "R": R,
-            "t": t
-        })
-
-    camera_poses = bundle_adjustment(image_points, camera_poses, socketio)
-
-    object_points = triangulate_points(image_points, camera_poses)
-    error = np.mean(calculate_reprojection_errors(image_points, object_points, camera_poses))
-
-    socketio.emit("camera-pose", {"camera_poses": camera_pose_to_serializable(camera_poses)})
+    socketio.emit("camera-pose", {
+        "camera_poses": camera_pose_to_serializable(camera_poses)
+    })
 
 @socketio.on("locate-objects")
 def start_or_stop_locating_objects(data):
