@@ -102,6 +102,32 @@ class TriangulationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at least 2"):
             triangulate_point([self.project(0), None, None], self.poses, self.Ks)
 
+    def test_rejects_boolean_and_non_integer_min_views(self):
+        observations = [self.project(i) for i in range(3)]
+        for value in (True, np.bool_(False), 2.0, 2.5):
+            with self.subTest(min_views=repr(value)):
+                with self.assertRaisesRegex(ValueError, "min_views must be an integer"):
+                    triangulate_point(
+                        observations, self.poses, self.Ks, min_views=value
+                    )
+
+    def test_rejects_boolean_and_non_scalar_numeric_thresholds(self):
+        observations = [self.project(i) for i in range(3)]
+        invalid = (
+            ("max_reprojection_rms_px", True),
+            ("max_reprojection_rms_px", np.array([1.0])),
+            ("min_depth", np.bool_(False)),
+            ("min_depth", "0.1"),
+            ("min_parallax_angle_deg", 1.0 + 0j),
+            ("min_parallax_angle_deg", np.array([0.1])),
+        )
+        for name, value in invalid:
+            with self.subTest(parameter=name, value=repr(value)):
+                with self.assertRaisesRegex(ValueError, name):
+                    triangulate_point(
+                        observations, self.poses, self.Ks, **{name: value}
+                    )
+
     def test_rejects_reprojection_outlier(self):
         observations = [self.project(i) for i in range(3)]
         observations[2] = observations[2] + np.array([80.0, -60.0])
