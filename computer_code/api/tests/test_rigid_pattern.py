@@ -46,10 +46,11 @@ class RigidPatternTests(unittest.TestCase):
         # Coordinates may be expressed in meters, millimeters, or smaller
         # units; the rank check must not depend on an absolute coordinate scale.
         model = self.model * 1e-12
-        observed = (self.rotation @ model.T).T + self.translation
+        translation = self.translation * 1e-12
+        observed = (self.rotation @ model.T).T + translation
         R, t, metrics = fit_rigid_pattern(model, observed)
         np.testing.assert_allclose(R, self.rotation, atol=1e-10)
-        np.testing.assert_allclose(t, self.translation, atol=1e-10)
+        np.testing.assert_allclose(t, translation, atol=1e-22)
         self.assertLess(metrics["rms_error"], 1e-10)
 
     def test_rejects_collinear_marker_subset(self):
