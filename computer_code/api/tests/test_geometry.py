@@ -59,6 +59,37 @@ class TriangulationTests(unittest.TestCase):
             places=9,
         )
 
+    def test_intrinsic_extreme_nonzero_scales_preserve_geometry(self):
+        observations = [self.project(i) for i in range(3)]
+        baseline, baseline_metrics = triangulate_point(
+            observations, self.poses, self.Ks
+        )
+        # These matrices are well-conditioned up to a homogeneous scale.
+        # The scaling may differ across cameras and may be negative.
+        for scales in (
+            (1e-280, 1e300, -1e-220),
+            (-1e300, 1e-280, 1e200),
+        ):
+            with self.subTest(scales=scales):
+                intrinsics = [scale * K for scale, K in zip(scales, self.Ks)]
+                point, metrics = triangulate_point(
+                    observations, self.poses, intrinsics
+                )
+                np.testing.assert_allclose(point, baseline, atol=1e-8)
+                self.assertAlmostEqual(
+                    metrics["max_parallax_angle_deg"],
+                    baseline_metrics["max_parallax_angle_deg"],
+                    places=8,
+                )
+                self.assertLess(metrics["reprojection_rms_px"], 1e-7)
+
+    def test_zero_intrinsic_matrix_is_rejected(self):
+        observations = [self.project(i) for i in range(3)]
+        intrinsics = list(self.Ks)
+        intrinsics[1] = np.zeros((3, 3))
+        with self.assertRaisesRegex(ValueError, "intrinsic matrix is singular"):
+            triangulate_point(observations, self.poses, intrinsics)
+
     def test_reports_parallax_for_well_conditioned_views(self):
         observations = [self.project(i) for i in range(3)]
         _, metrics = triangulate_point(observations, self.poses, self.Ks)
