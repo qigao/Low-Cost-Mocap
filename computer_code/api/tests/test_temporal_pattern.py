@@ -45,6 +45,19 @@ class TriggerSynchronizationTests(unittest.TestCase):
                     validate_trigger_batch(frames, [0, 1, 2],
                                            max_exposure_skew_ns=10)
 
+    def test_pseyepy_software_dequeue_timestamp_without_trigger_is_not_valid(self):
+        # Upstream pseyepy exposes host dequeue timestamps but no verified
+        # exposure trigger ID: this record must not enter synchronized capture.
+        unverified = [
+            FrameStamp(0, None, 1_700_000_000_000_000_000, "pseyepy-dequeue"),
+            FrameStamp(1, None, 1_700_000_000_000_000_020, "pseyepy-dequeue"),
+            FrameStamp(2, None, 1_700_000_000_000_000_030, "pseyepy-dequeue"),
+        ]
+        with self.assertRaisesRegex(ValueError, "trigger_id"):
+            validate_trigger_batch(
+                unverified, [0, 1, 2], max_exposure_skew_ns=100
+            )
+
     def test_exposure_skew_and_stale_frame_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "timestamp skew"):
             validate_trigger_batch(self.frames, [0, 1, 2],

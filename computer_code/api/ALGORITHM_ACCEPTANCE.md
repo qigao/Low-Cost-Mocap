@@ -7,8 +7,15 @@ requirements.
 ## Current source boundary
 
 - In helpers.py, Cameras._camera_read calls self.cameras.read() and discards
-  the second return value. Whether this contains exposure or trigger metadata
-  must be verified against the actual camera SDK and device.
+  its second return value. Upstream pseyepy.Camera.read returns **software**
+  timestamps in seconds, derived from ps3eye_grab_frame microseconds. The
+  underlying PS3Eye queue calls gettimeofday when a buffered frame is read,
+  **not at sensor exposure**; no hardware trigger ID is returned by this API.
+  Source: https://github.com/bensondaled/pseyepy/blob/master/pseyepy/cameras.pyx#L312-L319
+  https://github.com/bensondaled/pseyepy/blob/master/pseyepy/src/ps3eye_capi.cpp#L174-L190
+  https://github.com/bensondaled/pseyepy/blob/master/pseyepy/src/ps3eye.cpp#L519-L525
+  Confirm the deployed pseyepy fork/revision separately; do not treat these
+  dequeue timestamps as proof of synchronized camera exposure.
 - The _find_dot detector produces only a 2D contour centroid, or [None, None].
   It does not provide a stable physical marker track or illumination levels
   through an LED off phase.
@@ -26,6 +33,11 @@ requirements.
   and codes must actually blink. decode_temporal_marker uses the explicitly
   shared trigger_epoch, supports erasures and limited bit errors and refuses
   ambiguous results. It does not search for a convenient phase shift.
+- light_intensity.sample_light_roi extracts foreground-minus-annulus
+  contrast from raw grayscale frames at an independently tracked light
+  position. BinaryIntensityCalibration applies per-camera ON/OFF references
+  and a dead zone; uncertain samples stay erasures before temporal decoding.
+  This requires a separate stable light tracker and reference calibration.
 - group_decoded_observations associates positively decoded marker IDs across
   cameras, preserving absent views and rejecting duplicate IDs in one view.
   geometry.triangulate_point and rigid_pattern.fit_rigid_pattern can then
