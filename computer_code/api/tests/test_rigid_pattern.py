@@ -67,6 +67,14 @@ class RigidPatternTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "collinear"):
             fit_rigid_pattern(line_model, line_observed)
 
+    def test_rejects_non_numeric_or_boolean_marker_indices(self):
+        for indices in (["0", "1", "2"], [0.0, 1.0, 2.5], [0, True, 2], [0 + 0j, 1 + 0j, 2 + 0j]):
+            with self.subTest(indices=indices):
+                with self.assertRaisesRegex(ValueError, "marker_indices"):
+                    fit_rigid_pattern(
+                        self.model, self.observed[:3], marker_indices=indices
+                    )
+
     def test_rejects_duplicate_marker_identity(self):
         with self.assertRaisesRegex(ValueError, "unique"):
             fit_rigid_pattern(self.model, self.observed[:3], marker_indices=[0, 0, 2])
