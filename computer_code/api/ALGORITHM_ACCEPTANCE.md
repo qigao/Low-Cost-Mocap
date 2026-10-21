@@ -96,6 +96,28 @@ requirements.
 
 ## Offline recorded-evidence replay (preparation, not hardware acceptance)
 
+Local developers can run:
+
+```sh
+cd computer_code/api
+python offline_acceptance_cli.py /path/to/recordings.json > offline-report.json
+```
+
+The version-1 JSON file has `schema_version: 1`, and a `trigger`
+section containing `expected_camera_ids`, `max_exposure_skew_ns`,
+and `recordings` with `reference_trigger_id` and `camera_frames`.
+Each frame has `camera_id`, `trigger_id`, `exposure_timestamp_ns`,
+and `clock_domain`. An optional `temporal` section provides
+`codebook` (string marker ID keys mapped to arrays of binary bits),
+`max_bit_errors`, `min_valid_samples`, and `trials` with
+`reference_marker_id`, `trigger_epoch`, and `samples` of
+`trigger_id`/`illuminated` pairs. Either section may be evaluated alone.
+The output records counts, error bounds and a SHA-256 of the exact input
+bytes, but **never** marks the physical hardware as validated.
+Independent reference triggers and marker truth labels must be produced
+by an external measured/recorded source, not fabricated from camera
+reception order.
+
 - offline_capture_acceptance.replay_trigger_batches compares each recorded
   multi-camera stamp set with a separately logged reference trigger ID,
   returning admitted/rejected counts, reference gaps, declared timestamp
