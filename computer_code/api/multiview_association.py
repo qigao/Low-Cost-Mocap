@@ -133,13 +133,6 @@ def associate_pairwise(
         ) from exc
     if not np.isfinite(threshold) or threshold <= 0:
         raise ValueError("max_sampson_error_px must be a finite positive real scalar")
-    left = _points_array(left_points, "left_points")
-    right = _points_array(right_points, "right_points")
-    errors = sampson_errors(left, right, fundamental)
-    n_left, n_right = errors.shape
-    if n_left == 0 or n_right == 0:
-        return []
-
     threshold_sq = threshold * threshold
     if (
         not np.isfinite(threshold_sq)
@@ -149,6 +142,14 @@ def associate_pairwise(
         raise ValueError(
             "max_sampson_error_px squared must be positive and safely representable"
         )
+    # Even empty inputs must honor the same public threshold contract.
+    left = _points_array(left_points, "left_points")
+    right = _points_array(right_points, "right_points")
+    errors = sampson_errors(left, right, fundamental)
+    n_left, n_right = errors.shape
+    if n_left == 0 or n_right == 0:
+        return []
+
     # Normalize eligible costs to [0, 1). Give each unmatched left point a
     # penalty larger than the maximum possible sum of eligible costs. This
     # makes the assignment maximize the number of valid matches first, then
