@@ -242,9 +242,13 @@ def triangulate_consensus(
         for camera_id, observed in points.items():
             projected, depth = _project(xyz, camera_poses[camera_id], intrinsics[camera_id])
             depths[camera_id] = depth
-            error = float(np.linalg.norm(projected - observed)) if depth > min_depth else float("inf")
+            error = (
+                float(np.linalg.norm(projected - observed))
+                if depth > min_depth and np.isfinite(projected).all()
+                else float("inf")
+            )
             residuals[camera_id] = error
-            if depth > min_depth and error <= inlier_threshold_px:
+            if error <= inlier_threshold_px:
                 final_inliers.append(camera_id)
 
         if len(final_inliers) < min_views:
