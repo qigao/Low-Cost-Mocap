@@ -142,6 +142,37 @@ class TriangulationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "parallax"):
                     triangulate_point(observations, poses, intrinsics)
 
+    def test_facing_cameras_with_antiparallel_rays_have_weak_parallax(self):
+        # The cameras face each other along the same optical axis with the
+        # target only 10 micrometres off-axis. The raw ray angle is nearly
+        # 180 degrees, but the viewing *lines* are nearly collinear; their
+        # acute triangulation angle is less than 0.1 degrees.
+        facing_rotation = np.diag([-1.0, 1.0, -1.0])
+        poses = [
+            {"R": np.eye(3), "t": np.zeros(3)},
+            {"R": facing_rotation, "t": np.array([0.0, 0.0, 10.0])},
+        ]
+        target = np.array([1e-5, 0.0, 5.0])
+        observations = []
+        for pose in poses:
+            camera_xyz = pose["R"] @ target + pose["t"]
+            homogeneous = self.K @ camera_xyz
+            observations.append(homogeneous[:2] / homogeneous[2])
+
+        # Test that the geometry is otherwise valid and the reported
+        # parallax is the acute line-to-line angle, not ~180 degrees.
+        estimate, metrics = triangulate_point(
+            observations, poses, [self.K, self.K],
+            min_parallax_angle_deg=0.0,
+        )
+        np.testing.assert_allclose(estimate, target, atol=1e-7)
+        self.assertLess(metrics["max_parallax_angle_deg"], 0.01)
+        with self.assertRaisesRegex(ValueError, "parallax"):
+            triangulate_point(
+                observations, poses, [self.K, self.K],
+                min_parallax_angle_deg=0.1,
+            )
+
     def test_missing_middle_camera_keeps_camera_indices(self):
         observations = [self.project(0), None, self.project(2)]
         point, metrics = triangulate_point(observations, self.poses, self.Ks)
