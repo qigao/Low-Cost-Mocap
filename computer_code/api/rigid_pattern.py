@@ -46,9 +46,20 @@ def fit_rigid_pattern(
         raw_indices = np.asarray(marker_indices)
         if raw_indices.ndim != 1 or len(raw_indices) != len(observed):
             raise ValueError("marker_indices must have one entry per observation")
+        if (
+            np.issubdtype(raw_indices.dtype, np.bool_)
+            or np.issubdtype(raw_indices.dtype, np.complexfloating)
+            or not (
+                np.issubdtype(raw_indices.dtype, np.integer)
+                or np.issubdtype(raw_indices.dtype, np.floating)
+            )
+        ):
+            raise ValueError("marker_indices must be real integers")
         if not np.issubdtype(raw_indices.dtype, np.integer):
             if not np.isfinite(raw_indices).all() or not np.equal(raw_indices, np.floor(raw_indices)).all():
                 raise ValueError("marker_indices must be integers")
+        if np.any(raw_indices < 0) or np.any(raw_indices >= len(model)):
+            raise ValueError("marker index is outside model_points")
         indices = raw_indices.astype(np.int64)
     if (
         isinstance(min_markers, (bool, np.bool_))
