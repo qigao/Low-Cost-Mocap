@@ -78,6 +78,20 @@ class MultiviewConsensusTests(unittest.TestCase):
         self.assertEqual(metrics["inlier_camera_ids"], [0, 1, 2, 3])
         self.assertLess(metrics["reprojection_rms_px"], 1e-8)
 
+    def test_consensus_ignores_signed_intrinsic_scale(self):
+        observations = [self.project(i) for i in range(4)]
+        signed_intrinsics = [
+            self.K.copy(), -self.K.copy(), 0.5 * self.K, -2.0 * self.K
+        ]
+        xyz, metrics = triangulate_consensus(
+            observations, self.poses, signed_intrinsics,
+            min_views=3, inlier_threshold_px=0.01,
+            max_reprojection_rms_px=1e-5,
+        )
+        np.testing.assert_allclose(xyz, self.truth, atol=1e-8)
+        self.assertEqual(metrics["inlier_camera_ids"], [0, 1, 2, 3])
+        self.assertLess(metrics["reprojection_rms_px"], 1e-8)
+
     def test_rejects_when_only_two_cameras_are_available(self):
         with self.assertRaisesRegex(ValueError, "at least 3 observations"):
             triangulate_consensus(
