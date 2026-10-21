@@ -114,9 +114,9 @@ def triangulate_point(
         raise ValueError("min_depth must be a finite non-negative real scalar")
     if (
         not finite_real_scalar(min_parallax_angle_deg)
-        or not 0 <= min_parallax_angle_deg <= 180
+        or not 0 <= min_parallax_angle_deg <= 90
     ):
-        raise ValueError("min_parallax_angle_deg must be a finite real scalar between 0 and 180")
+        raise ValueError("min_parallax_angle_deg must be a finite real scalar between 0 and 90")
 
     valid: list[tuple[int, np.ndarray, np.ndarray]] = []
     rays: list[np.ndarray] = []
@@ -148,12 +148,12 @@ def triangulate_point(
     max_parallax_deg = 0.0
     for i in range(len(rays)):
         for j in range(i + 1, len(rays)):
-            cosine = float(np.clip(np.dot(rays[i], rays[j]), -1.0, 1.0))
-            # Triangulation is ill-conditioned for *both* parallel and
-            # antiparallel viewing lines. A raw ray angle near 180 degrees
-            # must not count as strong parallax when two facing cameras
-            # observe a point almost on their shared optical axis.
-            angle = float(np.degrees(np.arccos(abs(cosine))))
+            dot = float(np.dot(rays[i], rays[j]))
+            cross_norm = float(np.linalg.norm(np.cross(rays[i], rays[j])))
+            # The acute line-to-line angle captures weak geometry for both
+            # parallel and antiparallel rays. atan2(sin, |cos|) also retains
+            # precision near 0 and 180 degrees where acos(|cos|) loses it.
+            angle = float(np.degrees(np.arctan2(cross_norm, abs(dot))))
             max_parallax_deg = max(max_parallax_deg, angle)
     if max_parallax_deg < min_parallax_angle_deg:
         raise ValueError(
