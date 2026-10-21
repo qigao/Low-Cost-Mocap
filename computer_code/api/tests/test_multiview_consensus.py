@@ -238,6 +238,21 @@ class MultiviewConsensusTests(unittest.TestCase):
                         **{name: value},
                     )
 
+    def test_rejects_scalar_thresholds_larger_than_float64(self):
+        observations = [self.project(i) for i in range(4)]
+        for name in (
+            "inlier_threshold_px",
+            "max_reprojection_rms_px",
+            "min_depth",
+            "min_parallax_angle_deg",
+            "ambiguity_rms_tolerance_px",
+        ):
+            with self.subTest(parameter=name):
+                with self.assertRaisesRegex(ValueError, name):
+                    triangulate_consensus(
+                        observations, self.poses, self.Ks, **{name: 10**1000}
+                    )
+
     def test_ambiguity_rms_tolerance_must_be_finite_and_nonnegative(self):
         for tolerance in (-0.001, np.nan, np.inf, -np.inf):
             with self.subTest(tolerance=tolerance):
