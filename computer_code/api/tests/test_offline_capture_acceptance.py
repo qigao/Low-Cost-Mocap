@@ -45,6 +45,16 @@ class TriggerReplayTests(unittest.TestCase):
         self.assertEqual(report.rejection_reasons["reference_trigger_gap"], 1)
         self.assertFalse(report.hardware_provenance_verified)
 
+    def test_invalid_reference_camera_configuration_fails_before_replay(self):
+        recording = (RecordedFrameBatch(10, self.frames(10)),)
+        for camera_ids in ([], [2, 2], [True, 5]):
+            with self.subTest(camera_ids=camera_ids):
+                with self.assertRaises(ValueError):
+                    replay_trigger_batches(
+                        recording, expected_camera_ids=camera_ids,
+                        max_exposure_skew_ns=10,
+                    )
+
     def test_ref_gap_can_be_reported_and_admitted_when_explicitly_allowed(self):
         recordings = (
             RecordedFrameBatch(3, self.frames(3)),
@@ -114,6 +124,16 @@ class TemporalReplayTests(unittest.TestCase):
         self.assertEqual(report.rejected, 1)
         self.assertEqual(report.wrong_accepts, 0)
         self.assertIsNone(report.conditional_false_accept_fraction)
+
+    def test_invalid_decoder_configuration_fails_before_statistical_summary(self):
+        valid = [self.trial()]
+        for invalid in (0, 9, True, "4", 10**1000):
+            with self.subTest(min_valid_samples=repr(invalid)):
+                with self.assertRaisesRegex(ValueError, "min_valid_samples"):
+                    replay_labeled_temporal_trials(
+                        valid, self.codebook,
+                        min_valid_samples=invalid,
+                    )
 
     def test_malformed_record_fails_replay_not_counted_as_rejection(self):
         duplicate = LabeledTemporalTrial(

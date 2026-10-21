@@ -61,6 +61,8 @@ def replay_trigger_batches(
     if not isinstance(allow_reference_gaps, bool):
         raise ValueError("allow_reference_gaps must be boolean")
     expected = tuple(_nonnegative_int(i, "expected camera_id") for i in expected_camera_ids)
+    if not expected or len(set(expected)) != len(expected):
+        raise ValueError("expected_camera_ids must be nonempty and unique")
     max_skew = _nonnegative_int(max_exposure_skew_ns, "max_exposure_skew_ns")
     rejected = Counter()
     admitted = 0
@@ -160,6 +162,9 @@ def replay_labeled_temporal_trials(
         raise ValueError("temporal trials must be nonempty")
     if not isinstance(codebook, TemporalCodebook):
         raise ValueError("codebook must be TemporalCodebook")
+    required_samples = _nonnegative_int(min_valid_samples, "min_valid_samples")
+    if not 1 <= required_samples <= codebook.period:
+        raise ValueError("min_valid_samples must be within the codebook period")
     wrong = 0
     correct = 0
     rejection = Counter()
@@ -202,7 +207,7 @@ def replay_labeled_temporal_trials(
         try:
             decoded = decode_temporal_marker(
                 trial.samples, codebook,
-                trigger_epoch=epoch, min_valid_samples=min_valid_samples,
+                trigger_epoch=epoch, min_valid_samples=required_samples,
             )
         except ValueError as exc:
             rejection[str(exc)] += 1
