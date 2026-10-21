@@ -53,6 +53,14 @@ class RigidPatternTests(unittest.TestCase):
         np.testing.assert_allclose(t, translation, atol=1e-22)
         self.assertLess(metrics["rms_error"], 1e-10)
 
+    def test_rejects_invalid_min_markers_values(self):
+        for value in (2, 3.5, float("nan"), float("inf"), True):
+            with self.subTest(min_markers=value):
+                with self.assertRaisesRegex(ValueError, "min_markers"):
+                    fit_rigid_pattern(
+                        self.model, self.observed, min_markers=value
+                    )
+
     def test_rejects_collinear_marker_subset(self):
         line_model = np.array([[0., 0., 0.], [1., 0., 0.], [2., 0., 0.]])
         line_observed = line_model + [0., 0., 1.]
