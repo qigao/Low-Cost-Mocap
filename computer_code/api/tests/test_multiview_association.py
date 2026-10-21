@@ -149,6 +149,17 @@ class PairwiseAssociationTests(unittest.TestCase):
                         max_sampson_error_px=threshold,
                     )
 
+    def test_rejects_non_real_fundamental_matrix_values(self):
+        invalid = (
+            self.F.astype(str),
+            self.F.astype(bool),
+            self.F.astype(complex) + 1j,
+        )
+        for fundamental in invalid:
+            with self.subTest(dtype=fundamental.dtype):
+                with self.assertRaisesRegex(ValueError, "fundamental matrix must contain real numeric values"):
+                    sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], fundamental)
+
     def test_rejects_zero_fundamental_matrix(self):
         with self.assertRaisesRegex(ValueError, "non-zero"):
             sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], np.zeros((3, 3)))
