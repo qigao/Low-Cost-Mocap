@@ -33,6 +33,14 @@ requirements.
   and codes must actually blink. decode_temporal_marker uses the explicitly
   shared trigger_epoch, supports erasures and limited bit errors and refuses
   ambiguous results. It does not search for a convenient phase shift.
+- light_tracking.BoundedLightTracker uses bounded camera-local predicted
+  motion, globally one-to-one assignment and explicit alternative-assignment
+  checks. Near-crossing ambiguity, duplicate detections and exhausted track
+  capacity fail closed without mutating the previous accepted track state.
+  A local track ID is never automatically a physical marker ID. Missing
+  bright detections are marked as absent evidence, NOT known dark phases.
+  Sampling a predicted dark ROI is valid only after an independent motion
+  uncertainty / light-tracker quality gate, not from this tracker alone.
 - light_intensity.sample_light_roi extracts foreground-minus-annulus
   contrast from raw grayscale frames at an independently tracked light
   position. BinaryIntensityCalibration applies per-camera ON/OFF references
@@ -42,6 +50,11 @@ requirements.
   cameras, preserving absent views and rejecting duplicate IDs in one view.
   geometry.triangulate_point and rigid_pattern.fit_rigid_pattern can then
   validate those matches against a fixed 3D marker layout.
+- An additional controlled synthetic raw-image test links camera-local
+  LED tracking, background-corrected ROIs, temporal bits, decoded global
+  marker IDs, triangulation and noncoplanar rigid-pattern recovery. It uses
+  static markers, so predicted dark ROIs are provably stationary in the test.
+  That assumption is NOT established for flying markers.
 - The synthetic end-to-end test includes 3 distinct calibrated intrinsics,
   independent detector permutations, a bit flip, erasures, and a marker
   missing entirely from one camera.
