@@ -11,6 +11,21 @@ from typing import Any
 import numpy as np
 
 
+def _real_point_array(points: object, name: str) -> np.ndarray:
+    """Preserve original scalar types before NumPy can coerce mixed inputs."""
+    originals = np.asarray(points, dtype=object).reshape(-1)
+    if any(
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        for value in originals
+    ):
+        raise ValueError(f"{name} must contain real numeric coordinates")
+    try:
+        return np.asarray(points, dtype=np.float64)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must contain finite float64 coordinates") from exc
+
+
 def fit_rigid_pattern(
     model_points: object,
     observed_points: object,
@@ -34,8 +49,8 @@ def fit_rigid_pattern(
         per-marker residuals and RMS/max residual. Raises ValueError for
         invalid, duplicate, degenerate, or over-threshold inputs.
     """
-    model = np.asarray(model_points, dtype=np.float64)
-    observed = np.asarray(observed_points, dtype=np.float64)
+    model = _real_point_array(model_points, "model_points")
+    observed = _real_point_array(observed_points, "observed_points")
     if model.ndim != 2 or model.shape[1:] != (3,) or len(model) < 3:
         raise ValueError("model_points must have shape (N, 3), N >= 3")
     if observed.ndim != 2 or observed.shape[1:] != (3,):
@@ -43,24 +58,27 @@ def fit_rigid_pattern(
     if marker_indices is None:
         indices = np.arange(len(observed), dtype=np.int64)
     else:
-        raw_indices = np.asarray(marker_indices)
-        if raw_indices.ndim != 1 or len(raw_indices) != len(observed):
+        # Check elements before NumPy promotion: [0, True, 2] must never
+        # become the valid integer IDs [0, 1, 2].
+        original_indices = np.asarray(marker_indices, dtype=object)
+        if original_indices.ndim != 1 or len(original_indices) != len(observed):
             raise ValueError("marker_indices must have one entry per observation")
-        if (
-            np.issubdtype(raw_indices.dtype, np.bool_)
-            or np.issubdtype(raw_indices.dtype, np.complexfloating)
-            or not (
-                np.issubdtype(raw_indices.dtype, np.integer)
-                or np.issubdtype(raw_indices.dtype, np.floating)
-            )
-        ):
-            raise ValueError("marker_indices must be real integers")
-        if not np.issubdtype(raw_indices.dtype, np.integer):
-            if not np.isfinite(raw_indices).all() or not np.equal(raw_indices, np.floor(raw_indices)).all():
+        parsed_indices = []
+        for value in original_indices:
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, float, np.integer, np.floating))
+            ):
+                raise ValueError("marker_indices must be real integers")
+            if isinstance(value, (float, np.floating)) and (
+                not np.isfinite(value) or value != np.floor(value)
+            ):
                 raise ValueError("marker_indices must be integers")
-        if np.any(raw_indices < 0) or np.any(raw_indices >= len(model)):
-            raise ValueError("marker index is outside model_points")
-        indices = raw_indices.astype(np.int64)
+            index = int(value)
+            if index < 0 or index >= len(model):
+                raise ValueError("marker index is outside model_points")
+            parsed_indices.append(index)
+        indices = np.asarray(parsed_indices, dtype=np.int64)
     if (
         isinstance(min_markers, (bool, np.bool_))
         or not isinstance(min_markers, (int, np.integer))
@@ -75,8 +93,21 @@ def fit_rigid_pattern(
         raise ValueError("marker index is outside model_points")
     if not np.isfinite(model).all() or not np.isfinite(observed).all():
         raise ValueError("point coordinates must be finite")
-    if max_rms_error is not None and (not np.isfinite(max_rms_error) or max_rms_error < 0):
-        raise ValueError("max_rms_error must be finite and non-negative")
+    max_rms_limit = None
+    if max_rms_error is not None:
+        if (
+            isinstance(max_rms_error, (bool, np.bool_))
+            or not isinstance(max_rms_error, (int, float, np.integer, np.floating))
+        ):
+            raise ValueError("max_rms_error must be a finite non-negative real scalar")
+        try:
+            max_rms_limit = float(max_rms_error)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "max_rms_error must be a finite non-negative real scalar"
+            ) from exc
+        if not np.isfinite(max_rms_limit) or max_rms_limit < 0:
+            raise ValueError("max_rms_error must be a finite non-negative real scalar")
 
     paired_model = model[indices]
     model_center = paired_model.mean(axis=0)
@@ -104,8 +135,10 @@ def fit_rigid_pattern(
     residuals = np.linalg.norm(predicted - observed, axis=1)
     rms = float(np.sqrt(np.mean(residuals ** 2)))
     maximum = float(np.max(residuals))
-    if max_rms_error is not None and rms > max_rms_error:
-        raise ValueError(f"rigid-pattern RMS {rms:.6g} exceeds limit {max_rms_error:.6g}")
+    if not np.isfinite(rms) or not np.isfinite(maximum):
+        raise ValueError("rigid-pattern residuals must be finite")
+    if max_rms_limit is not None and rms > max_rms_limit:
+        raise ValueError(f"rigid-pattern RMS {rms:.6g} exceeds limit {max_rms_limit:.6g}")
     return R, t, {
         "marker_indices": indices.tolist(),
         "residuals": residuals.tolist(),
