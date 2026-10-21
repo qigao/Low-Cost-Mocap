@@ -79,8 +79,8 @@ def triangulate_point(
 
     observations[i] belongs to camera i; use None when that camera has no
     detection. Invalid or weak-baseline solutions raise ValueError. The
-    parallax gate is the largest pairwise angle between world-space viewing
-    rays; it guards against depth estimates from nearly parallel rays.
+    parallax gate is the largest acute angle between world-space viewing
+    lines; it guards against nearly parallel and antiparallel geometry.
     """
     n = len(observations)
     if len(camera_poses) != n or len(intrinsics) != n:
@@ -149,7 +149,11 @@ def triangulate_point(
     for i in range(len(rays)):
         for j in range(i + 1, len(rays)):
             cosine = float(np.clip(np.dot(rays[i], rays[j]), -1.0, 1.0))
-            angle = float(np.degrees(np.arccos(cosine)))
+            # Triangulation is ill-conditioned for *both* parallel and
+            # antiparallel viewing lines. A raw ray angle near 180 degrees
+            # must not count as strong parallax when two facing cameras
+            # observe a point almost on their shared optical axis.
+            angle = float(np.degrees(np.arccos(abs(cosine))))
             max_parallax_deg = max(max_parallax_deg, angle)
     if max_parallax_deg < min_parallax_angle_deg:
         raise ValueError(
