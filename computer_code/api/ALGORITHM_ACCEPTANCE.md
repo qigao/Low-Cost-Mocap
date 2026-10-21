@@ -60,6 +60,14 @@ requirements.
   position. BinaryIntensityCalibration applies per-camera ON/OFF references
   and a dead zone; uncertain samples stay erasures before temporal decoding.
   This requires a separate stable light tracker and reference calibration.
+- marker_admission.admit_track_marker_at_frame is the **trusted software
+  admission path** between a camera-local tracked light and a decoded 2D
+  marker. It derives marker_id from that one trace's calibrated bit history,
+  ties it to the last matching exposure stamp in the same decoding cycle,
+  and requires an actually observed ON-frame centroid. An old ID from an
+  earlier cycle, a borrowed track or a predicted-only dark position cannot
+  become a new 3D point. The lower-level grouping API still accepts IDs
+  directly for standalone tests and is not a hardware trust source.
 - group_synchronized_detections requires decoded 2D marker observations
   to reference the exact FrameStamp of an admitted shared-trigger batch.
   Borrowed frames from different triggers, clocks, or timestamps fail closed
