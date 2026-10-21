@@ -55,16 +55,32 @@ def triangulate_point(
     n = len(observations)
     if len(camera_poses) != n or len(intrinsics) != n:
         raise ValueError("observations, camera_poses, and intrinsics must have equal length")
-    if min_views < 2:
-        raise ValueError("min_views must be at least 2")
-    if max_reprojection_rms_px is not None and (
-        not np.isfinite(max_reprojection_rms_px) or max_reprojection_rms_px < 0
+    if (
+        isinstance(min_views, (bool, np.bool_))
+        or not isinstance(min_views, (int, np.integer))
+        or min_views < 2
     ):
-        raise ValueError("max_reprojection_rms_px must be finite and non-negative")
-    if not np.isfinite(min_depth) or min_depth < 0:
-        raise ValueError("min_depth must be finite and non-negative")
-    if not np.isfinite(min_parallax_angle_deg) or not 0 <= min_parallax_angle_deg <= 180:
-        raise ValueError("min_parallax_angle_deg must be finite and between 0 and 180")
+        raise ValueError("min_views must be an integer at least 2")
+
+    def finite_real_scalar(value: object) -> bool:
+        return (
+            not isinstance(value, (bool, np.bool_))
+            and isinstance(value, (int, float, np.integer, np.floating))
+            and bool(np.isfinite(value))
+        )
+
+    if max_reprojection_rms_px is not None and (
+        not finite_real_scalar(max_reprojection_rms_px)
+        or max_reprojection_rms_px < 0
+    ):
+        raise ValueError("max_reprojection_rms_px must be a finite non-negative real scalar")
+    if not finite_real_scalar(min_depth) or min_depth < 0:
+        raise ValueError("min_depth must be a finite non-negative real scalar")
+    if (
+        not finite_real_scalar(min_parallax_angle_deg)
+        or not 0 <= min_parallax_angle_deg <= 180
+    ):
+        raise ValueError("min_parallax_angle_deg must be a finite real scalar between 0 and 180")
 
     valid: list[tuple[int, np.ndarray, np.ndarray]] = []
     rays: list[np.ndarray] = []
