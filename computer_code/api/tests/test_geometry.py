@@ -60,6 +60,23 @@ class TriangulationTests(unittest.TestCase):
         self.assertGreater(metrics["reprojection_rms_px"], 0.0)
         self.assertLess(metrics["reprojection_rms_px"], 0.5)
 
+    def test_rejects_non_rotation_camera_pose(self):
+        observations = [self.project(i) for i in range(3)]
+        invalid_poses = [dict(pose) for pose in self.poses]
+        invalid_poses[1] = {**invalid_poses[1], "R": 1.01 * invalid_poses[1]["R"]}
+        with self.assertRaisesRegex(ValueError, "rotation matrix"):
+            triangulate_point(observations, invalid_poses, self.Ks)
+
+    def test_rejects_reflection_camera_pose(self):
+        observations = [self.project(i) for i in range(3)]
+        invalid_poses = [dict(pose) for pose in self.poses]
+        invalid_poses[1] = {
+            **invalid_poses[1],
+            "R": np.diag([-1.0, 1.0, 1.0]),
+        }
+        with self.assertRaisesRegex(ValueError, "rotation matrix"):
+            triangulate_point(observations, invalid_poses, self.Ks)
+
     def test_rejects_nearly_parallel_viewing_rays(self):
         poses = [
             {"R": np.eye(3), "t": np.array([0.0, 0.0, 0.0])},
