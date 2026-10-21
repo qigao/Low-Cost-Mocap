@@ -88,7 +88,13 @@ class LegacySparseCameraGeometryTests(unittest.TestCase):
         sparse = [self.pixels[0], [None, None], [None, None]]
         self.assertEqual(self.triangulate(sparse, self.poses), [None, None, None])
         identical_poses = [self.poses[0], self.poses[0], self.poses[0]]
-        duplicate = [self.pixels[0]] * 3
+        # For collocated cameras, the SAME viewing ray has different pixel
+        # coordinates under different camera intrinsics. Reusing K0's pixel
+        # coordinates for every camera would describe different rays.
+        duplicate = []
+        for intrinsic in self.K:
+            homogeneous = intrinsic @ self.truth
+            duplicate.append((homogeneous[:2] / homogeneous[2]).tolist())
         self.assertEqual(self.triangulate(duplicate, identical_poses), [None, None, None])
         self.assertIsNone(
             self.reprojection_error([[None, None]] * 3, [None] * 3, self.poses)
