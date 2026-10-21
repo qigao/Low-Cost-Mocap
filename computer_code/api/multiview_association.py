@@ -84,7 +84,7 @@ def associate_pairwise(
     if n_left == 0 or n_right == 0:
         return []
 
-    threshold_sq = max_sampson_error_px ** 2
+    threshold_sq = max_sampson_error_px * max_sampson_error_px
     if not np.isfinite(threshold_sq) or threshold_sq == 0.0:
         raise ValueError("max_sampson_error_px squared must be finite and positive")
     # Each left observation gets its own dummy column at the rejection cost.
