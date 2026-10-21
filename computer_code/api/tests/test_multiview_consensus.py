@@ -55,6 +55,8 @@ class MultiviewConsensusTests(unittest.TestCase):
         invalid_observations = (
             ["320", "240"],
             [True, False],
+            [320, True],
+            [np.float64(320.0), np.bool_(False)],
             [320.0 + 1.0j, 240.0 + 0.0j],
         )
         for observation in invalid_observations:
