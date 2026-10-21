@@ -48,15 +48,20 @@ def sampson_errors(left_points: object, right_points: object, fundamental: objec
 
     x1 = np.column_stack((left, np.ones(left.shape[0])))
     x2 = np.column_stack((right, np.ones(right.shape[0])))
-    Fx1 = (F @ x1.T).T
-    Ftx2 = (F.T @ x2.T).T
-    numerator = (x2 @ F @ x1.T) ** 2
-    denominator = (
-        Fx1[None, :, 0] ** 2 + Fx1[None, :, 1] ** 2
-        + Ftx2[:, None, 0] ** 2 + Ftx2[:, None, 1] ** 2
-    )
-    result = np.full_like(numerator, np.inf, dtype=np.float64)
-    np.divide(numerator, denominator, out=result, where=denominator > 1e-15)
+    # Finite input coordinates can still overflow intermediate products.
+    # Such pairs are not safely scoreable and must be treated as non-matches,
+    # never allowed to leak NaN into the assignment cost matrix.
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        Fx1 = (F @ x1.T).T
+        Ftx2 = (F.T @ x2.T).T
+        numerator = (x2 @ F @ x1.T) ** 2
+        denominator = (
+            Fx1[None, :, 0] ** 2 + Fx1[None, :, 1] ** 2
+            + Ftx2[:, None, 0] ** 2 + Ftx2[:, None, 1] ** 2
+        )
+        result = np.full_like(numerator, np.inf, dtype=np.float64)
+        np.divide(numerator, denominator, out=result, where=denominator > 1e-15)
+    result[~np.isfinite(result)] = np.inf
     # The quadratic form above is indexed [right, left]; expose costs as [left, right].
     return result.T
 
