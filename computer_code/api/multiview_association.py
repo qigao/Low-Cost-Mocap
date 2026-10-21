@@ -37,6 +37,8 @@ def sampson_errors(left_points: object, right_points: object, fundamental: objec
     F = np.asarray(fundamental, dtype=np.float64)
     if F.shape != (3, 3) or not np.isfinite(F).all():
         raise ValueError("fundamental matrix must be a finite 3x3 matrix")
+    if not np.any(F):
+        raise ValueError("fundamental matrix must be non-zero")
     if left.shape[0] == 0 or right.shape[0] == 0:
         return np.empty((left.shape[0], right.shape[0]), dtype=np.float64)
 
