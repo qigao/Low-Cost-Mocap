@@ -108,10 +108,78 @@ class CalibratedBundleTests(unittest.TestCase):
         )
         self.assertLess(metrics["reprojection_rms_px"], 0.3)
         self.assertLess(metrics["reprojection_rms_px"], metrics["initial_reprojection_rms_px"])
+        self.assertLess(
+            np.linalg.norm(optimized[1]["R"] - self.poses[1]["R"]),
+            np.linalg.norm(initial[1]["R"] - self.poses[1]["R"]),
+        )
+        self.assertLess(
+            np.linalg.norm(optimized[2]["R"] - self.poses[2]["R"]),
+            np.linalg.norm(initial[2]["R"] - self.poses[2]["R"]),
+        )
+        self.assertLess(
+            np.linalg.norm(optimized[2]["t"] - self.poses[2]["t"]),
+            np.linalg.norm(initial[2]["t"] - self.poses[2]["t"]),
+        )
         np.testing.assert_allclose(optimized[1]["t"], initial[1]["t"], atol=1e-12)
         np.testing.assert_allclose(optimized[0]["R"], initial[0]["R"], atol=1e-12)
         for K, unchanged in zip(self.K, original):
             np.testing.assert_array_equal(K, unchanged)
+
+    def test_similarity_scale_is_a_gauge_not_a_measured_distance(self):
+        baseline = bundle_reprojection_residuals(
+            self.observations, self.poses, self.K, self.world
+        )
+        scale = 7.5
+        scaled_poses = [
+            {"R": pose["R"].copy(), "t": scale * pose["t"]}
+            for pose in self.poses
+        ]
+        scaled = bundle_reprojection_residuals(
+            self.observations, scaled_poses, self.K, scale * self.world
+        )
+        np.testing.assert_allclose(scaled, baseline, atol=1e-10, rtol=1e-10)
+
+    def test_signed_objective_is_sensitive_to_each_free_geometric_boundary(self):
+        baseline = bundle_reprojection_residuals(
+            self.observations, self.poses, self.K, self.world
+        )
+        delta = 1e-5
+        shifted_rotation = [
+            {"R": pose["R"].copy(), "t": pose["t"].copy()}
+            for pose in self.poses
+        ]
+        shifted_rotation[1]["R"] = rotation_y(delta) @ shifted_rotation[1]["R"]
+        residual_rotation = bundle_reprojection_residuals(
+            self.observations, shifted_rotation, self.K, self.world
+        )
+        self.assertGreater(np.linalg.norm(residual_rotation - baseline), 0.001)
+
+        shifted_translation = [
+            {"R": pose["R"].copy(), "t": pose["t"].copy()}
+            for pose in self.poses
+        ]
+        shifted_translation[2]["t"][0] += delta
+        residual_translation = bundle_reprojection_residuals(
+            self.observations, shifted_translation, self.K, self.world
+        )
+        self.assertGreater(np.linalg.norm(residual_translation - baseline), 0.001)
+
+        shifted_point = self.world.copy()
+        shifted_point[3, 0] += delta
+        residual_point = bundle_reprojection_residuals(
+            self.observations, self.poses, self.K, shifted_point
+        )
+        self.assertGreater(np.linalg.norm(residual_point - baseline), 0.001)
+
+        # Perturbing camera 2's calibrated K must affect camera 2 only.
+        modified_intrinsics = [K.copy() for K in self.K]
+        modified_intrinsics[2][0, 0] += 1.0
+        residual_intrinsics = bundle_reprojection_residuals(
+            self.observations, self.poses, modified_intrinsics, self.world
+        )
+        difference = (residual_intrinsics - baseline).reshape(15, 3, 2)
+        self.assertLess(np.max(np.abs(difference[:, :2])), 1e-10)
+        self.assertGreater(np.linalg.norm(difference[:, 2]), 0.001)
 
     def test_invalid_or_disconnected_tracks_fail_closed(self):
         malformed = self.observations.astype(object)
