@@ -24,6 +24,14 @@ def _camera_arrays(pose: Mapping[str, Any], intrinsic: Any) -> tuple[np.ndarray,
     singular_values = np.linalg.svd(K, compute_uv=False)
     if singular_values[-1] <= np.finfo(np.float64).eps * singular_values[0] * 3.0:
         raise ValueError("intrinsic matrix is singular or ill-conditioned")
+    # The pose convention assumes R is a proper rotation, not an arbitrary
+    # affine transform. Permit small floating-point drift from pose estimation.
+    rotation_tolerance = 1e-5
+    if (
+        not np.allclose(R.T @ R, np.eye(3), rtol=0.0, atol=rotation_tolerance)
+        or abs(float(np.linalg.det(R)) - 1.0) > rotation_tolerance
+    ):
+        raise ValueError("camera rotation matrix must be orthonormal with determinant +1")
     return K, R, t
 
 
