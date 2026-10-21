@@ -94,8 +94,13 @@ def associate_pairwise(
     Dummy columns let any left detection remain unmatched instead of forcing
     a geometrically invalid match.
     """
-    if not np.isfinite(max_sampson_error_px) or max_sampson_error_px <= 0:
-        raise ValueError("max_sampson_error_px must be finite and positive")
+    if (
+        isinstance(max_sampson_error_px, (bool, np.bool_))
+        or not isinstance(max_sampson_error_px, (int, float, np.integer, np.floating))
+        or not np.isfinite(max_sampson_error_px)
+        or max_sampson_error_px <= 0
+    ):
+        raise ValueError("max_sampson_error_px must be a finite positive real scalar")
     left = _points_array(left_points, "left_points")
     right = _points_array(right_points, "right_points")
     errors = sampson_errors(left, right, fundamental)
