@@ -38,6 +38,21 @@ from temporal_pattern import (
 )
 
 
+def _finite_nonnegative(value: object, name: str) -> float:
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+    ):
+        raise ValueError(f"{name} must be finite nonnegative real")
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite nonnegative real") from exc
+    if not np.isfinite(result) or result < 0:
+        raise ValueError(f"{name} must be finite nonnegative real")
+    return result
+
+
 @dataclass(frozen=True)
 class MarkerIdentityLock:
     camera_id: int
@@ -171,20 +186,14 @@ class IdentityLockedBoardTracker:
         if not isinstance(allow_trigger_gaps, (bool, np.bool_)):
             raise ValueError("allow_trigger_gaps must be boolean")
         self.allow_trigger_gaps = bool(allow_trigger_gaps)
-        # Validate all scalar policies before accepting any exposure.
-        if not isinstance(max_reprojection_rms_px, (int, float, np.integer, np.floating)) or isinstance(max_reprojection_rms_px, (bool, np.bool_)):
-            raise ValueError("max_reprojection_rms_px must be a finite positive number")
-        if not isinstance(max_rigid_rms_world_units, (int, float, np.integer, np.floating)) or isinstance(max_rigid_rms_world_units, (bool, np.bool_)):
-            raise ValueError("max_rigid_rms_world_units must be a finite nonnegative number")
-        self.max_reprojection_rms_px = float(max_reprojection_rms_px)
-        self.max_rigid_rms_world_units = float(max_rigid_rms_world_units)
-        if (
-            not np.isfinite(self.max_reprojection_rms_px)
-            or self.max_reprojection_rms_px < 0
-            or not np.isfinite(self.max_rigid_rms_world_units)
-            or self.max_rigid_rms_world_units < 0
-        ):
-            raise ValueError("pose fitting gates must be finite nonnegative numbers")
+        # Numeric policy validation must reject unrepresentable Python ints
+        # and NaN before they enter expensive reconstruction.
+        self.max_reprojection_rms_px = _finite_nonnegative(
+            max_reprojection_rms_px, "max_reprojection_rms_px"
+        )
+        self.max_rigid_rms_world_units = _finite_nonnegative(
+            max_rigid_rms_world_units, "max_rigid_rms_world_units"
+        )
 
         self._locks: dict[tuple[int, int], MarkerIdentityLock] = {}
         self._last_trigger_id: int | None = None

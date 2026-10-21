@@ -378,6 +378,22 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
                     self.tracker.advance(frames, [candidate] + rois[1:])
                 self.assertEqual(self.tracker.last_trigger_id, self.first)
 
+    def test_invalid_real_policy_does_not_initialize_tracker(self):
+        for parameter in (
+            "max_reprojection_rms_px", "max_rigid_rms_world_units"
+        ):
+            for value in ("1", True, float("nan"), float("inf"), -1.0, 10**1000):
+                with self.subTest(parameter=parameter, value=repr(value)):
+                    opts = {parameter: value}
+                    with self.assertRaisesRegex(ValueError, parameter):
+                        IdentityLockedBoardTracker(
+                            self.registry, self.camera_ids,
+                            self.cameras, self.K, self.brightness,
+                            trigger_epoch=self.epoch,
+                            max_exposure_skew_ns=60,
+                            **opts,
+                        )
+
     def test_clock_change_and_missing_triggers_fail_before_state_commit(self):
         self.bootstrap()
         frames, rois = self.samples(self.first + 1)
