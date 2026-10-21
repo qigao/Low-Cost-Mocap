@@ -11,7 +11,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from geometry import _camera_arrays, triangulate_point
+from geometry import _camera_arrays, _observation_array, triangulate_point
 
 
 def _project(point: np.ndarray, pose: Mapping[str, Any], intrinsic: Any) -> tuple[np.ndarray, float]:
@@ -91,10 +91,7 @@ def triangulate_consensus(
     for camera_id, observation in enumerate(observations):
         if observation is None:
             continue
-        point = np.asarray(observation, dtype=np.float64).reshape(-1)
-        if point.shape != (2,) or not np.isfinite(point).all():
-            raise ValueError(f"observation for camera {camera_id} must be a finite (x, y) pair")
-        points[camera_id] = point
+        points[camera_id] = _observation_array(observation, camera_id)
     if len(points) < min_views:
         raise ValueError(f"need at least {min_views} observations; got {len(points)}")
 
