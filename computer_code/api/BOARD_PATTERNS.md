@@ -125,6 +125,55 @@ be explicitly selected for successive pose-phase frames; all intervening
 hardware triggers must still be verified by an external capture monitor.
 It is not a fallback to inferred synchronization.
 
+## Per-phase rigid-body visibility: a separate design gate
+
+The original [balanced example](board-patterns.example.json) uses 50% LED
+duty cycles; only phase 15 contains three or more illuminated noncollinear
+LEDs on **both** boards. Identifying a marker is not the same as obtaining a
+current-frame 6DoF observation. At nominal 90 FPS a rigid-body pose produced
+only once per 16-phase cycle has an optical measurement cadence of **5.625
+Hz**, not 90 Hz.
+
+[board-patterns.continuous.example.json](board-patterns.continuous.example.json)
+is an **alternative software-only candidate**: four LEDs per board with
+81.25% nominal duty each. Three are illuminated in phases 0..11, all four
+in phases 12..15, and every active subset is noncollinear. The eight
+timecodes have minimum *global* Hamming distance 4, supporting a declared
+single-bit corruption budget with strictly reduced erasure tolerance
+compared with the original distance-8 pattern. Maximum cyclic dark run
+is two triggers. The candidate omits \`pose_phase\` to avoid artificially
+restricting the recognizer to one phase; the final four phases remain ON.
+
+Use the non-hardware phase audit:
+
+\`\`\`sh
+cd computer_code/api
+
+# Reports why the original 50%-duty pattern does NOT cover every phase.
+python board_pattern_cli.py board-patterns.example.json --phase-report
+
+# Intentionally fails for the original pattern.
+python board_pattern_cli.py board-patterns.example.json --require-every-phase
+
+# Design-only per-phase geometry checks pass for the alternative schedule.
+python board_pattern_cli.py board-patterns.continuous.example.json --require-every-phase
+\`\`\`
+
+**Scope of this gate:** it proves illumination *planning* and noncollinear
+model geometry only. It does not prove LED contrast, shutter/phase alignment,
+camera viewing angle, marker recognition in the presence of erasures or a
+physical world's known metric scale. A 81.25% duty cycle may increase
+controller power and heating and must be evaluated on the physical board.
+
+Crucially, current \`admit_track_marker_at_frame()\` still decodes from
+bounded samples **within one coding cycle**. Running a nominally visible
+code at every trigger does not automatically preserve the physical marker
+ID across cycles, and the existing recognizer does not yet measure a new
+Pose on every camera exposure. A separate **identity-locked continuous
+tracker** is required, with real current-frame observations, periodic
+code revalidation, prediction explicitly labelled as non-measured, and
+hard stale/invalid states.
+
 ## Limits / hardware gates
 
 - The inspected upstream pseyepy `Camera.read` timestamps host dequeue, not
