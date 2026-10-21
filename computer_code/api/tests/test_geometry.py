@@ -41,6 +41,24 @@ class TriangulationTests(unittest.TestCase):
         np.testing.assert_allclose(point, self.truth, atol=1e-9)
         self.assertLess(metrics["reprojection_rms_px"], 1e-8)
 
+    def test_negative_intrinsic_scale_preserves_parallax_and_position(self):
+        observations = [self.project(i) for i in range(3)]
+        baseline, baseline_metrics = triangulate_point(
+            observations, self.poses, self.Ks
+        )
+        # The image projection is unchanged by a nonzero scale of K,
+        # including a negative scale on just one camera.
+        signed_intrinsics = [self.K, -3.0 * self.K, 1e-8 * self.K]
+        candidate, metrics = triangulate_point(
+            observations, self.poses, signed_intrinsics
+        )
+        np.testing.assert_allclose(candidate, baseline, atol=1e-9)
+        self.assertAlmostEqual(
+            metrics["max_parallax_angle_deg"],
+            baseline_metrics["max_parallax_angle_deg"],
+            places=9,
+        )
+
     def test_reports_parallax_for_well_conditioned_views(self):
         observations = [self.project(i) for i in range(3)]
         _, metrics = triangulate_point(observations, self.poses, self.Ks)
@@ -88,8 +106,10 @@ class TriangulationTests(unittest.TestCase):
             camera = pose["R"] @ point + pose["t"]
             pixel = self.K @ camera
             observations.append(pixel[:2] / pixel[2])
-        with self.assertRaisesRegex(ValueError, "parallax"):
-            triangulate_point(observations, poses, [self.K, self.K])
+        for intrinsics in ([self.K, self.K], [self.K, -self.K], [-2 * self.K, self.K]):
+            with self.subTest(intrinsic_signs=(np.sign(intrinsics[0][0, 0]), np.sign(intrinsics[1][0, 0]))):
+                with self.assertRaisesRegex(ValueError, "parallax"):
+                    triangulate_point(observations, poses, intrinsics)
 
     def test_missing_middle_camera_keeps_camera_indices(self):
         observations = [self.project(0), None, self.project(2)]
