@@ -186,6 +186,33 @@ class PairwiseAssociationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite 3x3 matrix"):
             sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], fundamental)
 
+    def test_fundamental_matrix_must_have_rank_two(self):
+        for fundamental in (np.eye(3), np.diag([1.0, 1.0, 0.1]), np.diag([1.0, 0.0, 0.0])):
+            with self.subTest(fundamental=fundamental.tolist()):
+                with self.assertRaisesRegex(ValueError, "rank 2"):
+                    sampson_errors([[100., 50.]], [[130., 50.]], fundamental)
+                with self.assertRaisesRegex(ValueError, "rank 2"):
+                    associate_pairwise([[100., 50.]], [[130., 50.]], fundamental)
+
+    def test_small_rank_two_estimation_drift_is_projected_consistently(self):
+        baseline = sampson_errors(
+            [[100., 50.], [200., 80.]],
+            [[130., 50.], [240., 81.]],
+            self.F,
+        )
+        # The nearest rank-two matrix is numerically equivalent to F,
+        # whereas the larger full-rank perturbation is rejected above.
+        near_rank_two = self.F + np.eye(3) * 1e-12
+        np.testing.assert_allclose(
+            sampson_errors(
+                [[100., 50.], [200., 80.]],
+                [[130., 50.], [240., 81.]],
+                near_rank_two,
+            ),
+            baseline,
+            rtol=1e-8, atol=1e-8,
+        )
+
     def test_rejects_zero_fundamental_matrix(self):
         with self.assertRaisesRegex(ValueError, "non-zero"):
             sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], np.zeros((3, 3)))

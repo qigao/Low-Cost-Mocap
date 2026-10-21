@@ -81,6 +81,16 @@ def sampson_errors(left_points: object, right_points: object, fundamental: objec
     # before forming quadratic terms so the absolute denominator guard below
     # cannot make otherwise equivalent matrices behave differently.
     F = F / np.max(np.abs(F))
+    # A true fundamental matrix has rank exactly two. Reject rank-one and
+    # clearly full-rank matrices: neither represents valid epipolar geometry.
+    # Correct only small finite estimation drift via closest rank-two SVD.
+    U, singular_values, Vt = np.linalg.svd(F, full_matrices=False)
+    if (
+        singular_values[1] <= 1e-10 * singular_values[0]
+        or singular_values[2] > 1e-8 * singular_values[0]
+    ):
+        raise ValueError("fundamental matrix must have numerical rank 2")
+    F = (U * np.array([singular_values[0], singular_values[1], 0.0])) @ Vt
     if left.shape[0] == 0 or right.shape[0] == 0:
         return np.empty((left.shape[0], right.shape[0]), dtype=np.float64)
 
