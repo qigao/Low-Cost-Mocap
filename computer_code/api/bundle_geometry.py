@@ -30,7 +30,10 @@ def _observations(data: object, camera_count: int) -> tuple[np.ndarray, np.ndarr
                 continue
             if any(value is None for value in pair):
                 raise ValueError(f"track {track} camera {camera} has incomplete observation")
-            coords[track, camera] = _observation_array(pair, camera)
+            # The outer sparse mask uses object dtype for None sentinels;
+            # convert each valid pair back to scalars so strict numeric
+            # validation does not mistake the container dtype for data type.
+            coords[track, camera] = _observation_array(pair.tolist(), camera)
             visible[track, camera] = True
     return coords, visible
 
