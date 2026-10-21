@@ -197,6 +197,31 @@ class MultiviewConsensusTests(unittest.TestCase):
         self.assertTrue(np.isfinite(xyz).all())
         self.assertLessEqual(metrics["reprojection_rms_px"], 100.0)
 
+    def test_rejects_boolean_and_non_integer_min_views(self):
+        for min_views in (True, 3.0, 3.5, np.bool_(False)):
+            with self.subTest(min_views=repr(min_views)):
+                with self.assertRaisesRegex(ValueError, "min_views must be an integer"):
+                    triangulate_consensus(
+                        [self.project(i) for i in range(4)], self.poses, self.Ks,
+                        min_views=min_views,
+                    )
+
+    def test_rejects_boolean_or_non_scalar_numeric_thresholds(self):
+        cases = (
+            ("inlier_threshold_px", True),
+            ("max_reprojection_rms_px", np.bool_(False)),
+            ("min_depth", "0.1"),
+            ("min_parallax_angle_deg", np.array([1.0])),
+            ("ambiguity_rms_tolerance_px", 1.0 + 0j),
+        )
+        for name, value in cases:
+            with self.subTest(name=name, value=repr(value)):
+                with self.assertRaisesRegex(ValueError, name):
+                    triangulate_consensus(
+                        [self.project(i) for i in range(4)], self.poses, self.Ks,
+                        **{name: value},
+                    )
+
     def test_ambiguity_rms_tolerance_must_be_finite_and_nonnegative(self):
         for tolerance in (-0.001, np.nan, np.inf, -np.inf):
             with self.subTest(tolerance=tolerance):
