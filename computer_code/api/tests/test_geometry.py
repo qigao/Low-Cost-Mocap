@@ -36,7 +36,7 @@ class TriangulationTests(unittest.TestCase):
 
     def test_intrinsic_matrix_global_scale_does_not_change_triangulation(self):
         observations = [self.project(i) for i in range(3)]
-        scaled_intrinsics = [K * 1e-6 for K in self.Ks]
+        scaled_intrinsics = [K * 1e-14 for K in self.Ks]
         point, metrics = triangulate_point(observations, self.poses, scaled_intrinsics)
         np.testing.assert_allclose(point, self.truth, atol=1e-9)
         self.assertLess(metrics["reprojection_rms_px"], 1e-8)
