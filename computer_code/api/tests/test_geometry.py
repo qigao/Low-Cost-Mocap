@@ -147,6 +147,19 @@ class TriangulationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite"):
             triangulate_point(observations, self.poses, self.Ks)
 
+    def test_rejects_string_boolean_and_complex_observations(self):
+        valid = self.project(1)
+        invalid_points = (
+            ["100", "200"],
+            [True, False],
+            [100.0 + 0j, 200.0 + 0j],
+        )
+        for point in invalid_points:
+            with self.subTest(point=repr(point)):
+                observations = [self.project(0), point, self.project(2)]
+                with self.assertRaisesRegex(ValueError, "real numeric coordinates"):
+                    triangulate_point(observations, self.poses, self.Ks)
+
 
     def test_parallax_decreases_as_target_depth_increases(self):
         near = np.array([0.2, -0.1, 5.0])
