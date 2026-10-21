@@ -34,6 +34,13 @@ class TriangulationTests(unittest.TestCase):
         self.assertLess(metrics["reprojection_rms_px"], 1e-8)
         self.assertEqual(metrics["camera_ids"], [0, 1, 2])
 
+    def test_intrinsic_matrix_global_scale_does_not_change_triangulation(self):
+        observations = [self.project(i) for i in range(3)]
+        scaled_intrinsics = [K * 1e-6 for K in self.Ks]
+        point, metrics = triangulate_point(observations, self.poses, scaled_intrinsics)
+        np.testing.assert_allclose(point, self.truth, atol=1e-9)
+        self.assertLess(metrics["reprojection_rms_px"], 1e-8)
+
     def test_reports_parallax_for_well_conditioned_views(self):
         observations = [self.project(i) for i in range(3)]
         _, metrics = triangulate_point(observations, self.poses, self.Ks)
