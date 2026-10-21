@@ -166,6 +166,7 @@ def recognize_admitted_boards(
     trigger_epoch: int,
     max_exposure_skew_ns: int,
     previous_trigger_id: int | None = None,
+    allow_trigger_gaps: bool = False,
     max_reprojection_rms_px: float = 1.0,
     max_rigid_rms_world_units: float = 0.02,
 ) -> BoardRecognitionResult:
@@ -173,6 +174,9 @@ def recognize_admitted_boards(
 
     Input stamps still require *external hardware* exposure/clock provenance.
     This function does not infer synchronization from host timestamps.
+    If called only at a configured pose_phase, allow_trigger_gaps=True must
+    be explicitly requested, and the caller must independently account for
+    all intervening hardware triggers. It is not an inferred sync fallback.
     """
     if not isinstance(registry, BoardPatternRegistry):
         raise ValueError("registry must be BoardPatternRegistry")
@@ -208,6 +212,7 @@ def recognize_admitted_boards(
         detections, frames, expected_camera_ids,
         max_exposure_skew_ns=max_exposure_skew_ns,
         previous_trigger_id=previous_trigger_id,
+        allow_trigger_gaps=allow_trigger_gaps,
         allowed_marker_ids=tuple(registry.marker_to_board),
     )
     if batch.trigger_id < epoch:
