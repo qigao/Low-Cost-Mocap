@@ -85,8 +85,14 @@ def associate_pairwise(
         return []
 
     threshold_sq = max_sampson_error_px * max_sampson_error_px
-    if not np.isfinite(threshold_sq) or threshold_sq == 0.0:
-        raise ValueError("max_sampson_error_px squared must be finite and positive")
+    if (
+        not np.isfinite(threshold_sq)
+        or threshold_sq == 0.0
+        or threshold_sq > np.finfo(np.float64).max / 4.0
+    ):
+        raise ValueError(
+            "max_sampson_error_px squared must be positive and safely representable"
+        )
     # Each left observation gets its own dummy column at the rejection cost.
     # Real candidate costs at/above the threshold are not competitive.
     costs = np.full((n_left, n_right + n_left), threshold_sq, dtype=np.float64)
