@@ -119,6 +119,22 @@ class PairwiseAssociationTests(unittest.TestCase):
                     rtol=1e-12, atol=1e-12,
                 )
 
+    def test_invalid_squared_threshold_rejected_even_without_candidate_pairs(self):
+        # Empty point sets must not bypass parameter validation.
+        for threshold in (1e200, 1e154, 1e-200):
+            for left, right in (
+                ([], [[100.0, 50.0]]),
+                ([[100.0, 50.0]], []),
+                ([], []),
+            ):
+                with self.subTest(threshold=threshold, left=left, right=right):
+                    with self.assertRaisesRegex(
+                        ValueError, "squared must be positive and safely representable"
+                    ):
+                        associate_pairwise(
+                            left, right, self.F, max_sampson_error_px=threshold
+                        )
+
     def test_rejects_threshold_whose_square_overflows(self):
         with self.assertRaisesRegex(ValueError, "squared must be positive and safely representable"):
             associate_pairwise(
