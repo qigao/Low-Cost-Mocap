@@ -125,6 +125,15 @@ class PairwiseAssociationTests(unittest.TestCase):
                 max_sampson_error_px=1e-200,
             )
 
+    def test_rejects_non_real_or_non_scalar_thresholds(self):
+        for threshold in (True, np.bool_(False), "1.0", 1.0 + 0j, np.array([1.0])):
+            with self.subTest(threshold=repr(threshold)):
+                with self.assertRaisesRegex(ValueError, "finite positive real scalar"):
+                    associate_pairwise(
+                        [[100.0, 50.0]], [[130.0, 50.0]], self.F,
+                        max_sampson_error_px=threshold,
+                    )
+
     def test_rejects_zero_fundamental_matrix(self):
         with self.assertRaisesRegex(ValueError, "non-zero"):
             sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], np.zeros((3, 3)))
