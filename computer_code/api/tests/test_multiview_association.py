@@ -40,6 +40,10 @@ class PairwiseAssociationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite"):
             associate_pairwise([[float("nan"), 2.0]], [[1.0, 2.0]], self.F)
 
+    def test_rejects_zero_fundamental_matrix(self):
+        with self.assertRaisesRegex(ValueError, "non-zero"):
+            sampson_errors([[100.0, 50.0]], [[130.0, 50.0]], np.zeros((3, 3)))
+
 
 if __name__ == "__main__":
     unittest.main()
