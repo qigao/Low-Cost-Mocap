@@ -116,6 +116,14 @@ def triangulate_point(
         P = K @ np.column_stack((R, t))
         valid.append((camera_id, point, P))
         ray_camera = np.linalg.solve(K, np.array([point[0], point[1], 1.0]))
+        # K and -K represent the same perspective projection, but solving
+        # through -K reverses the homogeneous ray. Use the camera-forward
+        # half-ray (+Z) so parallax cannot turn a nearly parallel baseline
+        # into a spurious 180-degree angle.
+        if not np.isfinite(ray_camera).all() or ray_camera[2] == 0.0:
+            raise ValueError(f"viewing ray for camera {camera_id} is degenerate")
+        if ray_camera[2] < 0.0:
+            ray_camera = -ray_camera
         ray_world = R.T @ ray_camera
         ray_norm = float(np.linalg.norm(ray_world))
         if not np.isfinite(ray_norm) or ray_norm <= np.finfo(np.float64).tiny:
