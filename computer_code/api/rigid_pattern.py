@@ -50,8 +50,14 @@ def fit_rigid_pattern(
             if not np.isfinite(raw_indices).all() or not np.equal(raw_indices, np.floor(raw_indices)).all():
                 raise ValueError("marker_indices must be integers")
         indices = raw_indices.astype(np.int64)
-    if len(observed) < min_markers or min_markers < 3:
-        raise ValueError("at least three paired markers are required")
+    if (
+        isinstance(min_markers, (bool, np.bool_))
+        or not isinstance(min_markers, (int, np.integer))
+        or min_markers < 3
+    ):
+        raise ValueError("min_markers must be an integer >= 3")
+    if len(observed) < min_markers:
+        raise ValueError("at least min_markers paired markers are required")
     if len(indices) != len(set(indices.tolist())):
         raise ValueError("marker_indices must be unique")
     if np.any(indices < 0) or np.any(indices >= len(model)):
