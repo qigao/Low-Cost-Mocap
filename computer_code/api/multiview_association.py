@@ -48,6 +48,13 @@ def sampson_errors(left_points: object, right_points: object, fundamental: objec
     """Return squared Sampson errors in pixel units for every point pair."""
     left = _points_array(left_points, "left_points")
     right = _points_array(right_points, "right_points")
+    raw_fundamental = np.asarray(fundamental, dtype=object).reshape(-1)
+    if any(
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        for value in raw_fundamental
+    ):
+        raise ValueError("fundamental matrix must contain real numeric values")
     F = np.asarray(fundamental, dtype=np.float64)
     if F.shape != (3, 3) or not np.isfinite(F).all():
         raise ValueError("fundamental matrix must be a finite 3x3 matrix")
