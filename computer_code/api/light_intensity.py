@@ -13,7 +13,7 @@ import numpy as np
 
 from geometry import _observation_array
 from light_tracking import TrackEvidence
-from temporal_pattern import LightSample, _nonnegative_int
+from temporal_pattern import FrameStamp, LightSample, _nonnegative_int
 
 
 def _finite_real(value: object, name: str) -> float:
@@ -202,3 +202,105 @@ def quantize_roi_track(
             LightSample(trigger, calibration.classify(None if roi is None else roi.contrast))
         )
     return tuple(samples)
+
+
+@dataclass(frozen=True)
+class StampedTrackROI:
+    """One camera-local light track sample tied to its originating frame."""
+    frame_stamp: FrameStamp
+    track_evidence: TrackEvidence
+    roi: ROIContrast | None
+    predicted_roi_qualified: bool = False
+
+
+def quantize_stamped_track_trace(
+    samples: Sequence[StampedTrackROI],
+    calibration: BinaryIntensityCalibration,
+    *,
+    camera_id: int,
+    track_id: int,
+    max_samples: int = 64,
+) -> tuple[LightSample, ...]:
+    """Bind and quantize one camera-local physical-light track's timeline.
+
+    Reject evidence from any other camera, local track, trigger, clock
+    domain or nonmonotonic exposure timestamp. Unmatched, unqualified
+    predicted-ROI evidence is never interpreted as a known OFF phase.
+    Hardware timestamp provenance still requires a trusted device adapter:
+    matching metadata alone cannot prove exposure synchronization.
+    """
+    if not isinstance(calibration, BinaryIntensityCalibration):
+        raise ValueError("calibration must be BinaryIntensityCalibration")
+    camera = _nonnegative_int(camera_id, "camera_id")
+    track = _nonnegative_int(track_id, "track_id")
+    capacity = _nonnegative_int(max_samples, "max_samples")
+    if capacity == 0 or len(samples) > capacity:
+        raise ValueError("track sample capacity must be positive and bounded")
+    if not samples:
+        raise ValueError("track trace must contain at least one sample")
+
+    out = []
+    previous_trigger = None
+    previous_timestamp = None
+    common_domain = None
+    for sample in samples:
+        if not isinstance(sample, StampedTrackROI):
+            raise ValueError("trace entries must be StampedTrackROI")
+        frame = sample.frame_stamp
+        evidence = sample.track_evidence
+        if not isinstance(frame, FrameStamp) or not isinstance(evidence, TrackEvidence):
+            raise ValueError("trace entry needs FrameStamp and TrackEvidence")
+        stamp_camera = _nonnegative_int(frame.camera_id, "frame camera_id")
+        stamp_trigger = _nonnegative_int(frame.trigger_id, "frame trigger_id")
+        timestamp = _nonnegative_int(
+            frame.exposure_timestamp_ns, "exposure_timestamp_ns"
+        )
+        evidence_camera = _nonnegative_int(evidence.camera_id, "track camera_id")
+        evidence_track = _nonnegative_int(evidence.track_id, "local track_id")
+        evidence_trigger = _nonnegative_int(evidence.trigger_id, "track trigger_id")
+        missed = _nonnegative_int(evidence.missed_triggers, "missed_triggers")
+        if (
+            stamp_camera != camera or evidence_camera != camera
+            or evidence_track != track
+        ):
+            raise ValueError("mixed camera or local track identity in temporal trace")
+        if evidence_trigger != stamp_trigger:
+            raise ValueError("track trigger does not match originating frame")
+        if (
+            previous_trigger is not None
+            and stamp_trigger <= previous_trigger
+        ):
+            raise ValueError("temporal trace has stale or repeated trigger_id")
+        if (
+            previous_timestamp is not None
+            and timestamp <= previous_timestamp
+        ):
+            raise ValueError("temporal trace exposure timestamps must increase")
+        if not isinstance(frame.clock_domain, str) or not frame.clock_domain.strip():
+            raise ValueError("temporal trace needs a declared clock domain")
+        if common_domain is None:
+            common_domain = frame.clock_domain
+        elif frame.clock_domain != common_domain:
+            raise ValueError("temporal trace mixes clock domains")
+        if not isinstance(sample.predicted_roi_qualified, (bool, np.bool_)):
+            raise ValueError("predicted_roi_qualified must be boolean")
+        if evidence.observed_xy is None:
+            if missed < 1:
+                raise ValueError("undetected track must report at least one missed trigger")
+            if sample.roi is not None and not sample.predicted_roi_qualified:
+                raise ValueError(
+                    "predicted ROI needs independent motion qualification"
+                )
+        elif missed != 0:
+            raise ValueError("observed track must report zero missed triggers")
+        if sample.roi is not None and not isinstance(sample.roi, ROIContrast):
+            raise ValueError("ROI evidence must be ROIContrast or None")
+
+        out.append(LightSample(
+            stamp_trigger, calibration.classify(
+                None if sample.roi is None else sample.roi.contrast
+            ),
+        ))
+        previous_trigger = stamp_trigger
+        previous_timestamp = timestamp
+    return tuple(out)

@@ -49,6 +49,12 @@ requirements.
   unmatched tracks by default. Sampling a predicted dark ROI requires an
   affirmative predicted_roi_qualified flag from a separate measured motion
   uncertainty / light-tracker quality gate, not from this tracker alone.
+- light_intensity.quantize_stamped_track_trace binds every ROI measurement
+  to its FrameStamp and camera-local TrackEvidence, rejecting borrowed
+  camera IDs, track IDs, trigger numbers, clock domains and stale capture
+  timestamps. Unqualified predicted-only ROIs cannot be converted to
+  known-OFF samples. This checks metadata consistency only; the hardware
+  adapter must independently attest real sensor-exposure provenance.
 - light_intensity.sample_light_roi extracts foreground-minus-annulus
   contrast from raw grayscale frames at an independently tracked light
   position. BinaryIntensityCalibration applies per-camera ON/OFF references
