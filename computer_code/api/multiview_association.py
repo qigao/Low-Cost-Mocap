@@ -107,11 +107,16 @@ def associate_pairwise(
         raise ValueError(
             "max_sampson_error_px squared must be positive and safely representable"
         )
-    # Each left observation gets its own dummy column at the rejection cost.
-    # Real candidate costs at/above the threshold are not competitive.
-    costs = np.full((n_left, n_right + n_left), threshold_sq, dtype=np.float64)
-    costs[:, :n_right] = np.where(errors < threshold_sq, errors, threshold_sq * 4.0)
-    costs[:, n_right:] = threshold_sq
+    # Normalize eligible costs to [0, 1). Give each unmatched left point a
+    # penalty larger than the maximum possible sum of eligible costs. This
+    # makes the assignment maximize the number of valid matches first, then
+    # minimize their total Sampson error. Invalid edges cost more than a dummy.
+    unmatched_cost = float(n_left + 1)
+    invalid_cost = 2.0 * unmatched_cost
+    costs = np.full((n_left, n_right + n_left), unmatched_cost, dtype=np.float64)
+    normalized = errors / threshold_sq
+    costs[:, :n_right] = np.where(errors < threshold_sq, normalized, invalid_cost)
+    costs[:, n_right:] = unmatched_cost
     rows, cols = linear_sum_assignment(costs)
 
     matches = []
