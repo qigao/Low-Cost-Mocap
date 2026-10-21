@@ -50,6 +50,20 @@ class MultiviewConsensusTests(unittest.TestCase):
         self.assertEqual(metrics["inlier_camera_ids"], [0, 2, 3])
         self.assertEqual(metrics["outlier_camera_ids"], [])
 
+    def test_rejects_non_real_numeric_observation_coordinates(self):
+        valid = [self.project(i) for i in range(4)]
+        invalid_observations = (
+            ["320", "240"],
+            [True, False],
+            [320.0 + 1.0j, 240.0 + 0.0j],
+        )
+        for observation in invalid_observations:
+            with self.subTest(observation=repr(observation)):
+                observations = list(valid)
+                observations[1] = observation
+                with self.assertRaisesRegex(ValueError, "real numeric coordinates"):
+                    triangulate_consensus(observations, self.poses, self.Ks)
+
     def test_consensus_is_invariant_to_global_intrinsic_scale(self):
         observations = [self.project(i) for i in range(4)]
         scaled_intrinsics = [K * 1e-14 for K in self.Ks]
