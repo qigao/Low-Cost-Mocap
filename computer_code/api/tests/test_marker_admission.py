@@ -80,12 +80,19 @@ class MarkerAdmissionTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "latest trace exposure"):
             self.admit(old, target=next_cycle)
-        with self.assertRaisesRegex(ValueError, "cycle"):
-            self.admit(old + [StampedTrackROI(
-                next_cycle,
-                TrackEvidence(3, 0, 1008, (25., 20.), (25., 20.), 0),
-                ROIContrast(120., 0., 120., 9, 28),
-            )])
+        new_sample = StampedTrackROI(
+            next_cycle,
+            TrackEvidence(3, 0, 1008, (25., 20.), (25., 20.), 0),
+            ROIContrast(120., 0., 120., 9, 28),
+        )
+        # An entire old cycle plus the next frame exceeds the strict
+        # per-decode capacity before the decoder can inspect cycle IDs.
+        with self.assertRaisesRegex(ValueError, "capacity"):
+            self.admit(old + [new_sample])
+        # With fewer records than the cap, the cross-cycle check must
+        # independently reject the same old-ID/new-frame splice.
+        with self.assertRaisesRegex(ValueError, "different code cycles"):
+            self.admit(old[-1:] + [new_sample])
 
     def test_rejects_identity_splice_across_local_tracks(self):
         trace = self.make_trace()
