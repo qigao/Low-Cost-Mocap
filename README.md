@@ -36,8 +36,11 @@ epoch and optional common ON pose phase let independent camera observations
 join the correct board without distance-only drone-index heuristics.
 
 - [Board pattern registry and recognition guide](computer_code/api/BOARD_PATTERNS.md)
-- [Two-board example JSON](computer_code/api/board-patterns.example.json)
-- Software-only checker: `cd computer_code/api && python board_pattern_cli.py board-patterns.example.json`
+- [Two-board balanced example JSON](computer_code/api/board-patterns.example.json)
+- [High-visibility 16-phase candidate](computer_code/api/board-patterns.continuous.example.json)
+- [Every-trigger observability analysis](computer_code/api/BOARD_PATTERNS.md#per-phase-rigid-body-visibility-a-separate-design-gate)
+- [Identity-locked continuous pose prototype](computer_code/api/CONTINUOUS_TRACKING.md)
+- Software-only checker: `cd computer_code/api && python board_pattern_cli.py board-patterns.continuous.example.json --require-every-phase`
 
 **Important:** These are standalone software modules and tests. The legacy
 camera capture and serial flight-control code has **not** been switched.
