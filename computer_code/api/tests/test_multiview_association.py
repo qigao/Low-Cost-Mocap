@@ -32,6 +32,25 @@ class PairwiseAssociationTests(unittest.TestCase):
         matches = associate_pairwise(left, right, self.F, max_sampson_error_px=2.0)
         self.assertEqual([(m.left_index, m.right_index) for m in matches], [(0, 0)])
 
+    def test_candidate_exactly_at_threshold_is_rejected(self):
+        # For this F, vertical displacement d gives Sampson error d^2 / 2.
+        # A displacement of sqrt(2) therefore lies exactly at the 1 px limit.
+        left = [[100.0, 50.0]]
+        right = [[100.0, 50.0 + np.sqrt(2.0)]]
+        matches = associate_pairwise(
+            left, right, self.F, max_sampson_error_px=1.0
+        )
+        self.assertEqual(matches, [])
+
+    def test_candidate_just_below_threshold_is_accepted(self):
+        left = [[100.0, 50.0]]
+        right = [[100.0, 50.0 + np.sqrt(2.0) * (1.0 - 1e-6)]]
+        matches = associate_pairwise(
+            left, right, self.F, max_sampson_error_px=1.0
+        )
+        self.assertEqual(len(matches), 1)
+        self.assertLess(matches[0].sampson_error_px, 1.0)
+
     def test_empty_inputs_return_no_matches(self):
         self.assertEqual(associate_pairwise([], [[10.0, 20.0]], self.F), [])
         self.assertEqual(associate_pairwise([[10.0, 20.0]], [], self.F), [])
