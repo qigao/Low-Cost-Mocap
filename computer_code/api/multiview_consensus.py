@@ -56,18 +56,36 @@ def triangulate_consensus(
     n = len(observations)
     if len(camera_poses) != n or len(intrinsics) != n:
         raise ValueError("observations, camera_poses, and intrinsics must have equal length")
-    if min_views < 3:
-        raise ValueError("min_views must be at least 3 for multiview consensus")
-    if not np.isfinite(inlier_threshold_px) or inlier_threshold_px <= 0:
-        raise ValueError("inlier_threshold_px must be finite and positive")
-    if not np.isfinite(max_reprojection_rms_px) or max_reprojection_rms_px < 0:
-        raise ValueError("max_reprojection_rms_px must be finite and non-negative")
-    if not np.isfinite(min_depth) or min_depth < 0:
-        raise ValueError("min_depth must be finite and non-negative")
-    if not np.isfinite(min_parallax_angle_deg) or not 0 <= min_parallax_angle_deg <= 180:
-        raise ValueError("min_parallax_angle_deg must be finite and between 0 and 180")
-    if not np.isfinite(ambiguity_rms_tolerance_px) or ambiguity_rms_tolerance_px < 0:
-        raise ValueError("ambiguity_rms_tolerance_px must be finite and non-negative")
+    if (
+        isinstance(min_views, (bool, np.bool_))
+        or not isinstance(min_views, (int, np.integer))
+        or min_views < 3
+    ):
+        raise ValueError("min_views must be an integer at least 3 for multiview consensus")
+
+    def finite_real_scalar(value: object) -> bool:
+        return (
+            not isinstance(value, (bool, np.bool_))
+            and isinstance(value, (int, float, np.integer, np.floating))
+            and bool(np.isfinite(value))
+        )
+
+    if not finite_real_scalar(inlier_threshold_px) or inlier_threshold_px <= 0:
+        raise ValueError("inlier_threshold_px must be a finite positive real scalar")
+    if not finite_real_scalar(max_reprojection_rms_px) or max_reprojection_rms_px < 0:
+        raise ValueError("max_reprojection_rms_px must be a finite non-negative real scalar")
+    if not finite_real_scalar(min_depth) or min_depth < 0:
+        raise ValueError("min_depth must be a finite non-negative real scalar")
+    if (
+        not finite_real_scalar(min_parallax_angle_deg)
+        or not 0 <= min_parallax_angle_deg <= 180
+    ):
+        raise ValueError("min_parallax_angle_deg must be a finite real scalar between 0 and 180")
+    if (
+        not finite_real_scalar(ambiguity_rms_tolerance_px)
+        or ambiguity_rms_tolerance_px < 0
+    ):
+        raise ValueError("ambiguity_rms_tolerance_px must be a finite non-negative real scalar")
 
     points: dict[int, np.ndarray] = {}
     for camera_id, observation in enumerate(observations):
