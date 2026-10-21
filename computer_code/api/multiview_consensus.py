@@ -64,11 +64,17 @@ def triangulate_consensus(
         raise ValueError("min_views must be an integer at least 3 for multiview consensus")
 
     def finite_real_scalar(value: object) -> bool:
-        return (
-            not isinstance(value, (bool, np.bool_))
-            and isinstance(value, (int, float, np.integer, np.floating))
-            and bool(np.isfinite(value))
-        )
+        if (
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, float, np.integer, np.floating))
+        ):
+            return False
+        # NumPy's isfinite cannot safely inspect arbitrary-size Python ints.
+        # Convert explicitly and fail closed when the value exceeds float64.
+        try:
+            return bool(np.isfinite(float(value)))
+        except (OverflowError, TypeError, ValueError):
+            return False
 
     if not finite_real_scalar(inlier_threshold_px) or inlier_threshold_px <= 0:
         raise ValueError("inlier_threshold_px must be a finite positive real scalar")
