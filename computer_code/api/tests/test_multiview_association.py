@@ -141,7 +141,7 @@ class PairwiseAssociationTests(unittest.TestCase):
             )
 
     def test_rejects_non_real_or_non_scalar_thresholds(self):
-        for threshold in (True, np.bool_(False), "1.0", 1.0 + 0j, np.array([1.0])):
+        for threshold in (True, np.bool_(False), "1.0", 1.0 + 0j, np.array([1.0]), 10**1000):
             with self.subTest(threshold=repr(threshold)):
                 with self.assertRaisesRegex(ValueError, "finite positive real scalar"):
                     associate_pairwise(
