@@ -148,6 +148,19 @@ class TriangulationTests(unittest.TestCase):
                         observations, self.poses, self.Ks, **{name: value}
                     )
 
+    def test_rejects_scalar_thresholds_larger_than_float64(self):
+        observations = [self.project(i) for i in range(3)]
+        for name in (
+            "max_reprojection_rms_px",
+            "min_depth",
+            "min_parallax_angle_deg",
+        ):
+            with self.subTest(parameter=name):
+                with self.assertRaisesRegex(ValueError, name):
+                    triangulate_point(
+                        observations, self.poses, self.Ks, **{name: 10**1000}
+                    )
+
     def test_rejects_reprojection_outlier(self):
         observations = [self.project(i) for i in range(3)]
         observations[2] = observations[2] + np.array([80.0, -60.0])
