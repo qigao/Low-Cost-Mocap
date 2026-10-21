@@ -1,7 +1,7 @@
 import numpy as np
-from scipy import linalg, optimize, signal
+from scipy import linalg, signal
 import cv2 as cv
-from scipy.spatial.transform import Rotation
+from bundle_geometry import refine_calibrated_bundle
 import copy
 import json
 import os
@@ -212,120 +212,123 @@ def calculate_reprojection_errors(image_points, object_points, camera_poses):
 
 
 def calculate_reprojection_error(image_points, object_point, camera_poses):
+    """Mean squared pixel reprojection error, preserving original camera IDs.
+
+    Missing observations do not renumber cameras: each surviving observation
+    must retain its own intrinsic matrix and world-to-camera extrinsics.
+    """
     cameras = Cameras.instance()
-
-    image_points = np.array(image_points)
-    none_indicies = np.where(np.all(image_points == None, axis=1))[0]
-    image_points = np.delete(image_points, none_indicies, axis=0)
-    camera_poses = np.delete(camera_poses, none_indicies, axis=0)
-
-    if len(image_points) <= 1:
+    observations = np.asarray(image_points, dtype=object)
+    if observations.shape != (len(camera_poses), 2):
+        raise ValueError("image_points must be one (x, y) pair per camera")
+    if object_point is None:
+        return None
+    try:
+        xyz = np.asarray(object_point, dtype=np.float64).reshape(-1)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if xyz.shape != (3,) or not np.isfinite(xyz).all():
         return None
 
-    image_points_t = image_points.transpose((0,1))
-
-    errors = np.array([])
-    for i, camera_pose in enumerate(camera_poses):
-        if np.all(image_points[i] == None, axis=0):
+    residuals = []
+    for camera_id, (observed, pose) in enumerate(zip(observations, camera_poses)):
+        if all(coordinate is None for coordinate in observed):
             continue
-        projected_img_points, _ = cv.projectPoints(
-            np.expand_dims(object_point, axis=0).astype(np.float32), 
-            np.array(camera_pose["R"], dtype=np.float64), 
-            np.array(camera_pose["t"], dtype=np.float64), 
-            cameras.get_camera_params(i)["intrinsic_matrix"], 
-            np.array([])
+        if any(coordinate is None for coordinate in observed):
+            raise ValueError(f"camera {camera_id} has an incomplete pixel observation")
+        pixel = np.asarray(observed, dtype=np.float64)
+        if not np.isfinite(pixel).all():
+            raise ValueError(f"camera {camera_id} has nonfinite pixel coordinates")
+        intrinsic = cameras.get_camera_params(camera_id)["intrinsic_matrix"]
+        projected, _ = cv.projectPoints(
+            xyz.reshape(1, 3),
+            np.asarray(pose["R"], dtype=np.float64),
+            np.asarray(pose["t"], dtype=np.float64).reshape(3),
+            intrinsic, np.array([]),
         )
-        projected_img_point = projected_img_points[:,0,:][0]
-        errors = np.concatenate([errors, (image_points_t[i]-projected_img_point).flatten() ** 2])
-    
-    return errors.mean()
-
+        error = pixel - np.asarray(projected, dtype=np.float64).reshape(2)
+        residuals.extend(np.square(error).tolist())
+    if len(residuals) < 4:
+        return None
+    return float(np.mean(residuals))
 
 def bundle_adjustment(image_points, camera_poses, socketio):
+    """Optimize calibrated poses and points without mutating camera parameters.
+
+    Retain the existing hardware API boundary. The numerical implementation
+    lives in the pure bundle_geometry module, which holds the first camera
+    and second camera's translation vector fixed as an explicit scale gauge.
+    The calling calibration event emits one final result only on success.
+    """
     cameras = Cameras.instance()
-
-    def params_to_camera_poses(params):
-        focal_distances = []
-        num_cameras = int((params.size-1)/7)+1
-        camera_poses = [{
-            "R": np.eye(3),
-            "t": np.array([0,0,0], dtype=np.float32)
-        }]
-        focal_distances.append(params[0])
-        for i in range(0, num_cameras-1):
-            focal_distances.append(params[i*7+1])
-            camera_poses.append({
-                "R": Rotation.as_matrix(Rotation.from_rotvec(params[i*7 + 2 : i*7 + 3 + 2])),
-                "t": params[i*7 + 3 + 2 : i*7 + 6 + 2]
-            })
-
-        return camera_poses, focal_distances
-
-    def residual_function(params):
-        camera_poses, focal_distances = params_to_camera_poses(params)
-        for i in range(0, len(camera_poses)):
-            intrinsic = cameras.get_camera_params(i)["intrinsic_matrix"]
-            intrinsic[0, 0] = focal_distances[i]
-            intrinsic[1, 1] = focal_distances[i]
-            # cameras.set_camera_params(i, intrinsic)
-        object_points = triangulate_points(image_points, camera_poses)
-        errors = calculate_reprojection_errors(image_points, object_points, camera_poses)
-        errors = errors.astype(np.float32)
-        socketio.emit("camera-pose", {"camera_poses": camera_pose_to_serializable(camera_poses)})
-        
-        return errors
-
-    focal_distance = cameras.get_camera_params(0)["intrinsic_matrix"][0,0]
-    init_params = np.array([focal_distance])
-    for i, camera_pose in enumerate(camera_poses[1:]):
-        rot_vec = Rotation.as_rotvec(Rotation.from_matrix(camera_pose["R"])).flatten()
-        focal_distance = cameras.get_camera_params(i)["intrinsic_matrix"][0,0]
-        init_params = np.concatenate([init_params, [focal_distance]])
-        init_params = np.concatenate([init_params, rot_vec])
-        init_params = np.concatenate([init_params, camera_pose["t"].flatten()])
-
-    res = optimize.least_squares(
-        residual_function, init_params, verbose=2, loss="cauchy", ftol=1E-2
+    intrinsics = [
+        cameras.get_camera_params(camera_id)["intrinsic_matrix"]
+        for camera_id in range(len(camera_poses))
+    ]
+    refined_poses, _metrics = refine_calibrated_bundle(
+        image_points, camera_poses, intrinsics
     )
-    return params_to_camera_poses(res.x)[0]
-    
+    return refined_poses
+
 
 def triangulate_point(image_points, camera_poses):
-    image_points = np.array(image_points)
+    """Direct SVD triangulation using original camera identities.
+
+    Sparse camera observations retain the intrinsic and extrinsic matrices
+    of their original slots. The homogeneous design matrix is decomposed
+    directly; squaring it into A.T @ A loses numerical conditioning.
+    """
+    observations = np.asarray(image_points, dtype=object)
+    if observations.shape != (len(camera_poses), 2):
+        raise ValueError("image_points must be one (x, y) pair per camera")
     cameras = Cameras.instance()
-    none_indicies = np.where(np.all(image_points == None, axis=1))[0]
-    image_points = np.delete(image_points, none_indicies, axis=0)
-    camera_poses = np.delete(camera_poses, none_indicies, axis=0)
 
-    if len(image_points) <= 1:
+    rows = []
+    valid_views = 0
+    for camera_id, (observed, pose) in enumerate(zip(observations, camera_poses)):
+        if all(coordinate is None for coordinate in observed):
+            continue
+        if any(coordinate is None for coordinate in observed):
+            raise ValueError(f"camera {camera_id} has an incomplete pixel observation")
+        pixel = np.asarray(observed, dtype=np.float64)
+        intrinsic = np.asarray(
+            cameras.get_camera_params(camera_id)["intrinsic_matrix"], dtype=np.float64
+        )
+        rotation = np.asarray(pose["R"], dtype=np.float64)
+        translation = np.asarray(pose["t"], dtype=np.float64).reshape(-1)
+        if (
+            intrinsic.shape != (3, 3) or rotation.shape != (3, 3)
+            or translation.shape != (3,)
+            or not np.isfinite(pixel).all()
+            or not np.isfinite(intrinsic).all()
+            or not np.isfinite(rotation).all()
+            or not np.isfinite(translation).all()
+        ):
+            raise ValueError(f"camera {camera_id} contains invalid triangulation inputs")
+        projection = intrinsic @ np.column_stack((rotation, translation))
+        u, v = pixel
+        rows.append(u * projection[2, :] - projection[0, :])
+        rows.append(v * projection[2, :] - projection[1, :])
+        valid_views += 1
+
+    if valid_views < 2:
         return [None, None, None]
-
-    Ps = [] # projection matricies
-
-    for i, camera_pose in enumerate(camera_poses):
-        RT = np.c_[camera_pose["R"], camera_pose["t"]]
-        P = cameras.camera_params[i]["intrinsic_matrix"] @ RT
-        Ps.append(P)
-
-    # https://temugeb.github.io/computer_vision/2021/02/06/direct-linear-transorms.html
-    def DLT(Ps, image_points):
-        A = []
-
-        for P, image_point in zip(Ps, image_points):
-            A.append(image_point[1]*P[2,:] - P[1,:])
-            A.append(P[0,:] - image_point[0]*P[2,:])
-            
-        A = np.array(A).reshape((len(Ps)*2,4))
-        B = A.transpose() @ A
-        U, s, Vh = linalg.svd(B, full_matrices = False)
-        object_point = Vh[3,0:3]/Vh[3,3]
-
-        return object_point
-
-    object_point = DLT(Ps, image_points)
-
-    return object_point
-
+    A = np.asarray(rows, dtype=np.float64)
+    if not np.isfinite(A).all():
+        return [None, None, None]
+    _, singular_values, vh = linalg.svd(A, full_matrices=False)
+    if (
+        singular_values[0] == 0.0
+        or singular_values[2] <= 1e-12 * singular_values[0]
+    ):
+        return [None, None, None]
+    homogeneous = vh[-1]
+    if abs(homogeneous[3]) <= 1e-12 * max(1.0, np.linalg.norm(homogeneous[:3])):
+        return [None, None, None]
+    xyz = homogeneous[:3] / homogeneous[3]
+    if not np.isfinite(xyz).all():
+        return [None, None, None]
+    return xyz
 
 def triangulate_points(image_points, camera_poses):
     object_points = []

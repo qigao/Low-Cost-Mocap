@@ -1,0 +1,306 @@
+"""Background-normalized raw-frame light evidence for temporal marker IDs.
+
+This module never interprets pseyepy software dequeue times as exposure
+timestamps. Inputs must be raw, 2D grayscale images with a separately
+established local physical-light track position for each frame.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Sequence
+
+import numpy as np
+
+from geometry import _observation_array
+from light_tracking import TrackEvidence
+from temporal_pattern import FrameStamp, LightSample, _nonnegative_int
+
+
+def _finite_real(value: object, name: str) -> float:
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+    ):
+        raise ValueError(f"{name} must be a finite real scalar")
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite real scalar") from exc
+    if not np.isfinite(result):
+        raise ValueError(f"{name} must be a finite real scalar")
+    return result
+
+
+@dataclass(frozen=True)
+class ROIContrast:
+    foreground_median: float
+    background_median: float
+    contrast: float
+    foreground_pixels: int
+    background_pixels: int
+
+
+def sample_light_roi(
+    image: object,
+    center_xy: object,
+    *,
+    foreground_radius_px: int = 2,
+    background_radius_px: int = 6,
+) -> ROIContrast:
+    """Measure local LED contrast without using a global brightness threshold.
+
+    The foreground disk and surrounding annulus are disjoint. This suppresses
+    global exposure/ambient offsets, but not motion mismatch or a second LED
+    contaminating the ROI; those require independent tracking/quality gates.
+    Reject ROI borders and malformed inputs rather than sampling arbitrary
+    clipped pixels with changed spatial support.
+    """
+    raw = np.asarray(image)
+    if raw.ndim != 2 or raw.dtype.kind not in "iuf":
+        raise ValueError("image must be a finite 2D numeric grayscale array")
+    if not np.isfinite(raw).all():
+        raise ValueError("image must contain finite grayscale values")
+    front = _nonnegative_int(foreground_radius_px, "foreground_radius_px")
+    outer = _nonnegative_int(background_radius_px, "background_radius_px")
+    if front < 1 or outer <= front:
+        raise ValueError("background radius must exceed positive foreground radius")
+
+    center = _observation_array(center_xy, 0)
+    cx, cy = float(center[0]), float(center[1])
+    height, width = raw.shape
+    if (
+        cx - outer < 0 or cy - outer < 0
+        or cx + outer >= width or cy + outer >= height
+    ):
+        raise ValueError("marker ROI falls outside the image boundary")
+
+    x0 = max(0, int(np.floor(cx - outer)))
+    x1 = min(width, int(np.ceil(cx + outer)) + 1)
+    y0 = max(0, int(np.floor(cy - outer)))
+    y1 = min(height, int(np.ceil(cy + outer)) + 1)
+    yy, xx = np.ogrid[y0:y1, x0:x1]
+    distance_sq = (xx - cx) ** 2 + (yy - cy) ** 2
+    foreground = distance_sq <= front * front
+    background = (distance_sq > front * front) & (distance_sq <= outer * outer)
+    if not foreground.any() or not background.any():
+        raise ValueError("marker ROI has insufficient foreground or background pixels")
+
+    values = raw[y0:y1, x0:x1]
+    foreground_median = float(np.median(values[foreground]))
+    background_median = float(np.median(values[background]))
+    contrast = foreground_median - background_median
+    if not np.isfinite(contrast):
+        raise ValueError("marker ROI contrast is not finite")
+    return ROIContrast(
+        foreground_median, background_median, contrast,
+        int(np.count_nonzero(foreground)),
+        int(np.count_nonzero(background)),
+    )
+
+
+def sample_tracked_light_roi(
+    image: object,
+    evidence: TrackEvidence,
+    *,
+    predicted_roi_qualified: bool = False,
+    foreground_radius_px: int = 2,
+    background_radius_px: int = 6,
+) -> ROIContrast | None:
+    """Return an erasure for unmatched lights unless prediction is certified.
+
+    The light tracker alone does NOT establish that a predicted dark ROI still
+    contains the same physical light on a moving drone. By default, only an
+    actual detection can authorize a raw-ROI sample. A calibrated external
+    motion quality gate must explicitly certify predicted-only ROI sampling.
+    """
+    if not isinstance(evidence, TrackEvidence):
+        raise ValueError("evidence must be TrackEvidence")
+    if not isinstance(predicted_roi_qualified, (bool, np.bool_)):
+        raise ValueError("predicted_roi_qualified must be boolean")
+    if evidence.observed_xy is None:
+        if not predicted_roi_qualified:
+            return None
+        center = evidence.predicted_xy
+    else:
+        center = evidence.observed_xy
+    return sample_light_roi(
+        image, center,
+        foreground_radius_px=foreground_radius_px,
+        background_radius_px=background_radius_px,
+    )
+
+
+@dataclass(frozen=True)
+class BinaryIntensityCalibration:
+    """Known local dark/on reference contrasts for one camera and gain setting.
+
+    A dead zone around the midpoint yields an explicit erasure when a bit
+    cannot be distinguished confidently. References must be established on
+    measured exposures, not inferred by trying arbitrary marker code phases.
+    """
+    dark_contrast: float
+    illuminated_contrast: float
+    minimum_contrast_separation: float = 10.0
+    dead_zone_fraction: float = 0.2
+
+    def __post_init__(self) -> None:
+        dark = _finite_real(self.dark_contrast, "dark_contrast")
+        bright = _finite_real(self.illuminated_contrast, "illuminated_contrast")
+        separation = _finite_real(
+            self.minimum_contrast_separation, "minimum_contrast_separation"
+        )
+        dead_zone = _finite_real(self.dead_zone_fraction, "dead_zone_fraction")
+        if (
+            separation <= 0 or not bright > dark
+            or not np.isfinite(bright - dark)
+            or bright - dark < separation
+        ):
+            raise ValueError("illumination references have insufficient contrast separation")
+        if not 0 < dead_zone < 0.5:
+            raise ValueError("dead_zone_fraction must lie strictly between 0 and 0.5")
+        object.__setattr__(self, "dark_contrast", dark)
+        object.__setattr__(self, "illuminated_contrast", bright)
+        object.__setattr__(self, "minimum_contrast_separation", separation)
+        object.__setattr__(self, "dead_zone_fraction", dead_zone)
+
+    def classify(self, contrast: float | None) -> int | None:
+        """Return 0, 1 or None (uncertain/erasure), never force a midpoint bit."""
+        if contrast is None:
+            return None
+        value = _finite_real(contrast, "light contrast")
+        middle = 0.5 * self.dark_contrast + 0.5 * self.illuminated_contrast
+        margin = self.dead_zone_fraction * (
+            self.illuminated_contrast - self.dark_contrast
+        )
+        if value <= middle - margin:
+            return 0
+        if value >= middle + margin:
+            return 1
+        return None
+
+
+def quantize_roi_track(
+    measured: Sequence[tuple[int, ROIContrast | None]],
+    calibration: BinaryIntensityCalibration,
+) -> tuple[LightSample, ...]:
+    """Convert one tracked LED's ROI measurements into timestamped bits.
+
+    A missing ROI is an erasure, not a known OFF phase. A matching code epoch
+    and actual hardware trigger IDs remain required by the temporal decoder.
+    """
+    if not isinstance(calibration, BinaryIntensityCalibration):
+        raise ValueError("calibration must be BinaryIntensityCalibration")
+    samples = []
+    for entry in measured:
+        if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+            raise ValueError("ROI samples must be (trigger_id, ROIContrast|None) pairs")
+        trigger = _nonnegative_int(entry[0], "trigger_id")
+        roi = entry[1]
+        if roi is not None and not isinstance(roi, ROIContrast):
+            raise ValueError("ROI evidence must be ROIContrast or None")
+        samples.append(
+            LightSample(trigger, calibration.classify(None if roi is None else roi.contrast))
+        )
+    return tuple(samples)
+
+
+@dataclass(frozen=True)
+class StampedTrackROI:
+    """One camera-local light track sample tied to its originating frame."""
+    frame_stamp: FrameStamp
+    track_evidence: TrackEvidence
+    roi: ROIContrast | None
+    predicted_roi_qualified: bool = False
+
+
+def quantize_stamped_track_trace(
+    samples: Sequence[StampedTrackROI],
+    calibration: BinaryIntensityCalibration,
+    *,
+    camera_id: int,
+    track_id: int,
+    max_samples: int = 64,
+) -> tuple[LightSample, ...]:
+    """Bind and quantize one camera-local physical-light track's timeline.
+
+    Reject evidence from any other camera, local track, trigger, clock
+    domain or nonmonotonic exposure timestamp. Unmatched, unqualified
+    predicted-ROI evidence is never interpreted as a known OFF phase.
+    Hardware timestamp provenance still requires a trusted device adapter:
+    matching metadata alone cannot prove exposure synchronization.
+    """
+    if not isinstance(calibration, BinaryIntensityCalibration):
+        raise ValueError("calibration must be BinaryIntensityCalibration")
+    camera = _nonnegative_int(camera_id, "camera_id")
+    track = _nonnegative_int(track_id, "track_id")
+    capacity = _nonnegative_int(max_samples, "max_samples")
+    if capacity == 0 or len(samples) > capacity:
+        raise ValueError("track sample capacity must be positive and bounded")
+    if not samples:
+        raise ValueError("track trace must contain at least one sample")
+
+    out = []
+    previous_trigger = None
+    previous_timestamp = None
+    common_domain = None
+    for sample in samples:
+        if not isinstance(sample, StampedTrackROI):
+            raise ValueError("trace entries must be StampedTrackROI")
+        frame = sample.frame_stamp
+        evidence = sample.track_evidence
+        if not isinstance(frame, FrameStamp) or not isinstance(evidence, TrackEvidence):
+            raise ValueError("trace entry needs FrameStamp and TrackEvidence")
+        stamp_camera = _nonnegative_int(frame.camera_id, "frame camera_id")
+        stamp_trigger = _nonnegative_int(frame.trigger_id, "frame trigger_id")
+        timestamp = _nonnegative_int(
+            frame.exposure_timestamp_ns, "exposure_timestamp_ns"
+        )
+        evidence_camera = _nonnegative_int(evidence.camera_id, "track camera_id")
+        evidence_track = _nonnegative_int(evidence.track_id, "local track_id")
+        evidence_trigger = _nonnegative_int(evidence.trigger_id, "track trigger_id")
+        missed = _nonnegative_int(evidence.missed_triggers, "missed_triggers")
+        if (
+            stamp_camera != camera or evidence_camera != camera
+            or evidence_track != track
+        ):
+            raise ValueError("mixed camera or local track identity in temporal trace")
+        if evidence_trigger != stamp_trigger:
+            raise ValueError("track trigger does not match originating frame")
+        if (
+            previous_trigger is not None
+            and stamp_trigger <= previous_trigger
+        ):
+            raise ValueError("temporal trace has stale or repeated trigger_id")
+        if (
+            previous_timestamp is not None
+            and timestamp <= previous_timestamp
+        ):
+            raise ValueError("temporal trace exposure timestamps must increase")
+        if not isinstance(frame.clock_domain, str) or not frame.clock_domain.strip():
+            raise ValueError("temporal trace needs a declared clock domain")
+        if common_domain is None:
+            common_domain = frame.clock_domain
+        elif frame.clock_domain != common_domain:
+            raise ValueError("temporal trace mixes clock domains")
+        if not isinstance(sample.predicted_roi_qualified, (bool, np.bool_)):
+            raise ValueError("predicted_roi_qualified must be boolean")
+        if evidence.observed_xy is None:
+            if missed < 1:
+                raise ValueError("undetected track must report at least one missed trigger")
+            if sample.roi is not None and not sample.predicted_roi_qualified:
+                raise ValueError(
+                    "predicted ROI needs independent motion qualification"
+                )
+        elif missed != 0:
+            raise ValueError("observed track must report zero missed triggers")
+        if sample.roi is not None and not isinstance(sample.roi, ROIContrast):
+            raise ValueError("ROI evidence must be ROIContrast or None")
+
+        out.append(LightSample(
+            stamp_trigger, calibration.classify(
+                None if sample.roi is None else sample.roi.contrast
+            ),
+        ))
+        previous_trigger = stamp_trigger
+        previous_timestamp = timestamp
+    return tuple(out)
