@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from flask import Flask
 from flask_socketio import SocketIO
 
-from legacy_control_events import register_legacy_control_handlers
+from legacy_control_events import loopback_only_event, register_legacy_control_handlers
 
 
 class RecordingSerial:
@@ -57,6 +57,11 @@ class LegacyControlEventIntegrationTests(unittest.TestCase):
             enabled_getter=lambda: self.enabled,
         )
         self.clients = []
+
+        @self.socketio.on("protected-camera-config")
+        @loopback_only_event(self.socketio)
+        def protected_camera_config(data):
+            self.state.calls.append(("camera-config", data))
 
     def tearDown(self):
         for client in self.clients:
@@ -144,6 +149,16 @@ class LegacyControlEventIntegrationTests(unittest.TestCase):
         self.assertEqual(self.serial.writes, [])
         self.assertEqual(self.state.drone_armed, [False, False])
 
+    def test_loopback_only_camera_event_rejects_remote_peer(self):
+        remote = self.make_client("192.168.1.20")
+        remote.emit("protected-camera-config", {"exposure": 100})
+        self.assertEqual(self.state.calls, [])
+        self.assertEqual(len(self.rejection_events(remote)), 1)
+
+        local = self.make_client("127.0.0.1")
+        local.emit("protected-camera-config", {"exposure": 100})
+        self.assertEqual(self.state.calls, [("camera-config", {"exposure": 100})])
+        self.assertEqual(self.rejection_events(local), [])
     def test_disconnect_releases_bounded_arm_counter_slot(self):
         self.enabled = "1"
         client = self.make_client("127.0.0.1")
