@@ -8,7 +8,7 @@
 
 Low-Cost-Mocap is to become a general motion-capture engine that turns synchronized optical observations and optional body-mounted IMU measurements into timestamped, quality-qualified rigid-body state. Drone control, robotics, animation, biomechanics, and visualization are downstream consumers. None is allowed to define the core estimator's types or lifecycle.
 
-The current repository already contains useful software primitives: temporal LED codebooks, identity-locked tracking, physical-camera-ID keyed calibration, multiview geometry, rigid-pattern fitting, PoseStream, bounded recording/replay, capture-bundle verification and a read-only observer. They are not yet an end-to-end hardware-qualified system. In particular, the existing `FrameStamp` is a caller-supplied claim about an exposure, not proof that a physical sensor used that clock or trigger.
+The current repository contains temporal LED codebooks, identity-locked tracking, physical-camera-ID keyed calibration, multiview geometry, rigid-pattern fitting, PoseStream, bounded recording/replay, capture-bundle verification, a read-only observer, a typed IMU sample contract, affine clock-mapping primitive and immutable IMU calibration contract. These are software primitives, not an end-to-end hardware-qualified system. In particular, the existing `FrameStamp` and clock-sync anchors are caller-supplied declarations, not proof that a physical sensor used that clock or trigger.
 
 ## 2. System boundary
 
@@ -104,18 +104,18 @@ Do not select an EKF or factor graph by fashion. First specify state, frames, pr
 
 ## 6. Implementation milestones
 
-| ID | Work item | Exit criterion |
-|---|---|---|
-| A1 | Canonical frame, units, clock and state contracts | Typed contracts and conversion tests; no ambiguous transform naming |
-| A2 | IMU sample schema and adapter boundary | Schema validation for IDs, sequence, timestamp, units, saturation and calibration revision |
-| A3 | Clock alignment service | Tests for offset, drift, reset, skew, out-of-order data, stale mapping and unknown clock |
-| A4 | IMU/body extrinsics and noise/bias calibration | Immutable revisioned calibration and reproducible calibration fixture |
-| A5 | Bounded inertial propagation | Static, constant angular rate, bias, sample-gap, saturation and reset tests |
-| A6 | Optical/IMU fusion vertical slice | Short optical dropout: orientation propagation, uncertainty growth, optical reacquisition correction; optical-only A/B report |
-| A7 | Versioned fused state output | New schema does not weaken PoseStream v1; consumers can distinguish measured and predicted state |
-| A8 | Deterministic capture/replay | Same bundle + same config reproduces state sequence within declared tolerances |
-| A9 | Benchmark/qualification | Independent reference, position/orientation error, drift, reacquisition jump, latency percentiles and invalid-output rate |
-| A10 | Real hardware adapters | Only after HW-01–HW-05 supply independently verifiable evidence; HW-06 remains separate |
+| ID | Work item | Exit criterion | Status |
+|---|---|---|---|
+| A1 | Canonical frame, units, clock and state contracts | Typed contracts and conversion tests; no ambiguous transform naming | **Merged** — PR #34 |
+| A2 | IMU sample schema and adapter boundary | Schema validation for IDs, sequence, timestamp, units, saturation and calibration revision | **Merged software contract** — PR #36 |
+| A3 | Clock alignment service | Tests for offset, drift, reset, skew, out-of-order data, stale mapping and unknown clock | **Merged software primitive** — PR #36; hardware clock qualification remains open |
+| A4 | IMU/body extrinsics and noise/bias calibration | Immutable revisioned calibration and reproducible calibration fixture | **Merged software contract** — PR #39 |
+| A5 | Bounded inertial propagation | Static, constant angular rate, bias, sample-gap, saturation and reset tests | **Merged gyro-only attitude primitive** — PR #43; global position/velocity and optical fusion remain unavailable |
+| A6 | Optical/IMU fusion vertical slice | Short optical dropout: orientation propagation, uncertainty growth, optical reacquisition correction; optical-only A/B report | Planned |
+| A7 | Versioned fused state output | New schema does not weaken PoseStream v1; consumers can distinguish measured and predicted state | Planned |
+| A8 | Deterministic capture/replay | Same bundle + same config reproduces state sequence within declared tolerances | Planned |
+| A9 | Benchmark/qualification | Independent reference, position/orientation error, drift, reacquisition jump, latency percentiles and invalid-output rate | Planned |
+| A10 | Real hardware adapters | Only after HW-01–HW-05 supply independently verifiable evidence; HW-06 remains separate | Blocked on hardware evidence |
 
 ## 7. Validation matrix
 
@@ -138,11 +138,14 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `multiview_association.py`, `multiview_consensus.py`, `geometry.py`, `spatiotemporal_reconstruction.py`, `rigid_pattern.py` | Optical reconstruction and rigid-body measurement |
 | `calibration_geometry.py`, `bundle_geometry.py` | Calibration geometry; metric scale remains a separately qualified claim |
 | `identity_locked_board_tracker.py` | Current-frame identity-locked optical state |
+| `imu_contract.py` | Typed SI-unit IMU samples, stream-order/gap guard and affine clock mapping from declared synchronization anchors |
+| `imu_calibration.py` | Immutable IMU-to-body extrinsics, bias/noise/correction calibration and bias-corrected vector transforms |
+| `imu_propagation.py` | Bounded gyro-only attitude propagation; no global position/velocity or optical fusion |
 | `pose_stream.py`, `pose_stream_broker.py`, `pose_stream_recording.py` | Versioned output, bounded distribution and deterministic recording/replay |
 | `capture_bundle_manifest.py`, `bundle_gated_offline_replay.py` | Evidence integrity and gated offline qualification |
 | `index.py`, legacy serial handlers | Legacy app/controller adapter only; not core state estimation |
 
-No general IMU sample contract, clock mapper, IMU preintegrator or optical-IMU estimator is currently present in the Python module inventory.
+The IMU sample contract, clock-mapping primitive, calibration contract and bounded gyro-only attitude propagation primitive are now present. There is still no hardware-qualified clock/trigger adapter, accelerometer-based inertial position/velocity propagation or optical-IMU fusion estimator.
 
 ## 9. Hardware gates and scope
 
