@@ -323,3 +323,252 @@ def _validate_structure(
         "path_counts": seen_paths,
         "declared_total_bytes": declared_total,
     }
+
+
+
+def _safe_artifact_path(root: Path, raw_path: str) -> Path:
+    if (
+        not raw_path
+        or "\\" in raw_path
+        or "\x00" in raw_path
+        or raw_path.startswith("/")
+        or re.match(r"^[A-Za-z]:", raw_path)
+    ):
+        raise ValueError("artifact path must be a canonical relative POSIX path")
+    relative = PurePosixPath(raw_path)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in ("", ".", "..") for part in relative.parts)
+        or str(relative) != raw_path
+    ):
+        raise ValueError("artifact path contains traversal or noncanonical components")
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("artifact path traverses a symlink")
+    try:
+        resolved = current.resolve(strict=True)
+    except FileNotFoundError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("artifact path cannot be resolved safely") from exc
+    if not resolved.is_relative_to(root):
+        raise ValueError("artifact path escapes bundle root")
+    return resolved
+
+
+def _hash_regular_file(path: Path, *, max_bytes: int) -> tuple[int, str]:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("artifact cannot be opened without following links") from exc
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("artifact is not a regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            while True:
+                chunk = stream.read(CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError("actual artifact exceeds per-file byte cap")
+                digest.update(chunk)
+        return total, digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def validate_capture_bundle(
+    manifest: object,
+    bundle_root: str | Path,
+    *,
+    max_artifacts: int = DEFAULT_MAX_ARTIFACTS,
+    max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+) -> dict[str, Any]:
+    """Validate manifest schema and artifact bytes without authenticating hardware.
+
+    Unsafe paths, missing files and digest/size mismatches appear as per-file
+    failures in the returned report. Unknown schema fields or unbounded
+    declarations fail the entire invocation before opening artifacts.
+    """
+    manifest_obj = _object(manifest, "manifest")
+    max_count = _integer(max_artifacts, "max_artifacts", minimum=1, maximum=1024)
+    max_one = _integer(max_artifact_bytes, "max_artifact_bytes", minimum=1)
+    max_all = _integer(max_total_bytes, "max_total_bytes", minimum=1)
+    metadata = _validate_structure(
+        manifest_obj, max_artifacts=max_count,
+        max_artifact_bytes=max_one, max_total_bytes=max_all,
+    )
+    root_input = Path(bundle_root)
+    if root_input.is_symlink():
+        raise ValueError("bundle root must not itself be a symlink")
+    try:
+        root = root_input.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("bundle root must exist and resolve safely") from exc
+    if not root.is_dir():
+        raise ValueError("bundle root must be a directory")
+
+    canonical = _canonical_json(manifest_obj)
+    manifest_digest = hashlib.sha256(canonical).hexdigest()
+    artifact_checks = []
+    failures = []
+    required_missing = sorted(set(_REQUIRED_ROLES) - set(metadata["role_counts"]))
+    if required_missing:
+        failures.append("missing required roles: " + ", ".join(required_missing))
+    capture = manifest_obj["capture"]
+    acceptance = manifest_obj["acceptance_limits"]
+    if not capture["independent_reference_declared"]:
+        failures.append("independent reference source is not declared")
+    predeclared_before_capture = metadata["predeclared_at"] < metadata["started_at"]
+    if not predeclared_before_capture:
+        failures.append("acceptance limits were not timestamped before capture start")
+
+    role_to_artifact = {
+        artifact["role"]: artifact
+        for artifact in manifest_obj["artifacts"]
+        if artifact["role"] != "supplemental"
+    }
+    revision_links = (
+        ("codebook", "codebook_sha256"),
+        ("controller_config", "controller_config_sha256"),
+        ("calibration_config", "calibration_sha256"),
+    )
+    for role, revision_key in revision_links:
+        artifact = role_to_artifact.get(role)
+        if artifact is not None and artifact["sha256"] != manifest_obj["revisions"][revision_key]:
+            failures.append(f"{role} artifact SHA does not match revisions.{revision_key}")
+
+    total_actual_bytes = 0
+    path_counts = metadata["path_counts"]
+    for index, artifact in enumerate(manifest_obj["artifacts"]):
+        entry = {
+            "index": index,
+            "role": artifact["role"],
+            "path": artifact["path"],
+            "declared_size_bytes": artifact["size_bytes"],
+            "declared_sha256": artifact["sha256"],
+            "actual_size_bytes": None,
+            "actual_sha256": None,
+            "status": "unchecked",
+            "errors": [],
+        }
+        if path_counts[artifact["path"].casefold()] > 1:
+            entry["status"] = "duplicate_path"
+            entry["errors"].append("artifact path duplicates another entry")
+        else:
+            try:
+                artifact_path = _safe_artifact_path(root, artifact["path"])
+                if not artifact_path.is_file():
+                    raise ValueError("artifact is not a regular file")
+                size_before = artifact_path.stat().st_size
+                if size_before > max_one:
+                    raise ValueError("actual artifact exceeds per-file byte cap")
+                if total_actual_bytes + size_before > max_all:
+                    raise ValueError("actual artifacts exceed total byte cap")
+                actual_size, actual_hash = _hash_regular_file(
+                    artifact_path, max_bytes=max_one
+                )
+                total_actual_bytes += actual_size
+                entry["actual_size_bytes"] = actual_size
+                entry["actual_sha256"] = actual_hash
+                if actual_size != artifact["size_bytes"]:
+                    entry["errors"].append("size mismatch")
+                if actual_hash != artifact["sha256"]:
+                    entry["errors"].append("SHA-256 mismatch")
+                entry["status"] = "ok" if not entry["errors"] else "mismatch"
+            except FileNotFoundError:
+                entry["status"] = "missing"
+                entry["errors"].append("artifact file is missing")
+            except (OSError, ValueError) as exc:
+                entry["status"] = "unsafe_or_unreadable"
+                entry["errors"].append(str(exc))
+        if entry["status"] != "ok":
+            failures.append(
+                f"artifact[{index}] {artifact['role']} ({artifact['path']}): "
+                + "; ".join(entry["errors"])
+            )
+        artifact_checks.append(entry)
+
+    revisions = manifest_obj["revisions"]
+    report = {
+        "schema_version": 1,
+        "qualification": "capture_bundle_integrity_only",
+        "bundle_id": manifest_obj["bundle_id"],
+        "manifest_sha256": manifest_digest,
+        "bundle_integrity_valid": not failures,
+        "failures": failures,
+        "artifact_count": len(artifact_checks),
+        "required_roles_missing": required_missing,
+        "artifact_checks": artifact_checks,
+        "total_actual_bytes_hashed": total_actual_bytes,
+        "declared_capture": {
+            "started_at_utc": capture["started_at_utc"],
+            "ended_at_utc": capture["ended_at_utc"],
+            "camera_ids": list(metadata["camera_ids"]),
+            "clock_domain": capture["clock_domain"],
+            "timestamp_semantics": capture["timestamp_semantics"],
+            "timestamp_unit": capture["timestamp_unit"],
+            "reference_source": capture["reference_source"],
+            "independent_reference_declared": capture["independent_reference_declared"],
+            "acceptance_predeclared_at_utc": acceptance["predeclared_at_utc"],
+            "acceptance_predeclared_before_capture": predeclared_before_capture,
+        },
+        "declared_revisions": dict(revisions),
+        "declared_acceptance_limits": dict(acceptance),
+        "declared_software": {
+            key: value for key, value in manifest_obj["software"].items()
+            if key != "devices"
+        },
+        "declarations_not_verified": {
+            "hardware_provenance_verified": False,
+            "device_authenticity_verified": False,
+            "independent_reference_verified": False,
+            "timestamp_semantics_verified": False,
+            "physical_metric_scale_verified": False,
+        },
+    }
+    return report
+
+
+def validate_capture_bundle_directory(
+    bundle_root: str | Path,
+    *,
+    manifest_name: str = MANIFEST_NAME,
+    max_artifacts: int = DEFAULT_MAX_ARTIFACTS,
+    max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+) -> dict[str, Any]:
+    """Load a bounded manifest from the bundle root and validate its artifacts."""
+    root = Path(bundle_root)
+    if root.is_symlink():
+        raise ValueError("bundle root must not itself be a symlink")
+    manifest_path = root / manifest_name
+    if manifest_path.is_symlink():
+        raise ValueError("manifest file must not be a symlink")
+    if manifest_name != MANIFEST_NAME:
+        raise ValueError("manifest name must be capture-bundle.json")
+    try:
+        size = manifest_path.stat().st_size
+        if size > MAX_MANIFEST_BYTES:
+            raise ValueError("manifest exceeds byte cap")
+        raw = manifest_path.read_bytes()
+    except OSError as exc:
+        raise ValueError("manifest file cannot be read") from exc
+    manifest = load_manifest_bytes(raw)
+    report = validate_capture_bundle(
+        manifest, root, max_artifacts=max_artifacts,
+        max_artifact_bytes=max_artifact_bytes,
+        max_total_bytes=max_total_bytes,
+    )
+    report["manifest_file_sha256"] = hashlib.sha256(raw).hexdigest()
+    return report
