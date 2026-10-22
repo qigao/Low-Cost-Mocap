@@ -340,7 +340,7 @@ def _validate_structure(
 
 
 
-def _safe_artifact_path(root: Path, raw_path: str) -> Path:
+def _canonical_artifact_parts(raw_path: str) -> tuple[str, ...]:
     if (
         not raw_path
         or "\\" in raw_path
@@ -357,8 +357,14 @@ def _safe_artifact_path(root: Path, raw_path: str) -> Path:
         or str(relative) != raw_path
     ):
         raise ValueError("artifact path contains traversal or noncanonical components")
+    return relative.parts
+
+
+def _safe_artifact_path(root: Path, raw_path: str) -> Path:
+    """Compatibility path resolver; security-sensitive reads use directory FDs."""
+    parts = _canonical_artifact_parts(raw_path)
     current = root
-    for part in relative.parts:
+    for part in parts:
         current = current / part
         if current.is_symlink():
             raise ValueError("artifact path traverses a symlink")
@@ -373,29 +379,122 @@ def _safe_artifact_path(root: Path, raw_path: str) -> Path:
     return resolved
 
 
-def _hash_regular_file(path: Path, *, max_bytes: int) -> tuple[int, str]:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+def _require_dirfd_primitives() -> None:
+    required_flags = ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK")
+    if any(not hasattr(os, flag) for flag in required_flags):
+        raise ValueError("secure bundle validation requires O_NOFOLLOW, O_DIRECTORY and O_NONBLOCK")
+    if os.open not in getattr(os, "supports_dir_fd", set()):
+        raise ValueError("secure bundle validation requires descriptor-relative open support")
+
+
+def _open_directory_path_no_follow(path: Path) -> int:
+    """Open an absolute directory by walking components without following links."""
+    _require_dirfd_primitives()
+    if not path.is_absolute():
+        raise ValueError("bundle root must be an absolute path")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    descriptor = os.open(path.anchor or "/", flags)
     try:
-        descriptor = os.open(path, flags)
+        for part in path.parts[1:]:
+            next_descriptor = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise ValueError("bundle root must be a directory")
+        return descriptor
     except OSError as exc:
-        raise ValueError("artifact cannot be opened without following links") from exc
-    digest = hashlib.sha256()
-    total = 0
+        raise ValueError("bundle root cannot be opened without following links") from exc
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _open_regular_file_at(root_fd: int, raw_path: str) -> int:
+    """Open a regular-file candidate using only no-follow descriptor-relative steps."""
+    parts = _canonical_artifact_parts(raw_path)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        directory_flags |= os.O_CLOEXEC
+        file_flags |= os.O_CLOEXEC
+    parent_fd = os.dup(root_fd)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, directory_flags, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = next_fd
+        descriptor = os.open(parts[-1], file_flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise ValueError("artifact path cannot be opened without following links") from exc
+    finally:
+        os.close(parent_fd)
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise ValueError("artifact is not a regular file")
-        with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            while True:
-                chunk = stream.read(CHUNK_BYTES)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    raise ValueError("actual artifact exceeds per-file byte cap")
-                digest.update(chunk)
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _read_regular_file_at(
+    root_fd: int,
+    raw_path: str,
+    *,
+    max_bytes: int,
+    cap_error: str,
+) -> bytes:
+    descriptor = _open_regular_file_at(root_fd, raw_path)
+    try:
+        metadata = os.fstat(descriptor)
+        if metadata.st_size > max_bytes:
+            raise ValueError(cap_error)
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(CHUNK_BYTES, max_bytes + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(cap_error)
+            chunks.append(chunk)
+        return b"".join(chunks)
+    except OSError as exc:
+        raise ValueError("file cannot be read safely") from exc
+    finally:
+        os.close(descriptor)
+
+
+def _hash_regular_file_at(
+    root_fd: int,
+    raw_path: str,
+    *,
+    max_bytes: int,
+    cap_error: str,
+) -> tuple[int, str]:
+    descriptor = _open_regular_file_at(root_fd, raw_path)
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        metadata = os.fstat(descriptor)
+        if metadata.st_size > max_bytes:
+            raise ValueError(cap_error)
+        while True:
+            chunk = os.read(descriptor, min(CHUNK_BYTES, max_bytes + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(cap_error)
+            digest.update(chunk)
         return total, digest.hexdigest()
+    except OSError as exc:
+        raise ValueError("artifact cannot be read safely") from exc
     finally:
         os.close(descriptor)
 
