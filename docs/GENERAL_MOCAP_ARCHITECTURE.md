@@ -77,6 +77,8 @@ Reuse the current modules in this order:
 4. Associate cross-camera observations, triangulate, reject ambiguous/outlier geometry, and fit registered rigid-body geometry.
 5. Produce an optical pose measurement with timestamp, residuals, support, and calibration revision.
 
+When a board declares `min_visible_markers=3`, the registry checks every three-marker subset using a scale-normalized triangle-quality threshold. A board whose full point cloud is non-collinear can still be rejected if an occlusion leaves a collinear or nearly collinear triple. Track continuity proposes camera-local associations; the temporal code must admit global marker IDs; rigid geometry validates pose observability and rejects ambiguity. Geometry never overrides an unresolved temporal identity.
+
 No proximity-only reassignment, inferred trigger phase, stale pose reuse, or silent metric-scale assumption is allowed.
 
 ### IMU path
