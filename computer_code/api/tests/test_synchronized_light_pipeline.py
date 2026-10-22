@@ -524,7 +524,10 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             frames, images, detections = self.frames_and_pixels(
                 trigger, empty_cameras=frozenset((2,))
             )
-            self.pipeline.process(frames, images, detections)
+            self.pipeline.process(
+                frames, images, detections,
+                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+            )
         self.assertTrue(all(
             lock.camera_id != 2
             for lock in self.identity.active_identity_locks
@@ -533,7 +536,10 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
         partial_result = None
         for trigger in range(1020, 1032):
             frames, images, detections = self.frames_and_pixels(trigger)
-            partial_result = self.pipeline.process(frames, images, detections)
+            partial_result = self.pipeline.process(
+                frames, images, detections,
+                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+            )
         self.assertTrue(set(self.pipeline.active_local_track_ids(2)) - initial_ids)
         # Erasures during phases 0..3 remove the distinguishing bits of
         # some codewords. A partial-code ID is NOT transferred to the new
@@ -545,7 +551,10 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
         restored = None
         for trigger in range(1032, 1048):
             frames, images, detections = self.frames_and_pixels(trigger)
-            restored = self.pipeline.process(frames, images, detections)
+            restored = self.pipeline.process(
+                frames, images, detections,
+                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+            )
         new_camera_locks = [
             lock for lock in restored.active_locks if lock.camera_id == 2
         ]
