@@ -158,11 +158,12 @@ class LoopbackObserverTransportTests(unittest.TestCase):
             ))
         self.assertEqual(len(software_round_trip_ns), 5)
         self.assertLess(max(software_round_trip_ns), 5_000_000_000)
-        client.disconnect()
-        # Polling transport shutdown is asynchronous with respect to the
-        # client method return. Wait for the actual server disconnect handler
-        # instead of asserting against a transport race.
-        deadline = time.monotonic() + 2.0
+        # Disconnect the authenticated observer namespace explicitly. With
+        # polling transport, a default/global disconnect can return before the
+        # namespace disconnect packet is serviced by the threaded test server.
+        client.disconnect(namespace=POSE_OBSERVER_NAMESPACE)
+        # Wait for server-side ownership cleanup, not just local client state.
+        deadline = time.monotonic() + 5.0
         while self.host.subscriber_count and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(self.host.subscriber_count, 0)
