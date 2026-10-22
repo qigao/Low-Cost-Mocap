@@ -27,7 +27,7 @@ class LegacyControlSecurityTests(unittest.TestCase):
 
         source = (Path(__file__).resolve().parents[1] / "index.py").read_text(encoding="utf-8")
         start = source.index('@app.route("/api/camera-stream")')
-        end = source.index('@app.route("/api/trajectory-planning")', start + 1)
+        end = source.index('@app.route("/api/trajectory-planning",', start + 1)
         handler = source[start:end]
         self.assertIn("is_loopback_peer(request.remote_addr)", handler)
         self.assertLess(handler.index("is_loopback_peer(request.remote_addr)"), handler.index("Cameras.instance()"))
