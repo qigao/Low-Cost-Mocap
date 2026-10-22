@@ -12,7 +12,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import stat
 from typing import Any
 
 from capture_bundle_manifest import (
@@ -21,7 +20,9 @@ from capture_bundle_manifest import (
     DEFAULT_MAX_TOTAL_BYTES,
     MANIFEST_NAME,
     MAX_MANIFEST_BYTES,
-    _safe_artifact_path,
+    _open_directory_path_no_follow,
+    _read_regular_file_at,
+    _validate_capture_bundle_at,
     load_manifest_bytes,
     validate_capture_bundle_directory,
 )
@@ -43,32 +44,6 @@ def _reject_duplicate_keys(items: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def _reject_constant(value: str) -> None:
     raise ValueError(f"nonfinite JSON constant is forbidden: {value}")
-
-
-def _read_regular_bounded(path: Path, *, max_bytes: int) -> bytes:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise ValueError("input cannot be opened without following links") from exc
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ValueError("input is not a regular file")
-        chunks = []
-        total = 0
-        while True:
-            chunk = os.read(descriptor, min(1024 * 1024, max_bytes + 1 - total))
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > max_bytes:
-                raise ValueError("input exceeds replay byte cap")
-            chunks.append(chunk)
-        return b"".join(chunks)
-    finally:
-        os.close(descriptor)
 
 
 def _base_report(bundle_report: dict[str, Any]) -> dict[str, Any]:
@@ -100,18 +75,38 @@ def run_bundle_gated_offline_replay(
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
     max_replay_input_bytes: int = DEFAULT_MAX_REPLAY_INPUT_BYTES,
 ) -> dict[str, Any]:
-    """Validate the bundle first; never run offline statistics on invalid bytes."""
+    """Validate and replay from the same anchored bundle-root descriptor."""
     if type(max_replay_input_bytes) is not int or not 1 <= max_replay_input_bytes <= 1_000_000_000:
         raise ValueError("max_replay_input_bytes must be within 1..1000000000")
     root_input = Path(bundle_root)
+    root_fd = None
     try:
-        bundle_report = validate_capture_bundle_directory(
-            root_input,
+        if root_input.is_symlink():
+            raise ValueError("bundle root must not itself be a symlink")
+        root = root_input.resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("bundle root must be a directory")
+        root_fd = _open_directory_path_no_follow(root)
+        manifest_raw = _read_regular_file_at(
+            root_fd,
+            MANIFEST_NAME,
+            max_bytes=MAX_MANIFEST_BYTES,
+            cap_error="manifest exceeds byte cap",
+        )
+        manifest = load_manifest_bytes(manifest_raw)
+        bundle_report = _validate_capture_bundle_at(
+            manifest,
+            root,
+            root_fd,
             max_artifacts=max_artifacts,
             max_artifact_bytes=max_artifact_bytes,
             max_total_bytes=max_total_bytes,
         )
+        bundle_report["manifest_file_sha256"] = hashlib.sha256(manifest_raw).hexdigest()
     except (ValueError, OSError, TypeError) as exc:
+        if root_fd is not None:
+            os.close(root_fd)
+            root_fd = None
         report = _base_report({
             "schema_version": 1,
             "qualification": "capture_bundle_integrity_only",
@@ -133,18 +128,11 @@ def run_bundle_gated_offline_replay(
     if not bundle_report["bundle_integrity_valid"]:
         report["offline_replay_status"] = "skipped_bundle_integrity_invalid"
         report["failures"].extend(bundle_report["failures"])
+        os.close(root_fd)
+        root_fd = None
         return report
 
     try:
-        root = root_input.resolve(strict=True)
-        manifest_path = root / MANIFEST_NAME
-        manifest_raw = _read_regular_bounded(
-            manifest_path, max_bytes=MAX_MANIFEST_BYTES
-        )
-        manifest_file_sha = hashlib.sha256(manifest_raw).hexdigest()
-        if manifest_file_sha != bundle_report.get("manifest_file_sha256"):
-            raise ValueError("manifest changed after bundle validation")
-        manifest = load_manifest_bytes(manifest_raw)
         artifacts = manifest["artifacts"]
         replay_artifacts = [
             artifact for artifact in artifacts
@@ -157,9 +145,11 @@ def run_bundle_gated_offline_replay(
             )
             return report
         artifact = replay_artifacts[0]
-        artifact_path = _safe_artifact_path(root, artifact["path"])
-        replay_raw = _read_regular_bounded(
-            artifact_path, max_bytes=max_replay_input_bytes
+        replay_raw = _read_regular_file_at(
+            root_fd,
+            artifact["path"],
+            max_bytes=max_replay_input_bytes,
+            cap_error="input exceeds replay byte cap",
         )
         replay_sha = hashlib.sha256(replay_raw).hexdigest()
         if (
@@ -186,14 +176,23 @@ def run_bundle_gated_offline_replay(
         ):
             raise ValueError("offline replay input needs schema_version 1 and trigger or temporal section")
         replay_report = evaluate_document(replay_document)
-        # Recheck the complete bundle after replay to catch any mutation of
-        # sibling evidence files while the replay input was being evaluated.
-        final_bundle = validate_capture_bundle_directory(
-            root_input,
-            max_artifacts=max_artifacts,
-            max_artifact_bytes=max_artifact_bytes,
-            max_total_bytes=max_total_bytes,
-        )
+
+        # Revalidate by pathname after evaluation to detect replacement or
+        # mutation of the bundle root, manifest, or sibling evidence artifacts.
+        try:
+            final_bundle = validate_capture_bundle_directory(
+                root_input,
+                max_artifacts=max_artifacts,
+                max_artifact_bytes=max_artifact_bytes,
+                max_total_bytes=max_total_bytes,
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            report["bundle_integrity_valid"] = False
+            report["offline_replay_status"] = "bundle_changed_during_replay"
+            report["failures"].append(
+                "final bundle revalidation failed: " + str(exc)
+            )
+            return report
         if (
             not final_bundle["bundle_integrity_valid"]
             or final_bundle.get("manifest_file_sha256")
@@ -211,6 +210,9 @@ def run_bundle_gated_offline_replay(
         report["offline_replay_status"] = "invalid_replay_input"
         report["failures"].append(str(exc))
         return report
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
 
     report["offline_replay_status"] = "completed_software_replay"
     report["offline_replay_input_sha256"] = replay_sha
