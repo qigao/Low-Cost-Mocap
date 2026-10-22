@@ -121,7 +121,7 @@ class FusionReplayConfig:
             gyro_noise_density_rad_s_sqrt_hz=self.gyro_noise_density_rad_s_sqrt_hz,
             optical_variance_rad2=self.optical_variance_rad2,
             max_dropout_ns=self.max_dropout_ns,
-            max_optical_innovation_rad=self.max_innovation_rad,
+            max_innovation_rad=self.max_innovation_rad,
             max_alignment_angular_rate_rad_s=self.max_alignment_angular_rate_rad_s,
             history_capacity=self.history_capacity,
         )
