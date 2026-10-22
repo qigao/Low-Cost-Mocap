@@ -286,6 +286,26 @@ class CaptureBundleManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no larger than"):
             load_manifest_bytes(b"x" * 1_000_001)
 
+    def test_directory_manifest_is_opened_without_following_symlinks(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        report = validate_capture_bundle_directory(self.root)
+        self.assertTrue(report["bundle_integrity_valid"], report["failures"])
+
+        # A manifest symlink must fail before its target is parsed.
+        target = Path(self.temp.name) / "outside-manifest.json"
+        target.write_text(json.dumps(self.manifest), encoding="utf-8")
+        manifest_path.unlink()
+        manifest_path.symlink_to(target)
+        with self.assertRaisesRegex(ValueError, "without following links"):
+            validate_capture_bundle_directory(self.root)
+
+    def test_directory_manifest_descriptor_enforces_size_cap(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_bytes(b" " * 1_000_001)
+        with self.assertRaisesRegex(ValueError, "byte cap"):
+            validate_capture_bundle_directory(self.root)
+
     def test_directory_cli_outputs_machine_report_and_never_certifies_hardware(self):
         (self.root / MANIFEST_NAME).write_text(
             json.dumps(self.manifest), encoding="utf-8"
