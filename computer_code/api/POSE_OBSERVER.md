@@ -90,14 +90,17 @@ Only the **host** may call `publish_frame`, `restart_source_session` or
 `replace_pattern_registry`. No `arm-drone`, `set-drone-setpoint`,
 camera exposure or other flight-controller events are registered.
 
-The host dispatches `mocap:pose-stream` messages **only** in the dedicated
-namespace and to the authenticated Socket.IO SID. It sends an immutable
-AssetDescription as the first packet; dynamic PoseFrame packets follow
-only when a validated source frame is supplied. Reconnect requires a new
-AssetDescription before any new PoseFrame. Pattern changes force a new
-session and asset barrier. Per-viewer backlog drops old PoseFrames, never
-pending assets. The local emit returning success does not mean the remote
-client received the event; readers must monitor session/sequence gaps.
+The host sends **no asynchronous pose events**. An authorized
+`pose:poll` request receives a bounded `messages` array in the Socket.IO
+acknowledgement, up to the configured per-dispatch limit. The first poll
+returns the immutable AssetDescription; subsequent packets are PoseFrames.
+Reconnect requires a fresh asset before any new PoseFrame. Pattern changes
+force a new session and asset barrier. Per-viewer backlog drops old PoseFrames,
+never pending assets. Because queue advancement occurs when the server builds
+the acknowledgement, a disconnect during response delivery may lose that
+batch; the client must reconnect and start from fresh assets, never reuse an
+old pose. This design bounds server-owned queues rather than accumulating
+unbounded asynchronous emits in the Socket.IO transport.
 
 The browser client only displays `MEASURED` for a current source trigger
 with age zero, and never displays an old quaternion or position when the

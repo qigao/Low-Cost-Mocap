@@ -91,6 +91,9 @@ class PoseObserverHostTests(unittest.TestCase):
         )
 
     def poll(self, client):
+        # Keep synthetic host time monotonic so independent test polls do not
+        # accidentally exercise the rate-limit branch.
+        self.clock += 60_000_000
         response = client.emit(
             "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True
         )

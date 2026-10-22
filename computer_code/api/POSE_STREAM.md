@@ -160,6 +160,12 @@ The pure serializer is complemented by three *isolated* software modules:
   capacity overflow. This protects *local recording integrity*, not hardware
   timestamp truth or authenticity.
 
+The isolated Flask-SocketIO observer returns envelopes inside a bounded
+`pose:poll` acknowledgement response (`messages: [envelope, ...])) rather
+than asynchronously pushing every frame. This keeps slow-client backpressure
+in the bounded per-subscriber broker. A lost acknowledgement can lose its
+batch; the subscriber reconnects to receive a new asset/session barrier.
+
 The publisher/consumer wire envelope has
 `protocol="low_cost_mocap_stream"`, `schema_version=1`, a monotonic
 `session_id`, a **per-subscriber** `sequence` and a `payload` containing

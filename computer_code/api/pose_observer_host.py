@@ -5,8 +5,10 @@ serial port at import time and exposes drone arming/setpoint handlers.
 No camera SDK, serial device or flight-control module is imported here.
 
 Security scope: loopback-only development preview with an explicit shared
-viewer secret and allowlisted frontend origins. Socket.IO sends are local
-queue dispatch confirmations, NOT independently acknowledged remote delivery.
+viewer secret and allowlisted frontend origins. Pose envelopes are returned in
+bounded poll acknowledgements, not asynchronously pushed into the transport's
+outgoing queue. The server still cannot prove the remote application processed
+a response; reconnect always starts with a fresh asset barrier.
 """
 from __future__ import annotations
 
@@ -27,7 +29,6 @@ from pose_stream_broker import (
 )
 
 POSE_OBSERVER_NAMESPACE = "/pose-observe"
-POSE_OBSERVER_EVENT = "mocap:pose-stream"
 
 
 def _viewer_secret(raw: object) -> str:
