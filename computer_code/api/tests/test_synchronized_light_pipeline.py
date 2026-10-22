@@ -245,6 +245,54 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             x.state == "TRACKING" for x in result.boards.values()
         ))
 
+    def test_retired_camera_tracks_only_relock_after_full_new_code_cycle(self):
+        self.bootstrap()
+        initial_ids = set(self.pipeline.active_local_track_ids(2))
+        # Four entire missing camera exposures retire all old local tracks.
+        for trigger in range(1016, 1020):
+            frames, images, detections = self.frames_and_pixels(
+                trigger, empty_cameras=frozenset((2,))
+            )
+            self.pipeline.process(frames, images, detections)
+        self.assertTrue(all(
+            lock.camera_id != 2
+            for lock in self.identity.active_identity_locks
+        ))
+
+        partial_result = None
+        for trigger in range(1020, 1032):
+            frames, images, detections = self.frames_and_pixels(trigger)
+            partial_result = self.pipeline.process(frames, images, detections)
+        self.assertTrue(set(self.pipeline.active_local_track_ids(2)) - initial_ids)
+        # Erasures during phases 0..3 remove the distinguishing bits of
+        # some codewords. A partial-code ID is NOT transferred to the new
+        # local track even though its location resembles the old light.
+        self.assertFalse(any(
+            lock.camera_id == 2 for lock in partial_result.active_locks
+        ))
+
+        restored = None
+        for trigger in range(1032, 1048):
+            frames, images, detections = self.frames_and_pixels(trigger)
+            restored = self.pipeline.process(frames, images, detections)
+        new_camera_locks = [
+            lock for lock in restored.active_locks if lock.camera_id == 2
+        ]
+        self.assertEqual(len(new_camera_locks), 8)
+        self.assertEqual(
+            {lock.marker_id for lock in new_camera_locks},
+            set(self.registry.marker_to_board),
+        )
+        self.assertTrue(all(
+            lock.local_track_id not in initial_ids
+            for lock in new_camera_locks
+        ))
+        self.assertEqual(len(restored.active_locks), 24)
+        self.assertTrue(all(
+            outcome.state == "TRACKING"
+            for outcome in restored.boards.values()
+        ))
+
     def test_bad_source_timestamp_and_wrong_config_roll_back(self):
         self.bootstrap()
         frames, images, detections = self.frames_and_pixels(1016)
