@@ -361,3 +361,269 @@ def evaluate_orientation_error(
         errors_rad=tuple(errors),
         hardware_ground_truth_verified=False,
     )
+
+
+
+@dataclass(frozen=True)
+class OpticalOnlyOrientationEstimate:
+    """One optical-only body orientation result, including invalid outcomes."""
+    body_id: str
+    timestamp_ns: int
+    clock_domain: str
+    quaternion_world_from_body_xyzw: tuple[float, float, float, float] | None
+    status: str
+    pattern_sha256: str
+    optical_calibration_sha256: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.body_id, str) or not self.body_id.strip():
+            raise ValueError("body_id must be nonempty")
+        if type(self.timestamp_ns) is not int or not 0 <= self.timestamp_ns <= _MAX_I64:
+            raise ValueError("optical timestamp must be a nonnegative int64")
+        if not isinstance(self.clock_domain, str) or not self.clock_domain.strip():
+            raise ValueError("optical clock domain must be nonempty")
+        if self.status not in {"TRACKING", "INVALID", "LOST"}:
+            raise ValueError("optical-only status must be TRACKING, INVALID or LOST")
+        _digest(self.pattern_sha256, "optical pattern digest")
+        _digest(self.optical_calibration_sha256, "optical calibration digest")
+        if self.status == "TRACKING":
+            if self.quaternion_world_from_body_xyzw is None:
+                raise ValueError("TRACKING optical estimate requires an orientation")
+            object.__setattr__(self, "quaternion_world_from_body_xyzw",
+                               _quaternion(self.quaternion_world_from_body_xyzw, "optical quaternion"))
+        elif self.quaternion_world_from_body_xyzw is not None:
+            raise ValueError("INVALID/LOST optical estimate must not publish an orientation")
+
+
+@dataclass(frozen=True)
+class OrientationSeriesMetrics:
+    series_name: str
+    sample_count: int
+    tracking_count: int
+    degraded_count: int
+    invalid_count: int
+    lost_count: int
+    matched_count: int
+    unmatched_sample_count: int
+    unmatched_reference_count: int
+    rmse_rad: float | None
+    median_rad: float | None
+    p95_rad: float | None
+    max_rad: float | None
+    rmse_deg: float | None
+    median_deg: float | None
+    p95_deg: float | None
+    max_deg: float | None
+    per_reference_error_rad: tuple[float | None, ...]
+
+
+@dataclass(frozen=True)
+class OpticalVsFusedOrientationReport:
+    reference_sha256: str
+    clock_domain: str
+    match_tolerance_ns: int
+    optical_only: OrientationSeriesMetrics
+    fused: OrientationSeriesMetrics
+    paired_reference_count: int
+    paired_optical_rmse_rad: float | None
+    paired_fused_rmse_rad: float | None
+    paired_rmse_improvement_rad: float | None
+    report_sha256: str
+    hardware_ground_truth_verified: bool = False
+
+
+def _series_metrics(
+    series_name: str,
+    samples: Sequence[tuple[int, tuple[float, float, float, float] | None, str]],
+    references: Sequence[ReferenceOrientation],
+    *,
+    max_match_delta_ns: int,
+    invalid_status: str | None = None,
+) -> OrientationSeriesMetrics:
+    used: set[int] = set()
+    errors: list[float | None] = [None] * len(references)
+    unmatched = 0
+    for timestamp, quaternion, status in samples:
+        if quaternion is None or status in {"LOST", "INVALID"}:
+            unmatched += 1
+            continue
+        candidates = [
+            (abs(ref.timestamp_ns - timestamp), idx)
+            for idx, ref in enumerate(references)
+            if idx not in used and abs(ref.timestamp_ns - timestamp) <= max_match_delta_ns
+        ]
+        if not candidates:
+            unmatched += 1
+            continue
+        _, idx = min(candidates, key=lambda item: (item[0], item[1]))
+        used.add(idx)
+        q = _quaternion(quaternion, f"{series_name} quaternion")
+        r = references[idx].quaternion_world_from_body_xyzw
+        dot = abs(sum(q[i] * r[i] for i in range(4)))
+        errors[idx] = 2.0 * math.acos(max(-1.0, min(1.0, dot)))
+    valid = sorted(error for error in errors if error is not None)
+    if valid:
+        median = (valid[(len(valid)-1)//2] + valid[len(valid)//2]) / 2.0
+        p95 = valid[max(0, math.ceil(0.95 * len(valid)) - 1)]
+        rmse = math.sqrt(sum(error*error for error in valid) / len(valid))
+        maximum = max(valid)
+        metrics = (rmse, median, p95, maximum,
+                   math.degrees(rmse), math.degrees(median),
+                   math.degrees(p95), math.degrees(maximum))
+    else:
+        metrics = (None,) * 8
+    return OrientationSeriesMetrics(
+        series_name=series_name,
+        sample_count=len(samples),
+        tracking_count=sum(s[2] == "TRACKING" for s in samples),
+        degraded_count=sum(s[2] == "DEGRADED" for s in samples),
+        invalid_count=sum(s[2] == "INVALID" for s in samples),
+        lost_count=sum(s[2] == "LOST" for s in samples),
+        matched_count=len(valid),
+        unmatched_sample_count=unmatched,
+        unmatched_reference_count=len(references) - len(used),
+        rmse_rad=metrics[0], median_rad=metrics[1], p95_rad=metrics[2], max_rad=metrics[3],
+        rmse_deg=metrics[4], median_deg=metrics[5], p95_deg=metrics[6], max_deg=metrics[7],
+        per_reference_error_rad=tuple(errors),
+    )
+
+
+def compare_optical_only_vs_fused(
+    optical_samples: Sequence[OpticalOnlyOrientationEstimate],
+    fused_states: Sequence[OpticalIMUFusionState],
+    references: Sequence[ReferenceOrientation],
+    *,
+    clock_domain: str,
+    max_match_delta_ns: int = 2_000_000,
+    max_report_bytes: int = 16_000_000,
+) -> OpticalVsFusedOrientationReport:
+    """Compare optical-only and fused attitudes against one identical reference set.
+
+    Every reference receives a slot in each series' error vector. Missing or
+    invalid observations remain None and count as unmatched; they are never
+    silently removed from the coverage statistics.
+    """
+    if not isinstance(optical_samples, (tuple, list)) or not optical_samples:
+        raise ValueError("optical-only samples must be a nonempty sequence")
+    if not isinstance(fused_states, (tuple, list)) or not fused_states:
+        raise ValueError("fused states must be a nonempty sequence")
+    if not isinstance(references, (tuple, list)) or not references:
+        raise ValueError("reference dataset must be nonempty")
+    if type(max_match_delta_ns) is not int or not 0 <= max_match_delta_ns <= _MAX_I64:
+        raise ValueError("max_match_delta_ns must be a nonnegative int64")
+    if type(max_report_bytes) is not int or not 1 <= max_report_bytes <= _MAX_BYTES:
+        raise ValueError("max_report_bytes must be in 1..256000000")
+    if not isinstance(clock_domain, str) or not clock_domain.strip():
+        raise ValueError("clock_domain must be nonempty")
+    if any(not isinstance(item, OpticalOnlyOrientationEstimate) for item in optical_samples):
+        raise ValueError("optical_samples must contain OpticalOnlyOrientationEstimate")
+    if any(not isinstance(item, OpticalIMUFusionState) for item in fused_states):
+        raise ValueError("fused_states must contain OpticalIMUFusionState")
+    if any(not isinstance(item, ReferenceOrientation) for item in references):
+        raise ValueError("references must contain ReferenceOrientation")
+
+    if any(item.clock_domain != clock_domain for item in optical_samples):
+        raise ValueError("optical-only series contains a mixed clock domain")
+    if any(item.clock_domain != clock_domain for item in fused_states):
+        raise ValueError("fused series contains a mixed clock domain")
+    if any(item.clock_domain != clock_domain for item in references):
+        raise ValueError("reference dataset contains a mixed clock domain")
+    if any(b.timestamp_ns <= a.timestamp_ns for a, b in zip(optical_samples, optical_samples[1:])):
+        raise ValueError("optical-only timestamps must be strictly increasing")
+    if any(b.timestamp_ns <= a.timestamp_ns for a, b in zip(fused_states, fused_states[1:])):
+        raise ValueError("fused timestamps must be strictly increasing")
+    if any(b.timestamp_ns <= a.timestamp_ns for a, b in zip(references, references[1:])):
+        raise ValueError("reference timestamps must be strictly increasing")
+
+    optical_identity = (
+        optical_samples[0].body_id, optical_samples[0].pattern_sha256,
+        optical_samples[0].optical_calibration_sha256,
+    )
+    if any((x.body_id, x.pattern_sha256, x.optical_calibration_sha256) != optical_identity
+           for x in optical_samples):
+        raise ValueError("optical-only series contains mixed body/pattern/calibration revisions")
+    fused_identity = (
+        fused_states[0].body_id, fused_states[0].imu_id, fused_states[0].imu_calibration_sha256,
+        fused_states[0].clock_mapping_sha256, fused_states[0].optical_pattern_sha256,
+        fused_states[0].optical_calibration_sha256,
+    )
+    if any((x.body_id, x.imu_id, x.imu_calibration_sha256, x.clock_mapping_sha256,
+            x.optical_pattern_sha256, x.optical_calibration_sha256) != fused_identity
+           for x in fused_states):
+        raise ValueError("fused series contains mixed body/IMU/calibration revisions")
+    if optical_identity[0] != fused_identity[0]:
+        raise ValueError("optical-only and fused series refer to different bodies")
+    if optical_identity[1:] != (fused_identity[4], fused_identity[5]):
+        raise ValueError("optical-only and fused series pattern/calibration revisions differ")
+    if any(ref.reference_sha256 != references[0].reference_sha256 for ref in references):
+        raise ValueError("reference dataset digest changed within report")
+
+    # Ensure even invalid samples and all configuration identity are covered
+    # by the digest, rather than hashing only successful matched errors.
+    source_packet = {
+        "clock_domain": clock_domain,
+        "max_match_delta_ns": max_match_delta_ns,
+        "optical_samples": [asdict(x) for x in optical_samples],
+        "fused_states": [asdict(x) for x in fused_states],
+        "references": [asdict(x) for x in references],
+    }
+    source_json = _canonical(source_packet)
+    if len(source_json.encode("utf-8")) > max_report_bytes:
+        raise ValueError("A/B report input byte capacity exceeded")
+
+    optical_metrics = _series_metrics(
+        "optical_only",
+        [(x.timestamp_ns, x.quaternion_world_from_body_xyzw, x.status) for x in optical_samples],
+        references, max_match_delta_ns=max_match_delta_ns,
+    )
+    fused_metrics = _series_metrics(
+        "fused",
+        [(x.timestamp_ns, x.quaternion_world_from_body_xyzw, x.status) for x in fused_states],
+        references, max_match_delta_ns=max_match_delta_ns,
+    )
+    paired = [
+        (a, b) for a, b in zip(optical_metrics.per_reference_error_rad, fused_metrics.per_reference_error_rad)
+        if a is not None and b is not None
+    ]
+    if optical_metrics.matched_count == 0 or fused_metrics.matched_count == 0:
+        raise ValueError("both optical-only and fused series must match the reference dataset")
+    paired_optical_rmse = (
+        math.sqrt(sum(a*a for a, _ in paired) / len(paired)) if paired else None
+    )
+    paired_fused_rmse = (
+        math.sqrt(sum(b*b for _, b in paired) / len(paired)) if paired else None
+    )
+    report_core = {
+        "reference_sha256": references[0].reference_sha256,
+        "clock_domain": clock_domain,
+        "match_tolerance_ns": max_match_delta_ns,
+        "optical_only": asdict(optical_metrics),
+        "fused": asdict(fused_metrics),
+        "paired_reference_count": len(paired),
+        "paired_optical_rmse_rad": paired_optical_rmse,
+        "paired_fused_rmse_rad": paired_fused_rmse,
+        "paired_rmse_improvement_rad": (
+            paired_optical_rmse - paired_fused_rmse
+            if paired_optical_rmse is not None and paired_fused_rmse is not None else None
+        ),
+        "hardware_ground_truth_verified": False,
+    }
+    report_json = _canonical(report_core)
+    if len(report_json.encode("utf-8")) > max_report_bytes:
+        raise ValueError("A/B report output byte capacity exceeded")
+    return OpticalVsFusedOrientationReport(
+        reference_sha256=references[0].reference_sha256,
+        clock_domain=clock_domain,
+        match_tolerance_ns=max_match_delta_ns,
+        optical_only=optical_metrics,
+        fused=fused_metrics,
+        paired_reference_count=len(paired),
+        paired_optical_rmse_rad=paired_optical_rmse,
+        paired_fused_rmse_rad=paired_fused_rmse,
+        paired_rmse_improvement_rad=(
+            paired_optical_rmse - paired_fused_rmse
+            if paired_optical_rmse is not None and paired_fused_rmse is not None else None
+        ),
+        report_sha256=sha256(report_json.encode("utf-8")).hexdigest(),
+        hardware_ground_truth_verified=False,
+    )
