@@ -188,6 +188,11 @@ def run_bundle_gated_offline_replay(
             )
         except (OSError, ValueError, TypeError) as exc:
             report["bundle_integrity_valid"] = False
+            report["bundle_report"] = {
+                **bundle_report,
+                "bundle_integrity_valid": False,
+                "failures": ["final bundle revalidation failed: " + str(exc)],
+            }
             report["offline_replay_status"] = "bundle_changed_during_replay"
             report["failures"].append(
                 "final bundle revalidation failed: " + str(exc)
