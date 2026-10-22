@@ -335,6 +335,55 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             for body in next_frame.boards.values()
         ))
 
+    def test_unsafe_assignment_followed_by_other_camera_error_rolls_back(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        bad = dict(detections)
+        bad[2] = list(bad[2]) + [bad[2][0]]  # would quarantine camera 2
+        bad[9] = [["bad", "pixel"]]  # unrelated fatal input on next camera
+        previous = tuple(
+            self.pipeline.active_local_track_ids(camera)
+            for camera in self.cameras
+        )
+        with self.assertRaisesRegex(ValueError, "numeric coordinates"):
+            self.pipeline.process(frames, images, bad)
+        self.assertEqual(self.identity.last_trigger_id, 1015)
+        self.assertEqual(self.pipeline.quarantined_camera_ids, ())
+        self.assertEqual(
+            previous,
+            tuple(
+                self.pipeline.active_local_track_ids(camera)
+                for camera in self.cameras
+            ),
+        )
+        valid = self.pipeline.process(frames, images, detections)
+        self.assertEqual(valid.quarantined_camera_ids, ())
+        self.assertTrue(all(
+            b.evidence_kind == "MEASURED"
+            for b in valid.boards.values()
+        ))
+
+    def test_unsafe_assignment_plus_wrong_registry_revision_rolls_back(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        unsafe = dict(detections)
+        unsafe[5] = list(unsafe[5]) + [unsafe[5][0]]
+        prev_ids = self.pipeline.active_local_track_ids(5)
+        with self.assertRaisesRegex(ValueError, "controller pattern SHA-256"):
+            self.pipeline.process(
+                frames, images, unsafe,
+                controller_config_sha256="0" * 64,
+            )
+        self.assertEqual(self.identity.last_trigger_id, 1015)
+        self.assertEqual(self.pipeline.quarantined_camera_ids, ())
+        self.assertEqual(self.pipeline.active_local_track_ids(5), prev_ids)
+        success = self.pipeline.process(
+            frames, images, detections,
+            controller_config_sha256=self.registry.config_sha256,
+        )
+        self.assertEqual(success.trigger_id, 1016)
+        self.assertEqual(success.quarantined_camera_ids, ())
+
     def test_fatal_input_error_still_rolls_back_all_camera_states(self):
         self.bootstrap()
         frames, images, detections = self.frames_and_pixels(1016)
