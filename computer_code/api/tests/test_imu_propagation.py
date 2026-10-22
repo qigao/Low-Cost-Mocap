@@ -115,10 +115,10 @@ class BoundedIMUAttitudePropagationTests(unittest.TestCase):
         self.assertEqual(tracker.state, accepted)
 
         limited = propagator(max_sample_gap_ns=20_000_000, max_step_ns=1_000_000, max_substeps=2)
-        limited.advance(vector_sample(0, 0))
+        baseline = limited.advance(vector_sample(0, 0))
         with self.assertRaisesRegex(ValueError, "substep capacity"):
             limited.advance(vector_sample(1, 3_000_000, (0.0, 0.0, 1.0)))
-        self.assertIsNone(limited.state)
+        self.assertEqual(limited.state, baseline)
 
     def test_rejects_identity_clock_and_calibration_changes_transactionally(self):
         tracker = propagator()
