@@ -168,6 +168,26 @@ class FusionABBundleReportTests(unittest.TestCase):
         self.assertNotEqual(first["manifest_sha256"], second["manifest_sha256"])
         self.assertNotEqual(first["bundle_bound_report_sha256"], second["bundle_bound_report_sha256"])
 
+    def test_a_b_revisions_must_match_bundle_even_when_input_artifact_hash_is_updated(self):
+        for mutation, message in (
+            (lambda doc: doc["optical_only"][0].update(pattern_sha256="f"*64), "optical-only pattern revision"),
+            (lambda doc: doc["fused"][0].update(imu_calibration_sha256="f"*64), "IMU calibration digest"),
+        ):
+            with self.subTest(message=message):
+                root = Path(self.temp.name) / ("mutated-" + str(len(list(Path(self.temp.name).glob("mutated-*")))))
+                manifest = make_bundle(root)
+                artifact = next(a for a in manifest["artifacts"] if a["role"] == "fusion_ab_input")
+                path = root / artifact["path"]
+                document = json.loads(path.read_text(encoding="utf-8"))
+                mutation(document)
+                raw = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+                path.write_bytes(raw)
+                artifact["size_bytes"] = len(raw)
+                artifact["sha256"] = hashlib.sha256(raw).hexdigest()
+                (root / MANIFEST_NAME).write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    evaluate_bundle(root)
+
     def test_revision_and_reference_artifact_mismatches_are_rejected(self):
         artifact = next(a for a in self.manifest["artifacts"] if a["role"] == "reference_orientations")
         path = self.root / artifact["path"]
