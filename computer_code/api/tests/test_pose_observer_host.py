@@ -90,12 +90,20 @@ class PoseObserverHostTests(unittest.TestCase):
             measured_marker_ids=(100,101,102) if measured else (),
         )
 
+    def poll(self, client):
+        response = client.emit(
+            "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True
+        )
+        if isinstance(response, list):
+            response = response[0] if response else None
+        self.assertIsInstance(response, dict)
+        return response
+
     def messages(self, client):
-        return [
-            event["args"][0]
-            for event in client.get_received(namespace=POSE_OBSERVER_NAMESPACE)
-            if event["name"] == "mocap:pose-stream"
-        ]
+        response = self.poll(client)
+        self.assertTrue(response.get("ok"), response)
+        self.assertIsInstance(response.get("messages"), list)
+        return response["messages"]
 
     def test_no_anonymous_or_wrong_token_connection(self):
         for token in (None, "", "wrong", "x"*700):
@@ -119,7 +127,6 @@ class PoseObserverHostTests(unittest.TestCase):
         independent.consume(first[0])
         self.assertEqual(independent.pattern_sha256, self.registry.config_sha256)
         self.assertEqual(self.host.publish_frame(self.frame(101)), 101)
-        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         second = self.messages(client)
         self.assertEqual(len(second), 1)
         measured = independent.consume(second[0])
@@ -128,7 +135,6 @@ class PoseObserverHostTests(unittest.TestCase):
         self.assertIsNotNone(measured["rigid_bodies"][0]["position_world_from_body"])
         self.assertFalse(measured["hardware_provenance_verified"])
         self.host.publish_frame(self.frame(102, measured=False))
-        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         third = self.messages(client)
         self.assertEqual(third[0]["payload"]["frame_id"], 102)
         missing = independent.consume(third[0])
@@ -148,8 +154,6 @@ class PoseObserverHostTests(unittest.TestCase):
         self.messages(a)
         self.messages(b)
         self.host.publish_frame(self.frame(111))
-        a.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
-        b.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         self.assertEqual(len(self.messages(a)), 1)
         self.assertEqual(len(self.messages(b)), 1)
         a.disconnect(namespace=POSE_OBSERVER_NAMESPACE)
@@ -164,7 +168,6 @@ class PoseObserverHostTests(unittest.TestCase):
         # has subscribed again. Only a genuinely new source frame can arrive.
         self.assertEqual(self.messages(reopened), [])
         self.host.publish_frame(self.frame(112))
-        reopened.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         packet = self.messages(reopened)
         self.assertEqual(len(packet), 1)
         self.assertEqual(packet[0]["payload"]["frame_id"], 112)
@@ -188,12 +191,9 @@ class PoseObserverHostTests(unittest.TestCase):
         self.assertEqual(len(current_stats), 2)
         self.assertTrue(all(stats.dropped_frames == 5 for stats in current_stats))
         self.assertTrue(all(stats.pending_frames == 2 for stats in current_stats))
-        first_ack = first.emit(
-            "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True
-        )
-        reply = first_ack[0] if isinstance(first_ack, list) else first_ack
+        reply = self.poll(first)
         self.assertEqual(reply["sent"], 2)
-        received = self.messages(first)
+        received = reply["messages"]
         self.assertEqual(
             [packet["payload"]["frame_id"] for packet in received],
             [6, 7],
@@ -206,8 +206,13 @@ class PoseObserverHostTests(unittest.TestCase):
             ),
             [0, 2],
         )
-        self.assertEqual(self.messages(second), [])
-        second.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
+        self.assertEqual(
+            sorted(
+                self.host.publisher.subscriber_statistics(key).pending_frames
+                for key in self.host.publisher.subscriber_ids
+            ),
+            [0, 2],
+        )
         self.assertEqual(
             [p["payload"]["frame_id"] for p in self.messages(second)], [6, 7]
         )
@@ -220,7 +225,6 @@ class PoseObserverHostTests(unittest.TestCase):
         independent = PoseStreamConsumer()
         independent.consume(first[0])
         self.host.publish_frame(self.frame(100))
-        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         independent.consume(self.messages(client)[0])
         self.host.restart_source_session()
         restarted = self.messages(client)
@@ -229,7 +233,6 @@ class PoseObserverHostTests(unittest.TestCase):
         self.assertGreater(restarted[0]["session_id"], first[0]["session_id"])
         independent.consume(restarted[0])
         self.host.publish_frame(self.frame(2, calibration="b"*64))
-        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         new_frame = self.messages(client)
         self.assertEqual(new_frame[0]["payload"]["frame_id"], 2)
         independent.consume(new_frame[0])
@@ -272,7 +275,8 @@ class PoseObserverHostTests(unittest.TestCase):
 
     def test_host_poll_rate_limits_and_never_registers_control_handlers(self):
         client = self.connect()
-        self.messages(client)
+        self.messages(client)  # Initial asset delivery is a poll response.
+        self.clock += 60_000_000
         first = client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         self.assertTrue(first)
         self.assertEqual(first[0]["ok"] if isinstance(first,list) else first["ok"], True)
@@ -305,7 +309,6 @@ class PoseObserverHostTests(unittest.TestCase):
         self.assertEqual(self.host.subscriber_count, 1)
         self.assertEqual(len(self.messages(client)), 1)
         self.host.publish_frame(self.frame(1))
-        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         self.assertEqual(
             [m["payload"]["frame_id"] for m in self.messages(client)],
             [1],
