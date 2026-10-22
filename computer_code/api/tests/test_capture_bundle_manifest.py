@@ -343,6 +343,13 @@ class CaptureBundleManifestTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("regular file", result.stdout)
 
+    def test_directory_manifest_fails_closed_without_o_nofollow(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        with patch("capture_bundle_manifest.os", new=object()):
+            with self.assertRaisesRegex(ValueError, "requires platform O_NOFOLLOW"):
+                validate_capture_bundle_directory(self.root)
+
     def test_directory_manifest_descriptor_enforces_size_cap(self):
         manifest_path = self.root / MANIFEST_NAME
         manifest_path.write_bytes(b" " * 1_000_001)
