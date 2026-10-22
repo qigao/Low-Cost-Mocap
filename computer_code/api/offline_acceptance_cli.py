@@ -191,6 +191,11 @@ def evaluate_document(document: object) -> dict[str, Any]:
             "rejection_reasons": dict(summary.rejection_reasons),
             "hardware_provenance_verified": False,
             "bound_assumes_independent_trials": True,
+            "trial_independence_verified": False,
+            "statistical_limitations": [
+                "wrong_accept_one_sided_upper_95 is a one-sided Wilson score bound that assumes independent Bernoulli trials.",
+                "Capture-session, trajectory, marker and code-cycle correlation is not modeled; nominal coverage is not justified until trial independence is supported or a cluster-aware analysis is performed.",
+            ],
         }
     return report
 

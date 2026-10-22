@@ -145,6 +145,13 @@ before any report is written to stdout. Its input digest is computed from the
 exact bytes read. This is an input-integrity boundary, not a hardware
 provenance check.
 
+The temporal report's one-sided Wilson upper bound assumes independent
+Bernoulli trials. The tool does not model correlation between trials from the
+same capture session, marker trajectory, camera, or LED code cycle, and always
+reports `trial_independence_verified=false`. Do not treat the nominal 95%
+coverage as established until independence is justified from the sampling
+design or a suitable cluster-aware analysis is applied.
+
 The combined report includes both reports and the replay-input SHA-256.
 
 ```sh

@@ -83,6 +83,13 @@ class OfflineRecordingCliTests(unittest.TestCase):
         self.assertGreater(
             summary["temporal"]["wrong_accept_one_sided_upper_95"], 0.0
         )
+        self.assertTrue(summary["temporal"]["bound_assumes_independent_trials"])
+        self.assertFalse(summary["temporal"]["trial_independence_verified"])
+        self.assertEqual(len(summary["temporal"]["statistical_limitations"]), 2)
+        self.assertIn(
+            "cluster-aware analysis",
+            summary["temporal"]["statistical_limitations"][1],
+        )
 
     def test_cli_reports_input_sha256_from_actual_bytes(self):
         payload = json.dumps(self.sample()).encode("utf-8")
