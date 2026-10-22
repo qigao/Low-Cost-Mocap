@@ -152,6 +152,9 @@ class TemporalIdentityTests(unittest.TestCase):
         self.assertEqual(decoded.marker_id, 12)
         self.assertEqual(decoded.valid_samples, 6)
         self.assertEqual(decoded.erased_samples, 2)
+        self.assertEqual(decoded.guaranteed_erasure_budget, 1)
+        self.assertFalse(decoded.within_guaranteed_erasure_budget)
+        self.assertEqual(decoded.erased_samples, 2)
         self.assertEqual(decoded.bit_errors, 1)
         self.assertGreaterEqual(decoded.competing_error_margin, 1)
 
@@ -219,6 +222,11 @@ class TemporalIdentityTests(unittest.TestCase):
             decode_temporal_marker(samples, self.codes,
                                    trigger_epoch=200).marker_id, 11
         )
+        full = decode_temporal_marker(
+            samples, self.codes, trigger_epoch=200
+        )
+        self.assertEqual(full.erased_samples, 0)
+        self.assertTrue(full.within_guaranteed_erasure_budget)
         with self.assertRaisesRegex(ValueError, "different code cycles"):
             decode_temporal_marker(samples, self.codes, trigger_epoch=199)
         with self.assertRaisesRegex(ValueError, "precedes"):
