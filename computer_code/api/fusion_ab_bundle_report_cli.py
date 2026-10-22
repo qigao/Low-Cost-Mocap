@@ -1,11 +1,13 @@
-"""Bundle-gated optical-vs-fused attitude report CLI.
+"""Bundle-gated optical-vs-fused report evaluation CLI (not estimator replay).
 
 Example:
     python fusion_ab_bundle_report_cli.py /path/to/capture-bundle > report.json
 
-The CLI verifies the manifest and every declared artifact before reading the
-fusion_ab_input role. This verifies bytes against a user-supplied manifest; it
-does not authenticate hardware or prove that reference labels are independent.
+The CLI verifies the manifest and every declared artifact before evaluating
+supplied optical/fused state records against the bundled reference. It does not
+re-run the estimator on raw IMU samples; those bytes are integrity-checked and
+digest-bound only. This verifies bytes against a user-supplied manifest; it does
+not authenticate hardware or prove that reference labels are independent.
 """
 from __future__ import annotations
 
@@ -114,7 +116,7 @@ def evaluate_bundle(bundle_root: str | Path) -> dict:
 
     report = evaluate_bytes(raw)
     report.update({
-        "qualification": "bundle_integrity_and_software_replay_only",
+        "qualification": "bundle_integrity_and_report_evaluation_only",
         "bundle_id": bundle["bundle_id"],
         "manifest_sha256": bundle["manifest_sha256"],
         "manifest_file_sha256": manifest_file_sha256,
@@ -125,6 +127,7 @@ def evaluate_bundle(bundle_root: str | Path) -> dict:
         "reference_artifact_sha256": ref_artifact["sha256"],
         "imu_calibration_artifact_path": imu_artifact["path"],
         "imu_calibration_artifact_sha256": imu_artifact["sha256"],
+        "raw_imu_samples_artifact_path": raw_imu_entries[0]["path"],
         "raw_imu_samples_artifact_sha256": raw_imu_entries[0]["actual_sha256"],
         "hardware_provenance_verified": False,
         "hardware_ground_truth_verified": False,
