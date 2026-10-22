@@ -9,7 +9,9 @@ import time
 import unittest
 from pathlib import Path
 
+import requests
 import socketio
+from urllib.request import build_opener, ProxyHandler
 from werkzeug.serving import make_server
 
 from board_patterns import BoardPatternRegistry
@@ -49,8 +51,11 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         self.server.server_close()
 
     def client(self, secret=SECRET):
+        session = requests.Session()
+        session.trust_env = False  # localhost tests must bypass CI HTTP_PROXY
         client = socketio.Client(
-            reconnection=False, logger=False, engineio_logger=False
+            reconnection=False, logger=False, engineio_logger=False,
+            http_session=session,
         )
         self.clients.append(client)
         client.connect(
@@ -93,8 +98,11 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         received = []
         asset_seen = threading.Event()
         frame_seen = threading.Event()
+        session = requests.Session()
+        session.trust_env = False
         client = socketio.Client(
-            reconnection=False, logger=False, engineio_logger=False
+            reconnection=False, logger=False, engineio_logger=False,
+            http_session=session,
         )
         self.clients.append(client)
 
@@ -107,8 +115,13 @@ class LoopbackObserverTransportTests(unittest.TestCase):
             elif kind == "pose_frame":
                 frame_seen.set()
 
+        origin = "http://127.0.0.1:" + str(self.port)
+        with build_opener(ProxyHandler({})).open(
+            origin + "/pose-observe/healthz", timeout=4
+        ) as response:
+            self.assertEqual(response.status, 200)
         client.connect(
-            "http://127.0.0.1:" + str(self.port),
+            origin,
             auth={"token": SECRET},
             namespaces=[POSE_OBSERVER_NAMESPACE],
             transports=["polling"],
@@ -137,8 +150,11 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         self.assertEqual(self.host.subscriber_count, 0)
 
     def test_wrong_token_cannot_connect_to_real_local_listener(self):
+        session = requests.Session()
+        session.trust_env = False
         client = socketio.Client(
-            reconnection=False, logger=False, engineio_logger=False
+            reconnection=False, logger=False, engineio_logger=False,
+            http_session=session,
         )
         self.clients.append(client)
         with self.assertRaises(socketio.exceptions.ConnectionError):
