@@ -36,6 +36,9 @@ class AdmittedMarker:
     valid_samples: int
     erased_samples: int
     bit_errors: int
+    minimum_hamming_distance: int
+    guaranteed_erasure_budget: int
+    within_guaranteed_erasure_budget: bool
 
 
 def admit_track_marker_at_frame(
@@ -49,6 +52,7 @@ def admit_track_marker_at_frame(
     trigger_epoch: int,
     min_valid_samples: int = 4,
     required_margin: int = 1,
+    allow_degraded_erasure_decode: bool = False,
 ) -> AdmittedMarker:
     """Decode one local track and produce a frame-anchored ON detection.
 
@@ -65,6 +69,8 @@ def admit_track_marker_at_frame(
     camera = _nonnegative_int(camera_id, "camera_id")
     track = _nonnegative_int(local_track_id, "local_track_id")
     epoch = _nonnegative_int(trigger_epoch, "trigger_epoch")
+    if not isinstance(allow_degraded_erasure_decode, bool):
+        raise ValueError("allow_degraded_erasure_decode must be boolean")
     if not isinstance(target_frame, FrameStamp):
         raise ValueError("target_frame must be FrameStamp")
     if not trace or not isinstance(trace[-1], StampedTrackROI):
@@ -82,6 +88,14 @@ def admit_track_marker_at_frame(
         min_valid_samples=min_valid_samples,
         required_margin=required_margin,
     )
+    if (
+        not decoded.within_guaranteed_erasure_budget
+        and not allow_degraded_erasure_decode
+    ):
+        raise ValueError(
+            "temporal marker exceeds guaranteed erasure budget; "
+            "diagnostic-only callers may opt in explicitly"
+        )
     trigger = _nonnegative_int(target_frame.trigger_id, "target_frame.trigger_id")
     if trigger < epoch or (trigger - epoch) // codebook.period != decoded.cycle_index:
         raise ValueError("decoded marker cycle does not match target frame")
@@ -102,4 +116,7 @@ def admit_track_marker_at_frame(
         valid_samples=decoded.valid_samples,
         erased_samples=decoded.erased_samples,
         bit_errors=decoded.bit_errors,
+        minimum_hamming_distance=codebook.minimum_hamming_distance,
+        guaranteed_erasure_budget=decoded.guaranteed_erasure_budget,
+        within_guaranteed_erasure_budget=decoded.within_guaranteed_erasure_budget,
     )
