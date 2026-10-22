@@ -134,7 +134,7 @@ class BoundedPoseStreamPublisher:
             max_message_bytes, "max_message_bytes", maximum=100_000_000
         )
         self._asset = describe_board_assets(registry)
-        if _json_size(self._asset) > self.max_message_bytes:
+        if _json_size(_envelope(self._asset, session_id=1, sequence=0)) > self.max_message_bytes:
             raise ValueError("asset description exceeds transport message limit")
         self.session_id = 1
         self._subscribers: dict[str, _Subscriber] = {}
@@ -152,6 +152,8 @@ class BoundedPoseStreamPublisher:
             self._asset, session_id=self.session_id,
             sequence=sub.next_sequence,
         )
+        if _json_size(envelope) > self.max_message_bytes:
+            raise ValueError("asset envelope exceeds transport message limit")
         sub.next_sequence += 1
         return envelope
 
@@ -206,7 +208,9 @@ class BoundedPoseStreamPublisher:
         if not isinstance(registry, BoardPatternRegistry):
             raise ValueError("registry must be BoardPatternRegistry")
         asset = describe_board_assets(registry)
-        if _json_size(asset) > self.max_message_bytes:
+        if _json_size(_envelope(
+            asset, session_id=self.session_id + 1, sequence=0
+        )) > self.max_message_bytes:
             raise ValueError("asset description exceeds transport message limit")
         if registry.config_sha256 == self.registry.config_sha256:
             raise ValueError("new registry has unchanged pattern revision")
@@ -217,7 +221,13 @@ class BoundedPoseStreamPublisher:
     def publish(self, frame: LockedBoardFrame) -> int:
         """Queue an immutable JSON snapshot of a *validated* source frame."""
         payload = pose_frame_to_dict(frame, self.registry)
-        if _json_size(payload) > self.max_message_bytes:
+        next_seq = max(
+            (sub.next_sequence for sub in self._subscribers.values()),
+            default=0,
+        )
+        if _json_size(_envelope(
+            payload, session_id=self.session_id, sequence=next_seq
+        )) > self.max_message_bytes:
             raise ValueError("pose frame exceeds transport message limit")
         frame_id = _nonnegative_int(payload["frame_id"], "frame_id")
         timestamp = _nonnegative_int(
@@ -335,9 +345,11 @@ def _asset_identity(
         raise ValueError("invalid or hardware-asserting asset description")
     revision = _sha(payload.get("pattern_sha256"), "pattern_sha256")
     period = _bounded_positive(payload.get("period_triggers"), "period_triggers", maximum=256)
-    _nonnegative_int(payload.get("max_bit_errors"), "max_bit_errors")
+    errors = _nonnegative_int(payload.get("max_bit_errors"), "max_bit_errors")
+    if errors >= period:
+        raise ValueError("asset code correction budget is invalid")
     boards = payload.get("boards")
-    if not isinstance(boards, list) or not boards:
+    if not isinstance(boards, list) or not 1 <= len(boards) <= 32:
         raise ValueError("asset description needs a nonempty board list")
     expected = {}
     requirements = {}
@@ -576,7 +588,13 @@ class PoseStreamConsumer:
 
     def consume(self, packet: object) -> dict[str, Any]:
         """Validate independent wire data, then apply state transactionally."""
-        if not isinstance(packet, dict) or _json_size(packet) > self.max_message_bytes:
+        if not isinstance(packet, dict):
+            raise ValueError("stream envelope must be a bounded JSON object")
+        try:
+            cost = _json_size(packet)
+        except (TypeError, OverflowError, ValueError) as exc:
+            raise ValueError("stream envelope contains non-JSON values") from exc
+        if cost > self.max_message_bytes:
             raise ValueError("stream envelope must be a bounded JSON object")
         if (
             packet.get("protocol") != _STREAM_PROTOCOL
@@ -618,3 +636,32 @@ class PoseStreamConsumer:
         self._check_frame(payload)
         self.last_sequence = sequence
         return deepcopy(payload)
+
+
+
+def flush_to_socketio(
+    publisher: BoundedPoseStreamPublisher,
+    subscriber_id: str,
+    socketio_emit: Callable[..., object],
+    *,
+    max_messages: int = 20,
+    event_name: str = "mocap:pose-stream",
+) -> int:
+    """Adapt to an injected Socket.IO emit(event,packet,to=client) method.
+
+    Network infrastructure and routing must be provided by the application.
+    This operation acknowledges only a successful *local emit call*, NOT
+    remote client reception. Subscribers must reconnect/resync from assets.
+    No serial, arming or flight-control channel is touched.
+    """
+    if not isinstance(publisher, BoundedPoseStreamPublisher):
+        raise ValueError("publisher must be a BoundedPoseStreamPublisher")
+    if not callable(socketio_emit):
+        raise ValueError("socketio_emit must be callable")
+    def emit(event: str, packet: dict[str, Any], client: str):
+        return socketio_emit(event, packet, to=client)
+
+    return publisher.flush_with_callback(
+        subscriber_id, emit,
+        max_messages=max_messages, event_name=event_name,
+    )
