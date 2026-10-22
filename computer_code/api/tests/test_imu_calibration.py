@@ -157,8 +157,10 @@ class IMUCalibrationContractTests(unittest.TestCase):
         self.assertEqual(value.accel_bias_random_walk_m_s2_per_sqrt_s, (0.001, 0.001, 0.002))
         with self.assertRaisesRegex(ValueError, "nonnegative"):
             calibration(gyro_bias_random_walk_rad_s_per_sqrt_s=(0.0, -0.1, 0.0))
-        with self.assertRaisesRegex(ValueError, "nonnegative"):
+        with self.assertRaisesRegex(ValueError, "finite real"):
             calibration(accel_bias_random_walk_m_s2_per_sqrt_s=(0.0, float("nan"), 0.0))
+        with self.assertRaisesRegex(ValueError, "nonnegative"):
+            calibration(accel_bias_random_walk_m_s2_per_sqrt_s=(0.0, -0.001, 0.0))
 
     def test_correction_matrices_must_be_finite_and_well_conditioned(self):
         invalid_matrices = (
