@@ -39,18 +39,24 @@ class LegacyControlSecurityTests(unittest.TestCase):
     def test_legacy_serial_handlers_and_server_defaults_use_guard(self):
         from pathlib import Path
 
-        index_source = (Path(__file__).resolve().parents[1] / "index.py").read_text(encoding="utf-8")
-        for event in ("arm-drone", "set-drone-pid", "set-drone-setpoint", "set-drone-trim"):
+        api_dir = Path(__file__).resolve().parents[1]
+        index_source = (api_dir / "index.py").read_text(encoding="utf-8")
+        event_source = (api_dir / "legacy_control_events.py").read_text(encoding="utf-8")
+        for event in (
+            "arm-drone", "set-drone-pid", "set-drone-setpoint", "set-drone-trim",
+            "locate-objects", "triangulate-points",
+        ):
             with self.subTest(event=event):
-                start = index_source.index(f'@socketio.on("{event}")')
-                next_handler = index_source.find("\n@socketio.on(", start + 1)
-                handler = index_source[start: next_handler if next_handler >= 0 else len(index_source)]
+                start = event_source.index(f'@socketio.on("{event}")')
+                next_handler = event_source.find("\n    @socketio.on(", start + 1)
+                handler = event_source[start: next_handler if next_handler >= 0 else len(event_source)]
                 self.assertIn("_legacy_control_authorized()", handler)
         self.assertIn('os.environ.get("MOCAP_BIND_HOST", "127.0.0.1")', index_source)
         self.assertIn("debug=False, use_reloader=False", index_source)
         self.assertNotIn("cors_allowed_origins='*'", index_source)
-        self.assertIn("arm_counter_registry.accept(request.sid, count)", index_source)
-        self.assertIn('@socketio.on("disconnect")', index_source)
+        self.assertIn("register_legacy_control_handlers(", index_source)
+        self.assertIn("arm_counter_registry.accept(request.sid, count)", event_source)
+        self.assertIn('@socketio.on("disconnect")', event_source)
 
     def test_arm_payload_requires_exact_boolean_vector_and_metadata(self):
         self.assertEqual(
@@ -137,7 +143,7 @@ class LegacyControlSecurityTests(unittest.TestCase):
     def test_handlers_validate_payload_before_writing_serial(self):
         from pathlib import Path
 
-        index_source = (Path(__file__).resolve().parents[1] / "index.py").read_text(encoding="utf-8")
+        event_source = (Path(__file__).resolve().parents[1] / "legacy_control_events.py").read_text(encoding="utf-8")
         checks = {
             "arm-drone": "validate_arm_payload",
             "set-drone-pid": "validate_pid_payload",
@@ -146,11 +152,11 @@ class LegacyControlSecurityTests(unittest.TestCase):
         }
         for event, validator in checks.items():
             with self.subTest(event=event):
-                start = index_source.index(f'@socketio.on("{event}")')
-                next_handler = index_source.find("\n@socketio.on(", start + 1)
-                handler = index_source[start: next_handler if next_handler >= 0 else len(index_source)]
+                start = event_source.index(f'@socketio.on("{event}")')
+                next_handler = event_source.find("\n    @socketio.on(", start + 1)
+                handler = event_source[start: next_handler if next_handler >= 0 else len(event_source)]
                 self.assertIn(validator, handler)
-                self.assertLess(handler.index(validator), handler.index("ser.write"))
+                self.assertLess(handler.index(validator), handler.index("serial_port.write"))
 
     def test_wildcard_and_non_origin_urls_are_rejected(self):
         for value in (
