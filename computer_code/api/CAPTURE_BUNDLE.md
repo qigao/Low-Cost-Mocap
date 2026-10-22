@@ -1,4 +1,4 @@
-# Capture bundle manifest v1 — integrity, not hardware certification
+# Capture bundle manifest v2 — integrity, not hardware certification
 
 The capture-bundle validator prepares a reviewable evidence package for
 HW-05. It is deliberately separate from
@@ -35,6 +35,15 @@ that a timestamp actually came from sensor exposure.
 The acceptance limit declaration has a UTC timestamp. The validator requires
 that this timestamp precede the capture start, but cannot independently prove
 when the limits were written. A self-reported declaration is not a signature.
+
+Manifest v2 adds predeclared `min_temporal_trials` and
+`max_wrong_accept_one_sided_upper_95` limits. The bundle-gated replay report
+compares observed temporal trial count and the reported Wilson upper bound
+against these limits. The result is explicitly conditional on independent
+Bernoulli trials; `trial_independence_verified` remains false, and the
+software does not model session/trajectory/marker/code-cycle correlation.
+Legacy v1 manifests remain readable, but their statistical gate is reported as
+`not_predeclared` rather than inferring limits after capture.
 
 ## Run the validator
 
