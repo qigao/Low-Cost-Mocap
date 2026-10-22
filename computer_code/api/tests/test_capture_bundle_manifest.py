@@ -203,7 +203,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
         candidate["artifacts"][0]["path"] = "frames/external.bin"
         report = validate_capture_bundle(candidate, self.root)
         self.assertEqual(report["artifact_checks"][0]["status"], "unsafe_or_unreadable")
-        self.assertIn("symlink", report["artifact_checks"][0]["errors"][0])
+        self.assertIn("without following links", report["artifact_checks"][0]["errors"][0])
 
         duplicate = deepcopy(self.manifest)
         duplicate["artifacts"][1]["path"] = duplicate["artifacts"][0]["path"]
