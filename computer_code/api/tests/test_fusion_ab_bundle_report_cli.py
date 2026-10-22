@@ -8,32 +8,45 @@ from fusion_ab_bundle_report_cli import evaluate_bundle
 from capture_bundle_manifest import MANIFEST_NAME, validate_capture_bundle_and_read_role
 
 
+PATTERN = hashlib.sha256(b"canonical-pattern-registry").hexdigest()
+OPTICAL_CAL = hashlib.sha256(b"camera-calibration-config").hexdigest()
+IMU_CAL_BYTES = b'{"schema_version":1,"imu":"imu-1","revision":"cal-v1"}'
+IMU_CAL = hashlib.sha256(IMU_CAL_BYTES).hexdigest()
+REFERENCE_POSES = [
+    {"timestamp_ns":100,"clock_domain":"imu-clock","quaternion_world_from_body_xyzw":[0,0,0,1]}
+]
+REFERENCE_BYTES = json.dumps(
+    {"schema_version":1,"clock_domain":"imu-clock","poses":REFERENCE_POSES},
+    sort_keys=True,separators=(",",":")
+).encode()
+REFERENCE_SHA = hashlib.sha256(REFERENCE_BYTES).hexdigest()
+
+
 def ab_document():
-    pattern, optical_cal, imu_cal, mapping, reference = (
-        "b"*64, "c"*64, "a"*64, "d"*64, "e"*64
-    )
     optical = {
         "body_id":"board-A", "timestamp_ns":100, "clock_domain":"imu-clock",
         "quaternion_world_from_body_xyzw":[0,0,0,1], "status":"TRACKING",
-        "pattern_sha256":pattern, "optical_calibration_sha256":optical_cal,
+        "pattern_sha256":PATTERN, "optical_calibration_sha256":OPTICAL_CAL,
     }
     fused = {
         "body_id":"board-A", "imu_id":"imu-1", "timestamp_ns":100,
         "clock_domain":"imu-clock", "quaternion_world_from_body_xyzw":[0,0,0,1],
         "attitude_variance_rad2":0.01, "status":"TRACKING", "source":"OPTICAL_CORRECTED",
         "last_optical_timestamp_ns":100, "last_optical_frame_id":1, "optical_age_ns":0,
-        "clock_mapping_sha256":mapping, "imu_calibration_sha256":imu_cal,
-        "optical_pattern_sha256":pattern, "optical_calibration_sha256":optical_cal,
+        "clock_mapping_sha256":"d"*64, "imu_calibration_sha256":IMU_CAL,
+        "optical_pattern_sha256":PATTERN, "optical_calibration_sha256":OPTICAL_CAL,
         "global_position_m":None, "global_velocity_m_s":None, "global_position_observable":False,
     }
-    ref = {"timestamp_ns":100,"clock_domain":"imu-clock","quaternion_world_from_body_xyzw":[0,0,0,1],"reference_sha256":reference}
+    refs = [
+        {**pose,"reference_sha256":REFERENCE_SHA}
+        for pose in REFERENCE_POSES
+    ]
     return {"schema_version":1,"clock_domain":"imu-clock","max_match_delta_ns":0,
-            "optical_only":[optical],"fused":[fused],"references":[ref]}
+            "optical_only":[optical],"fused":[fused],"references":refs}
 
 
 def make_bundle(root, *, include_fusion=True):
     root.mkdir(parents=True, exist_ok=True)
-    raw_ab = json.dumps(ab_document(), sort_keys=True, separators=(",", ":")).encode()
     payloads = {
         "raw_camera_frames": ("frames/raw.bin", b"camera-raw-bytes"),
         "reference_trigger_log": ("reference/triggers.jsonl", b"trigger-reference"),
@@ -43,19 +56,30 @@ def make_bundle(root, *, include_fusion=True):
         "pattern_config": ("config/pattern.json", b"pattern-config"),
         "codebook": ("config/codebook.json", b"codebook"),
         "controller_config": ("config/controller.json", b"controller-config"),
-        "calibration_config": ("config/calibration.json", b"calibration-config"),
+        "calibration_config": ("config/calibration.json", b"camera-calibration-config"),
+        "reference_orientations": ("reference/orientations.json", REFERENCE_BYTES),
+        "imu_calibration": ("config/imu-calibration.json", IMU_CAL_BYTES),
+        "raw_imu_samples": ("imu/samples.jsonl", b"raw-imu-sample-trace"),
     }
+    digests = {role: hashlib.sha256(raw).hexdigest() for role, (_,raw) in payloads.items()}
+    if digests["pattern_config"] != hashlib.sha256(b"pattern-config").hexdigest():
+        raise AssertionError("pattern fixture digest unexpectedly changed")
+    if digests["calibration_config"] != OPTICAL_CAL or digests["imu_calibration"] != IMU_CAL:
+        raise AssertionError("calibration fixture digest mismatch")
     if include_fusion:
-        payloads["fusion_ab_input"] = ("reports/fusion-ab-input.json", raw_ab)
+        ab_raw = json.dumps(ab_document(), sort_keys=True, separators=(",", ":")).encode()
+        payloads["fusion_ab_input"] = ("reports/fusion-ab-input.json", ab_raw)
+        digests["fusion_ab_input"] = hashlib.sha256(ab_raw).hexdigest()
+
     artifacts = []
-    digests = {}
     for role, (rel, raw) in payloads.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw)
-        digest = hashlib.sha256(raw).hexdigest()
-        digests[role] = digest
-        artifacts.append({"role":role,"path":rel,"size_bytes":len(raw),"sha256":digest,"media_type":"application/json" if rel.endswith(".json") or rel.endswith(".jsonl") else "application/octet-stream"})
+        artifacts.append({
+            "role":role,"path":rel,"size_bytes":len(raw),"sha256":digests[role],
+            "media_type":"application/json" if rel.endswith(".json") or rel.endswith(".jsonl") else "application/octet-stream",
+        })
     manifest = {
         "schema_version":1, "bundle_id":"rig-session-ab-001",
         "capture":{
@@ -72,7 +96,7 @@ def make_bundle(root, *, include_fusion=True):
                        {"camera_id":1,"model":"camera-B","firmware_version":"1","driver_version":"1","frame_width":640,"frame_height":480,"nominal_fps":60.0}],
         },
         "revisions":{
-            "pattern_sha256":hashlib.sha256(b"pattern").hexdigest(),
+            "pattern_sha256":PATTERN,
             "pattern_config_artifact_sha256":digests["pattern_config"],
             "codebook_sha256":digests["codebook"],
             "controller_config_sha256":digests["controller_config"],
@@ -96,14 +120,17 @@ class FusionABBundleReportTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "bundle"
         self.manifest = make_bundle(self.root)
 
-    def test_valid_bundle_binds_report_to_manifest_and_exact_artifact(self):
+    def test_valid_bundle_binds_report_to_manifest_reference_and_calibration_artifacts(self):
         report = evaluate_bundle(self.root)
-        artifact = next(a for a in self.manifest["artifacts"] if a["role"] == "fusion_ab_input")
+        by_role = {a["role"]:a for a in self.manifest["artifacts"]}
         self.assertTrue(report["bundle_integrity_valid"])
         self.assertEqual(report["bundle_id"], self.manifest["bundle_id"])
-        self.assertEqual(report["fusion_ab_artifact_path"], artifact["path"])
-        self.assertEqual(report["fusion_ab_artifact_sha256"], artifact["sha256"])
-        self.assertEqual(report["recording_sha256"], artifact["sha256"])
+        self.assertEqual(report["fusion_ab_artifact_path"], by_role["fusion_ab_input"]["path"])
+        self.assertEqual(report["fusion_ab_artifact_sha256"], by_role["fusion_ab_input"]["sha256"])
+        self.assertEqual(report["recording_sha256"], by_role["fusion_ab_input"]["sha256"])
+        self.assertEqual(report["reference_artifact_sha256"], REFERENCE_SHA)
+        self.assertEqual(report["imu_calibration_artifact_sha256"], IMU_CAL)
+        self.assertEqual(report["raw_imu_samples_artifact_sha256"], by_role["raw_imu_samples"]["sha256"])
         self.assertEqual(len(report["manifest_sha256"]), 64)
         self.assertEqual(len(report["manifest_file_sha256"]), 64)
         self.assertEqual(len(report["bundle_bound_report_sha256"]), 64)
@@ -120,7 +147,7 @@ class FusionABBundleReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "integrity validation failed"):
             evaluate_bundle(self.root)
 
-    def test_safe_reader_rejects_symlink_artifact_and_byte_mutation(self):
+    def test_safe_reader_rejects_symlink_artifact(self):
         artifact = next(a for a in self.manifest["artifacts"] if a["role"] == "fusion_ab_input")
         target = self.root / artifact["path"]
         raw = target.read_bytes()
@@ -140,6 +167,17 @@ class FusionABBundleReportTests(unittest.TestCase):
         second = evaluate_bundle(self.root)
         self.assertNotEqual(first["manifest_sha256"], second["manifest_sha256"])
         self.assertNotEqual(first["bundle_bound_report_sha256"], second["bundle_bound_report_sha256"])
+
+    def test_revision_and_reference_artifact_mismatches_are_rejected(self):
+        artifact = next(a for a in self.manifest["artifacts"] if a["role"] == "reference_orientations")
+        path = self.root / artifact["path"]
+        path.write_bytes(b'{"schema_version":1,"clock_domain":"imu-clock","poses":[]}') 
+        manifest = json.loads((self.root / MANIFEST_NAME).read_text(encoding="utf-8"))
+        artifact["size_bytes"] = path.stat().st_size
+        artifact["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        (self.root / MANIFEST_NAME).write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "reference digest does not match"):
+            evaluate_bundle(self.root)
 
 
 if __name__ == "__main__":
