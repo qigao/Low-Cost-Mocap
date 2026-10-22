@@ -269,8 +269,8 @@ class ClockMapping:
             self.offset_from_reference_ns + self.slope * relative
         )
         mapped = self.target_reference_ns + mapped_relative
-        if not math.isfinite(mapped) or mapped < _MIN_I64 or mapped > _MAX_I64:
-            raise ValueError("mapped timestamp exceeds signed 64-bit range")
+        if not math.isfinite(mapped) or mapped < 0 or mapped > _MAX_I64:
+            raise ValueError("mapped timestamp exceeds nonnegative signed 64-bit range")
         return int(round(mapped))
 
 
