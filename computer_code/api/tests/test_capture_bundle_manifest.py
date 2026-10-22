@@ -23,6 +23,7 @@ ROLES = (
     "independent_marker_labels",
     "device_metadata",
     "led_controller_log",
+    "pattern_config",
     "codebook",
     "controller_config",
     "calibration_config",
@@ -46,6 +47,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
             "independent_marker_labels": b"independently-reviewed-marker-labels",
             "device_metadata": b"camera-driver-version-record",
             "led_controller_log": b"controller-timecode-output-log",
+            "pattern_config": b"exact-pattern-registry-config",
             "codebook": b"immutable-codebook-config",
             "controller_config": b"immutable-led-controller-config",
             "calibration_config": b"camera-intrinsics-extrinsics-and-pattern-config",
@@ -56,6 +58,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
             "independent_marker_labels": "labels/marker-labels.jsonl",
             "device_metadata": "metadata/devices.json",
             "led_controller_log": "controller/output.log",
+            "pattern_config": "config/pattern-registry.json",
             "codebook": "config/codebook.json",
             "controller_config": "config/controller.json",
             "calibration_config": "config/calibration.json",
@@ -108,7 +111,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
                 ],
             },
             "revisions": {
-                "pattern_sha256": hashlib.sha256(b"pattern-registry").hexdigest(),
+                "pattern_sha256": hashes["pattern_config"],
                 "codebook_sha256": hashes["codebook"],
                 "controller_config_sha256": hashes["controller_config"],
                 "calibration_sha256": hashes["calibration_config"],
@@ -238,6 +241,9 @@ class CaptureBundleManifestTests(unittest.TestCase):
         nested = deepcopy(self.manifest)
         nested["capture"]["hardware_verified"] = True
         variants.append((nested, "unknown hardware_verified"))
+        bad_semantics = deepcopy(self.manifest)
+        bad_semantics["capture"]["timestamp_semantics"] = []
+        variants.append((bad_semantics, "timestamp_semantics"))
         digest = deepcopy(self.manifest)
         digest["artifacts"][0]["sha256"] = "A" * 64
         variants.append((digest, "lowercase hexadecimal SHA-256"))

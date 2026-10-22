@@ -32,6 +32,7 @@ _REQUIRED_ROLES = (
     "independent_marker_labels",
     "device_metadata",
     "led_controller_log",
+    "pattern_config",
     "codebook",
     "controller_config",
     "calibration_config",
@@ -443,6 +444,7 @@ def validate_capture_bundle(
         if artifact["role"] != "supplemental"
     }
     revision_links = (
+        ("pattern_config", "pattern_sha256"),
         ("codebook", "codebook_sha256"),
         ("controller_config", "controller_config_sha256"),
         ("calibration_config", "calibration_sha256"),

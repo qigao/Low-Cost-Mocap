@@ -18,6 +18,7 @@ these artifact roles:
 | `independent_marker_labels` | Independently reviewed physical marker IDs and track labels |
 | `device_metadata` | Device identity, model, dimensions and capture metadata |
 | `led_controller_log` | Controller outputs, trigger epoch and logged timecode |
+| `pattern_config` | Exact pattern-registry/configuration bytes; SHA must match its revision |
 | `codebook` | Exact codebook bytes used during capture |
 | `controller_config` | Exact controller configuration bytes |
 | `calibration_config` | Camera calibration and geometry configuration bytes |
@@ -85,9 +86,10 @@ in 1 MiB chunks; raw video/frame data is never loaded wholesale into memory.
 - Missing, tampered, wrong-size, duplicate or unreadable artifacts make
   `bundle_integrity_valid` false. The validator reports these per artifact
   and exits nonzero.
-- The manifest's pattern SHA is recorded but not authenticated by the bundle
-  itself. Codebook/controller/calibration revision IDs must match the hashes
-  of their corresponding declared artifact bytes.
+- Pattern, codebook, controller and calibration revision IDs must match
+  the hashes of their corresponding declared artifact bytes. A matching hash
+  proves only byte equality with the submitted file, not that the file was
+  actually used by the physical rig.
 - A manifest cannot add a `hardware_verified` field; unknown fields reject.
   Even when every artifact passes, the report always contains
   `hardware_provenance_verified=false`,
