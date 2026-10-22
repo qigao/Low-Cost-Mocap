@@ -102,6 +102,39 @@ class BoardPatternRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "min_visible_markers"):
             BoardPatternRegistry.from_mapping(too_many_required)
 
+    def test_rejects_collinear_three_marker_subset_when_full_board_is_3d(self):
+        candidate = copy.deepcopy(self.data)
+        markers = candidate["boards"]["board_A"]["markers"]
+        markers["100"]["xyz_m"] = [0.0, 0.0, 0.0]
+        markers["101"]["xyz_m"] = [0.14, 0.0, 0.0]
+        markers["102"]["xyz_m"] = [0.07, 0.0, 0.0]
+        cloud = np.asarray(
+            [marker["xyz_m"] for marker in markers.values()], dtype=np.float64
+        )
+        singular = np.linalg.svd(cloud - cloud.mean(axis=0), compute_uv=False)
+        self.assertGreater(singular[1], 1e-10 * singular[0])
+        with self.assertRaisesRegex(ValueError, "degenerate 3-marker visible subset"):
+            BoardPatternRegistry.from_mapping(candidate)
+
+    def test_rejects_nearly_collinear_three_marker_subset(self):
+        candidate = copy.deepcopy(self.data)
+        markers = candidate["boards"]["board_A"]["markers"]
+        markers["100"]["xyz_m"] = [0.0, 0.0, 0.0]
+        markers["101"]["xyz_m"] = [0.14, 0.0, 0.0]
+        markers["102"]["xyz_m"] = [0.07, 1e-10, 0.0]
+        with self.assertRaisesRegex(ValueError, "degenerate 3-marker visible subset"):
+            BoardPatternRegistry.from_mapping(candidate)
+
+    def test_four_marker_minimum_can_use_a_collinear_triple_if_full_fit_is_valid(self):
+        candidate = copy.deepcopy(self.data)
+        markers = candidate["boards"]["board_A"]["markers"]
+        markers["100"]["xyz_m"] = [0.0, 0.0, 0.0]
+        markers["101"]["xyz_m"] = [0.14, 0.0, 0.0]
+        markers["102"]["xyz_m"] = [0.07, 0.0, 0.0]
+        candidate["boards"]["board_A"]["min_visible_markers"] = 4
+        registry = BoardPatternRegistry.from_mapping(candidate)
+        self.assertEqual(registry.boards["board_A"].min_visible_markers, 4)
+
     def test_rejects_reflection_unknown_fields_and_invalid_ids(self):
         reflected = copy.deepcopy(self.data)
         reflected["boards"]["board_A"]["body_from_board"]["rotation"][0] = [-1, 0, 0]
