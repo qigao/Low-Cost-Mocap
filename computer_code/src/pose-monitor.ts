@@ -115,7 +115,7 @@ function drawBodies(bodies: Obj[], trigger: number, stale = false): void {
       visible || '—',
       valid ? vec(body.position_world_from_body, 3) : '—',
       valid ? vec(body.quaternion_world_from_body_xyzw, 4) : '—',
-      text(body?.measurement_age_ns),
+      stale ? 'STALE' : text(body?.measurement_age_ns),
       quality === null ? '—'
         : text(quality.rigid_rms_world_units) + ' / ' + text(quality.reprojection_max_rms_px),
     ]
@@ -174,6 +174,11 @@ function acceptEnvelope(raw: unknown): void {
     session = raw.session_id
     sequence = raw.sequence
     frame = null
+    lastFrameReceivedAt = null
+    displayedBodies = []
+    staleShown = false
+    gaps = 0
+    dropped = 0
     revision = payload.pattern_sha256
     models = candidates
     patternSHA.textContent = revision
