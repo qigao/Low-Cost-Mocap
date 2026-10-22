@@ -40,6 +40,7 @@ join the correct board without distance-only drone-index heuristics.
 - [High-visibility 16-phase candidate](computer_code/api/board-patterns.continuous.example.json)
 - [Every-trigger observability analysis](computer_code/api/BOARD_PATTERNS.md#per-phase-rigid-body-visibility-a-separate-design-gate)
 - [Identity-locked continuous pose prototype](computer_code/api/CONTINUOUS_TRACKING.md)
+- [Atomic multi-camera local track integration and PoseFrame v1 contract](computer_code/api/POSE_STREAM.md)
 - Software-only checker: `cd computer_code/api && python board_pattern_cli.py board-patterns.continuous.example.json --require-every-phase`
 
 **Important:** These are standalone software modules and tests. The legacy

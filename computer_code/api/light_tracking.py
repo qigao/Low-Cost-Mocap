@@ -104,8 +104,40 @@ class BoundedLightTracker:
     def active_track_ids(self) -> tuple[int, ...]:
         return tuple(sorted(self._tracks))
 
+    def staged_copy(self) -> "BoundedLightTracker":
+        """Clone bounded numerical state for atomic multi-camera admission.
+
+        No image buffers or hardware handles are retained. The coordinator
+        publishes this clone only after *all* camera and geometry gates pass.
+        """
+        clone = BoundedLightTracker(
+            camera_id=self.camera_id,
+            max_tracks=self.max_tracks,
+            max_motion_px_per_trigger=self.max_motion,
+            max_missing_triggers=self.max_missing_triggers,
+            ambiguity_margin_fraction=self.ambiguity_margin,
+            minimum_detection_separation_px=self.min_separation,
+            allow_trigger_gaps=self.allow_trigger_gaps,
+        )
+        clone._tracks = {
+            ident: _TrackState(
+                last_xy=state.last_xy.copy(),
+                velocity_per_trigger=state.velocity_per_trigger.copy(),
+                last_observed_trigger=state.last_observed_trigger,
+                observation_count=state.observation_count,
+            )
+            for ident, state in self._tracks.items()
+        }
+        clone._previous_trigger = self._previous_trigger
+        clone._next_track_id = self._next_track_id
+        return clone
+
     def update(
-        self, trigger_id: int, detections_xy: Sequence[Any]
+        self,
+        trigger_id: int,
+        detections_xy: Sequence[Any],
+        *,
+        forbidden_track_ids: Sequence[int] = (),
     ) -> tuple[TrackEvidence, ...]:
         """Associate centroids to local tracks, preserving off-frame erasures.
 
@@ -119,6 +151,13 @@ class BoundedLightTracker:
             if not self.allow_trigger_gaps and trigger != self._previous_trigger + 1:
                 raise ValueError("missing tracker trigger frame")
 
+        forbidden = tuple(
+            _nonnegative_int(ident, "forbidden track ID")
+            for ident in forbidden_track_ids
+        )
+        if len(set(forbidden)) != len(forbidden):
+            raise ValueError("forbidden track IDs must be unique")
+        forbidden_set = set(forbidden)
         positions = [
             _observation_array(xy, self.camera_id) for xy in detections_xy
         ]
@@ -159,6 +198,11 @@ class BoundedLightTracker:
             penalty, dtype=np.float64,
         )
         for row, (predicted, gate) in enumerate(zip(predictions, gates)):
+            # A validated temporal code saying OFF forbids the track from
+            # consuming any currently bright detection. Otherwise one LED
+            # can steal another's global identity during an OFF phase.
+            if identifiers[row] in forbidden_set:
+                continue
             for col, xy in enumerate(positions):
                 distance = float(np.linalg.norm(xy - predicted))
                 if np.isfinite(distance) and distance <= gate:

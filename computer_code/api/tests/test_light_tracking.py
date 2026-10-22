@@ -39,6 +39,47 @@ class BoundedLightTrackerTests(unittest.TestCase):
         outputs = tracker.update(101, [[10., 20.], [12., 20.]])
         self.assertEqual(tuple(x.track_id for x in outputs), (0, 1))
 
+    def test_temporally_dark_track_cannot_steal_bright_neighbor(self):
+        tracker = BoundedLightTracker(
+            camera_id=4, max_motion_px_per_trigger=8.,
+            minimum_detection_separation_px=0.0,
+        )
+        tracker.update(100, [(20., 20.), (30., 20.)])
+        # After rapid motion, the lone bright point is closer to track 0.
+        # The active registry says track 0 must be OFF on this phase,
+        # therefore its ID is not allowed to consume this centroid.
+        outputs = tracker.update(
+            101, [(24., 20.)], forbidden_track_ids=[0]
+        )
+        self.assertIsNone(outputs[0].observed_xy)
+        self.assertEqual(outputs[0].missed_triggers, 1)
+        self.assertEqual(outputs[1].observed_xy, (24., 20.))
+        self.assertEqual(tracker.active_track_ids, (0, 1))
+
+    def test_staging_does_not_commit_until_caller_accepts_clone(self):
+        base = BoundedLightTracker(camera_id=2)
+        base.update(100, [(20., 20.)])
+        stage = base.staged_copy()
+        stage.update(101, [(21., 20.)])
+        self.assertEqual(base.last_trigger_id, 100)
+        self.assertEqual(stage.last_trigger_id, 101)
+        self.assertEqual(base.active_track_ids, (0,))
+        with self.assertRaisesRegex(ValueError, "stale"):
+            stage.update(101, [(21., 20.)])
+        # A retry from the original state remains valid.
+        valid = base.staged_copy().update(101, [(20., 20.)])
+        self.assertEqual(valid[0].track_id, 0)
+        self.assertEqual(base.last_trigger_id, 100)
+
+    def test_forbidden_policy_malformed_ids_fail_closed(self):
+        tracker = BoundedLightTracker(camera_id=0)
+        tracker.update(10, [(20., 20.)])
+        for ids in ([True], ["0"], [-1], [0, 0]):
+            with self.subTest(ids=repr(ids)):
+                with self.assertRaises(ValueError):
+                    tracker.update(11, [(21., 20.)], forbidden_track_ids=ids)
+                self.assertEqual(tracker.last_trigger_id, 10)
+
     def test_trigger_gap_rejected_and_missing_tracks_expire(self):
         tracker = BoundedLightTracker(
             camera_id=0, max_missing_triggers=2
