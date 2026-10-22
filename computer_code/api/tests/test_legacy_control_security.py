@@ -1,6 +1,7 @@
 import unittest
 
 from legacy_control_security import (
+    ArmCounterRegistry,
     DEFAULT_ALLOWED_ORIGINS,
     configured_origins,
     legacy_control_peer_allowed,
@@ -48,6 +49,8 @@ class LegacyControlSecurityTests(unittest.TestCase):
         self.assertIn('os.environ.get("MOCAP_BIND_HOST", "127.0.0.1")', index_source)
         self.assertIn("debug=False, use_reloader=False", index_source)
         self.assertNotIn("cors_allowed_origins='*'", index_source)
+        self.assertIn("arm_counter_registry.accept(request.sid, count)", index_source)
+        self.assertIn('@socketio.on("disconnect")', index_source)
 
     def test_arm_payload_requires_exact_boolean_vector_and_metadata(self):
         self.assertEqual(
@@ -69,6 +72,28 @@ class LegacyControlSecurityTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(ValueError):
                     validate_arm_payload(payload)
+
+    def test_arm_counter_registry_rejects_replays_and_bounds_clients(self):
+        registry = ArmCounterRegistry(max_clients=2)
+        self.assertTrue(registry.accept("sid-a", 0))
+        self.assertTrue(registry.accept("sid-a", 1))
+        self.assertFalse(registry.accept("sid-a", 1))
+        self.assertFalse(registry.accept("sid-a", 0))
+        self.assertFalse(registry.accept("sid-a", True))
+        self.assertTrue(registry.accept("sid-b", 5))
+        self.assertFalse(registry.accept("sid-c", 0))
+        self.assertEqual(len(registry), 2)
+        registry.discard("sid-a")
+        self.assertTrue(registry.accept("sid-c", 0))
+        self.assertEqual(len(registry), 2)
+
+    def test_arm_counter_registry_rejects_invalid_client_ids(self):
+        registry = ArmCounterRegistry()
+        for client_id in (None, "", 3, True):
+            with self.subTest(client_id=client_id):
+                self.assertFalse(registry.accept(client_id, 0))
+        with self.assertRaises(ValueError):
+            ArmCounterRegistry(max_clients=0)
 
     def test_pid_payload_rejects_bad_shape_nonfinite_and_out_of_range_values(self):
         valid = ["1", "0", "0", "1.5", "0", "0", "0.3", "0.1", "0.05", "0.2", "0.03", "0.05", "0.3", "0.1", "0.05", "28", "-0.035"]
