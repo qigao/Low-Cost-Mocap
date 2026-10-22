@@ -31,7 +31,10 @@ def _valid_pose_rotation(raw: object, board_id: str) -> np.ndarray:
 
 
 def _pose_xyz(raw: object, board_id: str) -> list[float]:
-    xyz = np.asarray(raw, dtype=np.float64)
+    try:
+        xyz = np.asarray(raw, dtype=np.float64)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{board_id} pose translation must be finite xyz") from exc
     if xyz.shape != (3,) or not np.isfinite(xyz).all():
         raise ValueError(f"{board_id} pose translation must be finite xyz")
     return [float(v) for v in xyz]
@@ -193,14 +196,34 @@ def pose_frame_to_dict(
             )
             position = _pose_xyz(pose.translation_world_from_body, board_id)
             board_position = _pose_xyz(pose.translation_world_from_board, board_id)
-            if not set(pose.marker_ids).issubset(set(seen)):
-                raise ValueError("pose includes unobserved marker identity")
+            board_model = registry.boards[board_id]
+            R_expected_body = R_board @ board_model.rotation_body_from_board.T
+            t_expected_body = (
+                np.asarray(board_position)
+                - R_expected_body @ board_model.translation_body_from_board_m
+            )
+            if (
+                not np.allclose(R_body, R_expected_body, atol=1e-7, rtol=0)
+                or not np.allclose(position, t_expected_body, atol=1e-7, rtol=0)
+            ):
+                raise ValueError("body pose disagrees with registered board mounting transform")
+            pose_marker_ids = tuple(
+                _nonnegative_int(x, "pose marker_id") for x in pose.marker_ids
+            )
+            if (
+                len(set(pose_marker_ids)) != len(pose_marker_ids)
+                or not set(pose_marker_ids).issubset(set(seen))
+            ):
+                raise ValueError("pose includes duplicate or unobserved marker identity")
             quality = {}
             for label, number in (
                 ("rigid_rms_world_units", pose.rigid_rms_error),
                 ("reprojection_max_rms_px", pose.reprojection_max_rms_px),
             ):
-                numeric = float(number)
+                try:
+                    numeric = float(number)
+                except (OverflowError, TypeError, ValueError) as exc:
+                    raise ValueError(f"invalid {label} metric") from exc
                 if not np.isfinite(numeric) or numeric < 0:
                     raise ValueError(f"invalid {label} metric")
                 quality[label] = numeric

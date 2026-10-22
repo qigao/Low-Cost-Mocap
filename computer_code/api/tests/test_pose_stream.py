@@ -35,7 +35,10 @@ class PoseStreamTests(unittest.TestCase):
             rotation_world_from_board=self.R,
             translation_world_from_board=np.array([0.2, 0.1, 1.2]),
             rotation_world_from_body=self.R,
-            translation_world_from_body=np.array([0.22, 0.11, 1.21]),
+            translation_world_from_body=(
+                np.array([0.2, 0.1, 1.2])
+                - self.R @ self.registry.boards["board_A"].translation_body_from_board_m
+            ),
             rigid_rms_error=0.001,
             reprojection_max_rms_px=0.05,
             metric_scale_validated=False,
@@ -97,7 +100,12 @@ class PoseStreamTests(unittest.TestCase):
         self.assertEqual(a["tracking_status"], "TRACKING")
         self.assertEqual(a["visible_marker_ids"], [100, 101, 102])
         self.assertEqual(a["excluded_marker_ids"], [103])
-        self.assertEqual(a["position_world_from_body"], [0.22, 0.11, 1.21])
+        np.testing.assert_allclose(
+            a["position_world_from_body"],
+            np.array([0.2, 0.1, 1.2])
+            - self.R @ self.registry.boards["board_A"].translation_body_from_board_m,
+            atol=1e-12,
+        )
         self.assertAlmostEqual(sum(q * q for q in a["quaternion_world_from_body_xyzw"]), 1.)
         self.assertAlmostEqual(a["quaternion_world_from_body_xyzw"][2], np.sin(0.2))
         self.assertGreater(a["quaternion_world_from_body_xyzw"][3], 0.)
@@ -155,6 +163,12 @@ class PoseStreamTests(unittest.TestCase):
             ))),
             replace(status, outcome=replace(status.outcome, pose=replace(
                 status.outcome.pose, rotation_world_from_body=np.diag([-1., 1., 1.])
+            ))),
+            replace(status, outcome=replace(status.outcome, pose=replace(
+                status.outcome.pose, translation_world_from_body=np.array([999., 0., 0.])
+            ))),
+            replace(status, outcome=replace(status.outcome, pose=replace(
+                status.outcome.pose, rigid_rms_error=10**1000
             ))),
         ]
         for value in malformed:
