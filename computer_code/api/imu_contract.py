@@ -40,6 +40,18 @@ def _nonempty_text(value: object, name: str) -> str:
     return value.strip()
 
 
+def _finite_real(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(f"{name} must be a finite real number")
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite real number") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be a finite real number")
+    return result
+
+
 def _vector3(value: object, name: str) -> tuple[float, float, float]:
     if not isinstance(value, (tuple, list)) or len(value) != 3:
         raise ValueError(f"{name} must contain exactly three real values")
@@ -225,10 +237,22 @@ class ClockMapping:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(float(value)):
                 raise ValueError(f"{name} must be finite")
-        if self.slope <= 0 or self.max_residual_ns < 0 or self.max_drift_ppm < 0:
-            raise ValueError("clock mapping slope and limits are invalid")
-        if self.observed_max_residual_ns < 0 or abs(self.drift_ppm) > self.max_drift_ppm:
-            raise ValueError("clock mapping fit exceeds its declared drift bound")
+        if (
+            self.slope <= 0
+            or self.max_residual_ns < 0
+            or self.max_drift_ppm < 0
+            or self.observed_max_residual_ns < 0
+            or self.observed_max_residual_ns > self.max_residual_ns
+            or abs(self.drift_ppm) > self.max_drift_ppm
+            or self.anchor_count < 3
+            or self.source_min_ns > self.source_reference_ns
+            or self.source_reference_ns > self.source_max_ns
+            or self.source_min_ns > self.source_max_ns
+        ):
+            raise ValueError("clock mapping fit or declared bounds are invalid")
+        expected_drift_ppm = (self.slope - 1.0) * 1_000_000.0
+        if abs(expected_drift_ppm - self.drift_ppm) > 1e-6:
+            raise ValueError("clock mapping drift metadata disagrees with slope")
         if not isinstance(self.mapping_sha256, str) or len(self.mapping_sha256) != 64 or any(c not in "0123456789abcdef" for c in self.mapping_sha256):
             raise ValueError("mapping_sha256 must be lowercase SHA-256")
 
@@ -277,12 +301,12 @@ def fit_clock_mapping(
         raise ValueError("clock anchors must come from declared hardware sync pulses")
     if any(anchor.event_id for anchor in anchors) and len({a.event_id for a in anchors if a.event_id}) != len([a for a in anchors if a.event_id]):
         raise ValueError("clock anchor event IDs must be unique")
-    drift_limit = float(max_drift_ppm)
-    residual_limit = float(max_residual_ns)
-    if not math.isfinite(drift_limit) or drift_limit < 0:
-        raise ValueError("max_drift_ppm must be finite and nonnegative")
-    if not math.isfinite(residual_limit) or residual_limit < 0:
-        raise ValueError("max_residual_ns must be finite and nonnegative")
+    drift_limit = _finite_real(max_drift_ppm, "max_drift_ppm")
+    residual_limit = _finite_real(max_residual_ns, "max_residual_ns")
+    if drift_limit < 0:
+        raise ValueError("max_drift_ppm must be nonnegative")
+    if residual_limit < 0:
+        raise ValueError("max_residual_ns must be nonnegative")
     extrapolation = _nonnegative_int(max_extrapolation_ns, "max_extrapolation_ns")
     min_span = _nonnegative_int(min_anchor_span_ns, "min_anchor_span_ns")
     if min_span < 1:
