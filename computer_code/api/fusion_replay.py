@@ -129,7 +129,6 @@ class FusionReplayConfig:
     @property
     def config_sha256(self) -> str:
         data = asdict(self)
-        data["clock_mapping"] = asdict(self.clock_mapping)
         return sha256(_canonical(data).encode("utf-8")).hexdigest()
 
 
@@ -176,6 +175,7 @@ def replay_fusion_events(
     *,
     max_events: int = 100_000,
     max_input_bytes: int = 64_000_000,
+    max_output_bytes: int = 64_000_000,
 ) -> FusionReplayResult:
     """Replay ordered events transactionally; any error raises with no result."""
     if not isinstance(config, FusionReplayConfig):
@@ -186,8 +186,12 @@ def replay_fusion_events(
         raise ValueError("max_events must be in 1..1000000")
     if type(max_input_bytes) is not int or not 1 <= max_input_bytes <= _MAX_BYTES:
         raise ValueError("max_input_bytes must be in 1..256000000")
+    if not events:
+        raise ValueError("fusion replay requires at least one event")
     if len(events) > max_events:
         raise ValueError("fusion replay event capacity exceeded")
+    if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= _MAX_BYTES:
+        raise ValueError("max_output_bytes must be in 1..256000000")
     normalized = []
     for expected_index, event in enumerate(events):
         if not isinstance(event, FusionReplayEvent):
@@ -211,6 +215,8 @@ def replay_fusion_events(
         states.append(state)
     output_packet = [fused_attitude_state_to_dict(item) for item in states]
     output_json = _canonical(output_packet)
+    if len(output_json.encode("utf-8")) > max_output_bytes:
+        raise ValueError("fusion replay output byte capacity exceeded")
     return FusionReplayResult(
         config_sha256=config.config_sha256,
         input_sha256=sha256(input_json.encode("utf-8")).hexdigest(),
