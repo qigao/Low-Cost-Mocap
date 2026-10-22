@@ -99,6 +99,23 @@ class FusedAttitudeStreamTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     validate(item)
 
+    def test_rejects_status_source_mismatch_and_publishable_state_without_optical_seed(self):
+        payload = fused_attitude_state_to_dict(state())
+        payload["source"] = "IMU_PROPAGATED"
+        with self.assertRaisesRegex(ValueError, "TRACKING requires"):
+            validate(payload)
+        payload = fused_attitude_state_to_dict(state(status="DEGRADED", timestamp=20, optical_timestamp=10))
+        payload["source"] = "OPTICAL_CORRECTED"
+        with self.assertRaisesRegex(ValueError, "DEGRADED requires"):
+            validate(payload)
+        payload = fused_attitude_state_to_dict(state(status="LOST", timestamp=20, optical_timestamp=None, frame_id=None))
+        payload["status"] = "DEGRADED"
+        payload["source"] = "IMU_PROPAGATED"
+        payload["quaternion_world_from_body_xyzw"] = [0, 0, 0, 1]
+        payload["attitude_variance_rad2"] = 0.1
+        with self.assertRaisesRegex(ValueError, "requires an optical seed"):
+            validate(payload)
+
     def test_rejects_digest_age_position_and_timestamp_regression(self):
         payload = fused_attitude_state_to_dict(state(timestamp=20, optical_timestamp=10))
         cases = [
