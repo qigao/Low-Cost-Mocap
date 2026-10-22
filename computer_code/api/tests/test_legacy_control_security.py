@@ -54,6 +54,16 @@ class LegacyControlSecurityTests(unittest.TestCase):
             ["https://mocap.example", "http://localhost:3000"],
         )
 
+    def test_trajectory_planning_route_is_loopback_only(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "index.py").read_text(encoding="utf-8")
+        start = source.index('@app.route("/api/trajectory-planning"')
+        end = source.index("\ndef plan_trajectory(", start + 1)
+        handler = source[start:end]
+        self.assertIn("@loopback_only_http_route", handler)
+        self.assertLess(handler.index("@loopback_only_http_route"), handler.index("def trajectory_planning_api("))
+
     def test_legacy_serial_handlers_and_server_defaults_use_guard(self):
         from pathlib import Path
 
