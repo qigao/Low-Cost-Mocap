@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import threading
 from urllib.parse import urlsplit
 
 
@@ -137,3 +138,40 @@ def validate_trim_payload(data: object) -> tuple[int, list[int]]:
     if any(abs(v) > MAX_ABS_TRIM_PARAMETER for v in values):
         raise ValueError("trim parameter exceeds configured numeric bounds")
     return index, values
+
+class ArmCounterRegistry:
+    """Bounded per-connection monotonic counters to reject replayed arm events."""
+
+    def __init__(self, max_clients: int = 64) -> None:
+        if type(max_clients) is not int or max_clients < 1:
+            raise ValueError("max_clients must be a positive integer")
+        self._max_clients = max_clients
+        self._last_by_client: dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def accept(self, client_id: object, count: object) -> bool:
+        if not isinstance(client_id, str) or not client_id:
+            return False
+        if type(count) is not int or count < 0:
+            return False
+        with self._lock:
+            previous = self._last_by_client.get(client_id)
+            if previous is None:
+                if len(self._last_by_client) >= self._max_clients:
+                    return False
+                self._last_by_client[client_id] = count
+                return True
+            if count <= previous:
+                return False
+            self._last_by_client[client_id] = count
+            return True
+
+    def discard(self, client_id: object) -> None:
+        if not isinstance(client_id, str) or not client_id:
+            return
+        with self._lock:
+            self._last_by_client.pop(client_id, None)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._last_by_client)
