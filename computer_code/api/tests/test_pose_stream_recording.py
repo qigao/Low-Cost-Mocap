@@ -142,9 +142,15 @@ class JournalTests(unittest.TestCase):
         output=BoundedPoseStreamJournal.from_jsonl(j.jsonl())
         self.assertEqual(output.statistics.recorded_messages,2)
 
+        # Measure the actual canonical JSONL line (including the
+        # integrity-chain record metadata), then set the cap exactly one
+        # byte below it. Default-spaced json.dumps(asset) is not the
+        # correct journal wire-size oracle.
+        probe=BoundedPoseStreamJournal()
+        probe.append(asset)
+        exact_record_bytes=probe.statistics.recorded_bytes
         tiny=BoundedPoseStreamJournal(
-            max_messages=100,
-            max_bytes=len((json.dumps(asset)).encode())+100,
+            max_messages=100, max_bytes=exact_record_bytes-1,
         )
         with self.assertRaisesRegex(ValueError, "byte capacity"):
             tiny.append(asset)
