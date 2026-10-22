@@ -117,7 +117,7 @@ class OpticalIMUFusionState:
         _s(self.body_id,"body_id"); _s(self.imu_id,"imu_id"); _s(self.clock_domain,"clock domain")
         _t(self.timestamp_ns,"fusion timestamp")
         if self.status not in {"TRACKING","DEGRADED","LOST"}: raise ValueError("invalid fusion status")
-        if self.source not in {"OPTICAL_CORRECTED","IMU_PROPAGATED","LOST"}: raise ValueError("invalid fusion source")
+        if self.source not in {"OPTICAL_CORRECTED","OPTICAL_CORRECTED_WITH_ALIGNMENT","IMU_PROPAGATED","LOST"}: raise ValueError("invalid fusion source")
         if self.status=="LOST" and self.source!="LOST": raise ValueError("LOST state must use LOST source")
         if self.status=="LOST":
             if self.quaternion_world_from_body_xyzw is not None or self.attitude_variance_rad2 is not None: raise ValueError("LOST must not publish pose")
