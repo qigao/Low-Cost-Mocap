@@ -570,8 +570,6 @@ def validate_capture_bundle_directory(
     if root.is_symlink():
         raise ValueError("bundle root must not itself be a symlink")
     manifest_path = root / manifest_name
-    if manifest_path.is_symlink():
-        raise ValueError("manifest file must not be a symlink")
     if manifest_name != MANIFEST_NAME:
         raise ValueError("manifest name must be capture-bundle.json")
     # Open once, then validate and read through the same descriptor. A
