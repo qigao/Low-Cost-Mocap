@@ -3,7 +3,7 @@ import unittest
 
 from imu_contract import ClockAnchor, fit_clock_mapping
 from imu_propagation import BoundedIMUAttitudePropagator
-from optical_imu_fusion import OpticalAttitudeMeasurement, OpticalIMUAttitudeFusion
+from optical_imu_fusion import OpticalAttitudeMeasurement, OpticalIMUAttitudeFusion, optical_measurement_from_pose_frame
 
 IMU_SHA = "a" * 64
 PATTERN_SHA = "b" * 64
@@ -133,6 +133,31 @@ class OpticalIMUAttitudeFusionTests(unittest.TestCase):
         recovered = fusion.ingest_optical(optical(1_040_000_000, 11), allow_reseed_after_lost=True)
         self.assertEqual(recovered.status, "TRACKING")
         self.assertIsNotNone(recovered.quaternion_world_from_body_xyzw)
+
+    def test_pose_stream_adapter_rejects_stale_or_invalid_records(self):
+        frame = {
+            "protocol": "low_cost_mocap", "schema_version": 1, "kind": "pose_frame",
+            "hardware_provenance_verified": False, "pattern_sha256": PATTERN_SHA,
+            "calibration_sha256": OPTICAL_CAL_SHA, "frame_id": 10,
+            "latest_exposure_timestamp_ns": 1_010_000_000, "clock_domain": "camera-clock",
+            "rigid_bodies": [{
+                "board_id": "board-A", "tracking_status": "TRACKING", "evidence_kind": "MEASURED",
+                "measurement_trigger_id": 10, "measurement_age_triggers": 0,
+                "last_measurement_exposure_timestamp_ns": 1_010_000_000, "measurement_age_ns": 0,
+                "quaternion_world_from_body_xyzw": [0, 0, 0, 1],
+            }],
+        }
+        measured = optical_measurement_from_pose_frame(
+            frame, body_id="board-A", expected_pattern_sha256=PATTERN_SHA,
+            expected_calibration_sha256=OPTICAL_CAL_SHA,
+        )
+        self.assertEqual(measured.quality, "MEASURED")
+        frame["rigid_bodies"][0]["evidence_kind"] = "INVALID"
+        with self.assertRaisesRegex(ValueError, "stale or not a current"):
+            optical_measurement_from_pose_frame(
+                frame, body_id="board-A", expected_pattern_sha256=PATTERN_SHA,
+                expected_calibration_sha256=OPTICAL_CAL_SHA,
+            )
 
     def test_rejects_mapping_domain_and_stale_pose_quality(self):
         fusion, states = setup_pipeline()
