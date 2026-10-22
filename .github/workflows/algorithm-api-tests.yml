@@ -78,8 +78,11 @@ jobs:
           corepack enable
           yarn install --frozen-lockfile --non-interactive --ignore-scripts
 
-      - name: Build both existing UI and isolated read-only PoseStream page
-        run: yarn build
+      - name: Strictly type-check the isolated read-only monitor
+        run: yarn tsc --project tsconfig.pose-monitor.json --noEmit
+
+      - name: Build standalone observer and existing UI with Vite
+        run: yarn vite build
 
       - name: Verify read-only viewer build output
         run: test -f dist/pose-monitor.html
