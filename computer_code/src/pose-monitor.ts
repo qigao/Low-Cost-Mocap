@@ -444,6 +444,8 @@ startButton.addEventListener('click', () => {
     connectionState(true, 'Authorized viewer connected.')
     stopPoll()
     pollTimer = window.setInterval(() => {
+      // The watchdog runs even when a poll acknowledgement never arrives.
+      hidePoseIfReceiveStreamIsStale()
       client.emit('pose:poll', {}, (reply: unknown) => {
         if (isObject(reply) && reply.ok === true && Array.isArray(reply.messages)) {
           for (const packet of reply.messages) acceptEnvelope(packet)
