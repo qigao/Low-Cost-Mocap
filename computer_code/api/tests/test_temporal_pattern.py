@@ -105,6 +105,13 @@ class TemporalIdentityTests(unittest.TestCase):
         }
         self.codes = TemporalCodebook(self.patterns, max_bit_errors=1)
 
+    def test_codebook_exposes_guaranteed_erasure_budget_for_track_dropout(self):
+        # d_min=4 and one correctable bit error guarantee one additional
+        # erased phase. Particular patterns may decode with more erasures,
+        # but the caller must rely on runtime ambiguity checks for those cases.
+        self.assertEqual(self.codes.minimum_hamming_distance, 4)
+        self.assertEqual(self.codes.guaranteed_erasure_budget, 1)
+
     def test_decode_with_occlusion_noise_and_out_of_order_arrivals(self):
         truth = self.patterns[12]
         samples = [
