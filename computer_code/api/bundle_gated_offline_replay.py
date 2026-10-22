@@ -20,6 +20,7 @@ from capture_bundle_manifest import (
     DEFAULT_MAX_TOTAL_BYTES,
     MANIFEST_NAME,
     MAX_MANIFEST_BYTES,
+    _absolute_bundle_path_without_resolution,
     _open_directory_path_no_follow,
     _read_regular_file_at,
     _validate_capture_bundle_at,
@@ -78,14 +79,10 @@ def run_bundle_gated_offline_replay(
     """Validate and replay from the same anchored bundle-root descriptor."""
     if type(max_replay_input_bytes) is not int or not 1 <= max_replay_input_bytes <= 1_000_000_000:
         raise ValueError("max_replay_input_bytes must be within 1..1000000000")
-    root_input = Path(bundle_root)
+    root = None
     root_fd = None
     try:
-        if root_input.is_symlink():
-            raise ValueError("bundle root must not itself be a symlink")
-        root = root_input.resolve(strict=True)
-        if not root.is_dir():
-            raise ValueError("bundle root must be a directory")
+        root = _absolute_bundle_path_without_resolution(bundle_root)
         root_fd = _open_directory_path_no_follow(root)
         manifest_raw = _read_regular_file_at(
             root_fd,
@@ -181,7 +178,7 @@ def run_bundle_gated_offline_replay(
         # mutation of the bundle root, manifest, or sibling evidence artifacts.
         try:
             final_bundle = validate_capture_bundle_directory(
-                root_input,
+                root,
                 max_artifacts=max_artifacts,
                 max_artifact_bytes=max_artifact_bytes,
                 max_total_bytes=max_total_bytes,
