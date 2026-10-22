@@ -75,7 +75,7 @@ class PatternObservabilityTests(unittest.TestCase):
         self.assertFalse(phase3.supports_nominal_rigid_fit)
         self.assertIn(3, report.boards["board_A"].missing_pose_phases)
         self.assertNotIn(3, report.all_boards_observable_phases)
-        with self.assertRaisesRegex(ValueError, "every phase"):
+        with self.assertRaisesRegex(ValueError, "every trigger phase"):
             require_every_phase_observable(registry)
 
     def test_missing_rois_and_real_hardware_remain_independent_gates(self):
