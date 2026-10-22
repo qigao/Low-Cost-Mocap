@@ -82,7 +82,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
                 "media_type": "application/octet-stream",
             })
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "bundle_id": "rig-session-20261022-001",
             "capture": {
                 "started_at_utc": "2026-10-22T01:00:00Z",
@@ -129,6 +129,8 @@ class CaptureBundleManifestTests(unittest.TestCase):
                 "max_marker_id_switches": 0,
                 "min_labeled_frames": 10_000,
                 "min_labeled_tracks": 12,
+                "min_temporal_trials": 300,
+                "max_wrong_accept_one_sided_upper_95": 0.01,
             },
             "artifacts": artifacts,
         }
@@ -137,6 +139,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
         report = validate_capture_bundle(self.manifest, self.root)
         self.assertTrue(report["bundle_integrity_valid"], report["failures"])
         self.assertEqual(report["qualification"], "capture_bundle_integrity_only")
+        self.assertEqual(report["manifest_schema_version"], 2)
         self.assertEqual(report["artifact_count"], len(ROLES))
         self.assertEqual(report["required_roles_missing"], [])
         self.assertTrue(all(x["status"] == "ok" for x in report["artifact_checks"]))
@@ -152,6 +155,33 @@ class CaptureBundleManifestTests(unittest.TestCase):
             self.assertFalse(report["declarations_not_verified"][key])
         self.assertEqual(len(report["manifest_sha256"]), 64)
         self.assertGreater(report["total_actual_bytes_hashed"], 0)
+
+    def test_v1_manifest_remains_valid_without_v2_statistical_limits(self):
+        legacy = deepcopy(self.manifest)
+        legacy["schema_version"] = 1
+        legacy["acceptance_limits"].pop("min_temporal_trials")
+        legacy["acceptance_limits"].pop("max_wrong_accept_one_sided_upper_95")
+        report = validate_capture_bundle(legacy, self.root)
+        self.assertTrue(report["bundle_integrity_valid"], report["failures"])
+        self.assertEqual(report["manifest_schema_version"], 1)
+        self.assertNotIn(
+            "min_temporal_trials", report["declared_acceptance_limits"]
+        )
+
+    def test_v2_statistical_limits_reject_invalid_probability_and_sample_size(self):
+        for field, value in (
+            ("max_wrong_accept_one_sided_upper_95", -0.01),
+            ("max_wrong_accept_one_sided_upper_95", 1.01),
+            ("max_wrong_accept_one_sided_upper_95", True),
+            ("max_wrong_accept_one_sided_upper_95", float("nan")),
+            ("min_temporal_trials", 0),
+            ("min_temporal_trials", True),
+        ):
+            with self.subTest(field=field, value=repr(value)):
+                candidate = deepcopy(self.manifest)
+                candidate["acceptance_limits"][field] = value
+                with self.assertRaisesRegex(ValueError, field):
+                    validate_capture_bundle(candidate, self.root)
 
     def test_canonical_manifest_sha_does_not_depend_on_key_insertion_order(self):
         first = validate_capture_bundle(self.manifest, self.root)

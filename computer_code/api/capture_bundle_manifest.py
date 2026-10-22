@@ -19,7 +19,7 @@ from typing import Any
 
 
 MANIFEST_NAME = "capture-bundle.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_MANIFEST_BYTES = 1_000_000
 DEFAULT_MAX_ARTIFACTS = 32
 DEFAULT_MAX_ARTIFACT_BYTES = 8 * 1024**3
@@ -167,8 +167,12 @@ def _validate_structure(
         },
         "manifest",
     )
-    if type(manifest["schema_version"]) is not int or manifest["schema_version"] != SCHEMA_VERSION:
-        raise ValueError("schema_version must equal integer 1")
+    if (
+        type(manifest["schema_version"]) is not int
+        or manifest["schema_version"] not in (1, SCHEMA_VERSION)
+    ):
+        raise ValueError("schema_version must equal integer 1 or 2")
+    schema_version = manifest["schema_version"]
     if not isinstance(manifest["bundle_id"], str) or not _BUNDLE_ID.fullmatch(manifest["bundle_id"]):
         raise ValueError("bundle_id must be a safe versioned identifier")
 
@@ -272,15 +276,17 @@ def _validate_structure(
         _sha256(value, "revisions." + key)
 
     acceptance = _object(manifest["acceptance_limits"], "acceptance_limits")
-    _exact_keys(
-        acceptance,
-        {
-            "predeclared_at_utc", "max_exposure_skew_ns",
-            "max_reprojection_rms_px", "max_marker_id_switches",
-            "min_labeled_frames", "min_labeled_tracks",
-        },
-        "acceptance_limits",
-    )
+    acceptance_keys = {
+        "predeclared_at_utc", "max_exposure_skew_ns",
+        "max_reprojection_rms_px", "max_marker_id_switches",
+        "min_labeled_frames", "min_labeled_tracks",
+    }
+    if schema_version >= 2:
+        acceptance_keys.update({
+            "min_temporal_trials",
+            "max_wrong_accept_one_sided_upper_95",
+        })
+    _exact_keys(acceptance, acceptance_keys, "acceptance_limits")
     predeclared = _utc_datetime(
         acceptance["predeclared_at_utc"], "acceptance_limits.predeclared_at_utc"
     )
@@ -297,6 +303,22 @@ def _validate_structure(
     _integer(acceptance["max_marker_id_switches"], "max_marker_id_switches", maximum=1_000_000)
     _integer(acceptance["min_labeled_frames"], "min_labeled_frames", minimum=1, maximum=10_000_000)
     _integer(acceptance["min_labeled_tracks"], "min_labeled_tracks", minimum=1, maximum=1_000_000)
+    if schema_version >= 2:
+        _integer(
+            acceptance["min_temporal_trials"],
+            "min_temporal_trials",
+            minimum=1,
+            maximum=10_000_000,
+        )
+        upper = acceptance["max_wrong_accept_one_sided_upper_95"]
+        if isinstance(upper, bool) or not isinstance(upper, (int, float)):
+            raise ValueError("max_wrong_accept_one_sided_upper_95 must be within 0..1")
+        try:
+            upper_value = float(upper)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError("max_wrong_accept_one_sided_upper_95 must be within 0..1") from exc
+        if not math.isfinite(upper_value) or not 0.0 <= upper_value <= 1.0:
+            raise ValueError("max_wrong_accept_one_sided_upper_95 must be within 0..1")
 
     artifacts = manifest["artifacts"]
     if not isinstance(artifacts, list) or not 1 <= len(artifacts) <= max_artifacts:
@@ -332,6 +354,7 @@ def _validate_structure(
     if duplicate_roles:
         raise ValueError("required artifact roles must be unique: " + ", ".join(duplicate_roles))
     return {
+        "schema_version": schema_version,
         "started_at": started,
         "ended_at": ended,
         "predeclared_at": predeclared,
@@ -681,6 +704,7 @@ def _validate_capture_bundle_at(
     revisions = manifest_obj["revisions"]
     report = {
         "schema_version": 1,
+        "manifest_schema_version": metadata["schema_version"],
         "qualification": "capture_bundle_integrity_only",
         "bundle_id": manifest_obj["bundle_id"],
         "manifest_sha256": manifest_digest,
