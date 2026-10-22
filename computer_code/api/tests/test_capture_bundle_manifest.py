@@ -328,10 +328,10 @@ class CaptureBundleManifestTests(unittest.TestCase):
         os.mkfifo(manifest_path)
         api_dir = Path(__file__).resolve().parents[1]
         script = (
-            "import sys; "
-            "from capture_bundle_manifest import validate_capture_bundle_directory; "
-            "try:\n validate_capture_bundle_directory(sys.argv[1])\n"
-            "except ValueError as exc:\n print(str(exc)); sys.exit(0)\n"
+            "import sys\\n"
+            "from capture_bundle_manifest import validate_capture_bundle_directory\\n"
+            "try:\\n validate_capture_bundle_directory(sys.argv[1])\\n"
+            "except ValueError as exc:\\n print(str(exc)); sys.exit(0)\\n"
             "sys.exit(1)"
         )
         env = os.environ.copy()
