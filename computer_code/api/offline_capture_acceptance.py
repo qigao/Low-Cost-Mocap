@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from math import sqrt
+from math import ceil, sqrt
 from statistics import NormalDist
 from types import MappingProxyType
 from typing import Mapping
@@ -39,8 +39,26 @@ class TriggerReplayReport:
     rejected_batches: int
     reference_gaps: int
     maximum_declared_skew_ns: int | None
+    admitted_exposure_skew_ns_percentiles: Mapping[str, int]
     rejection_reasons: Mapping[str, int]
     hardware_provenance_verified: bool = False
+
+
+def _nearest_rank_skew_percentiles(values: Sequence[int]) -> dict[str, int]:
+    """Summarize admitted exposure skews using the documented nearest-rank rule."""
+    if not values:
+        return {}
+    ordered = sorted(values)
+
+    def rank(fraction: float) -> int:
+        return ordered[max(0, ceil(fraction * len(ordered)) - 1)]
+
+    return {
+        "p50": rank(0.50),
+        "p95": rank(0.95),
+        "p99": rank(0.99),
+        "max": ordered[-1],
+    }
 
 
 def replay_trigger_batches(
@@ -68,6 +86,7 @@ def replay_trigger_batches(
     admitted = 0
     gaps = 0
     maximum = None
+    admitted_skews: list[int] = []
     previous = None
     for record in recordings:
         if not isinstance(record, RecordedFrameBatch):
@@ -95,6 +114,7 @@ def replay_trigger_batches(
             rejected["independent_reference_trigger_mismatch"] += 1
             continue
         admitted += 1
+        admitted_skews.append(batch.exposure_skew_ns)
         if maximum is None or batch.exposure_skew_ns > maximum:
             maximum = batch.exposure_skew_ns
 
@@ -104,6 +124,9 @@ def replay_trigger_batches(
         rejected_batches=len(recordings) - admitted,
         reference_gaps=gaps,
         maximum_declared_skew_ns=maximum,
+        admitted_exposure_skew_ns_percentiles=MappingProxyType(
+            _nearest_rank_skew_percentiles(admitted_skews)
+        ),
         rejection_reasons=MappingProxyType(dict(sorted(rejected.items()))),
         hardware_provenance_verified=False,
     )
