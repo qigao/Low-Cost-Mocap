@@ -24,6 +24,7 @@ class PatternObservabilityTests(unittest.TestCase):
         self.assertEqual(summary.all_boards_observable_phases, (15,))
         self.assertFalse(summary.every_phase_nominally_observable)
         self.assertEqual(summary.min_global_hamming_distance, 8)
+        self.assertEqual(summary.guaranteed_erasure_budget, 5)
         self.assertFalse(summary.hardware_visibility_verified)
         self.assertEqual(summary.boards["board_A"].worst_illuminated_count, 1)
         self.assertEqual(summary.boards["board_B"].worst_illuminated_count, 1)
@@ -36,6 +37,7 @@ class PatternObservabilityTests(unittest.TestCase):
         self.assertTrue(report.every_phase_nominally_observable)
         self.assertEqual(report.all_boards_observable_phases, tuple(range(16)))
         self.assertEqual(report.min_global_hamming_distance, 4)
+        self.assertEqual(report.guaranteed_erasure_budget, 1)
         for board in report.boards.values():
             self.assertEqual(board.missing_pose_phases, ())
             self.assertEqual(board.worst_illuminated_count, 3)
@@ -50,6 +52,7 @@ class PatternObservabilityTests(unittest.TestCase):
         self.assertFalse(report.hardware_visibility_verified)
         info = observability_to_dict(report)
         self.assertEqual(info["all_boards_observable_phases"], list(range(16)))
+        self.assertEqual(info["guaranteed_erasure_budget"], 1)
         self.assertFalse(info["hardware_visibility_verified"])
 
     def test_registry_rejects_collinear_three_marker_subset_before_phase_analysis(self):

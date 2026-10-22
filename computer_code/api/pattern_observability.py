@@ -39,6 +39,7 @@ class PatternObservability:
     """Diagnostic coverage of configured phase-by-phase LED geometry."""
     period_triggers: int
     min_global_hamming_distance: int
+    guaranteed_erasure_budget: int
     max_consecutive_dark_phases_by_marker: Mapping[int, int]
     boards: Mapping[str, BoardObservability]
     all_boards_observable_phases: tuple[int, ...]
@@ -134,6 +135,7 @@ def analyze_pattern_observability(
     return PatternObservability(
         period_triggers=period,
         min_global_hamming_distance=min_distance,
+        guaranteed_erasure_budget=registry.codebook.guaranteed_erasure_budget,
         max_consecutive_dark_phases_by_marker=dark_spans,
         boards=MappingProxyType(boards),
         all_boards_observable_phases=all_full_phases,
@@ -166,6 +168,7 @@ def observability_to_dict(report: PatternObservability) -> dict:
     return {
         "period_triggers": report.period_triggers,
         "min_global_hamming_distance": report.min_global_hamming_distance,
+        "guaranteed_erasure_budget": report.guaranteed_erasure_budget,
         "max_consecutive_dark_phases_by_marker": {
             str(marker): span for marker, span
             in report.max_consecutive_dark_phases_by_marker.items()

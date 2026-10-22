@@ -73,7 +73,7 @@ A predicted state must never be labeled as a fresh optical measurement. Existing
 Reuse the current modules in this order:
 1. Validate synchronized exposure batch and clock domain.
 2. Detect and track local bright LEDs with bounded local IDs.
-3. Decode time codes and admit global marker IDs only from validated code history.
+3. Decode time codes and admit global marker IDs only from validated code history. The codebook exposes its minimum pairwise Hamming distance and guaranteed erasure budget `d_min - 2t - 1` for `t` correctable bit errors; this bound assumes a known trigger epoch and phase.
 4. Associate cross-camera observations, triangulate, reject ambiguous/outlier geometry, and fit registered rigid-body geometry.
 5. Produce an optical pose measurement with timestamp, residuals, support, and calibration revision.
 
