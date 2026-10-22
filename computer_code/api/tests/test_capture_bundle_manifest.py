@@ -2,6 +2,9 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 from io import StringIO
@@ -299,6 +302,27 @@ class CaptureBundleManifestTests(unittest.TestCase):
         manifest_path.symlink_to(target)
         with self.assertRaisesRegex(ValueError, "without following links"):
             validate_capture_bundle_directory(self.root)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO test requires POSIX")
+    def test_directory_manifest_fifo_fails_without_blocking(self):
+        manifest_path = self.root / MANIFEST_NAME
+        os.mkfifo(manifest_path)
+        api_dir = Path(__file__).resolve().parents[1]
+        script = (
+            "import sys; "
+            "from capture_bundle_manifest import validate_capture_bundle_directory; "
+            "try:\\n validate_capture_bundle_directory(sys.argv[1])\\n"
+            "except ValueError as exc:\\n print(str(exc)); sys.exit(0)\\n"
+            "sys.exit(1)"
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(api_dir)
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(self.root)],
+            cwd=api_dir, env=env, capture_output=True, text=True, timeout=3,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("regular file", result.stdout)
 
     def test_directory_manifest_descriptor_enforces_size_cap(self):
         manifest_path = self.root / MANIFEST_NAME
