@@ -71,3 +71,16 @@ The report contains:
 - `hardware_ground_truth_verified: false`.
 
 Do not compare only RMSE. Review match coverage and invalid/lost counts alongside error statistics. A series with missing or invalid optical observations must not be made to look better by silently dropping those outcomes. Synthetic references qualify software behavior only; attach raw, independently sourced hardware recordings and the declared acceptance criteria to HW-05 before making a hardware accuracy claim.
+
+
+## Bundle-bound report for evidence review
+
+For an input stored as the `fusion_ab_input` artifact inside a capture bundle, use:
+
+```sh
+python fusion_ab_bundle_report_cli.py /path/to/capture-bundle > bundle-bound-report.json
+```
+
+The bundle must contain all required capture-bundle roles and exactly one `fusion_ab_input` artifact. The command verifies every declared artifact, securely re-reads the selected role relative to an anchored bundle-root descriptor, and checks its exact size and SHA-256 again before parsing. The output binds the result to the bundle ID, canonical manifest digest, raw manifest-file digest and A/B artifact path/hash.
+
+This verifies integrity relative to the supplied manifest. It does not prove that the manifest is truthful, devices are authentic, timestamps are physical exposure times, or reference labels are independent. All hardware-provenance and hardware-ground-truth flags remain false.
