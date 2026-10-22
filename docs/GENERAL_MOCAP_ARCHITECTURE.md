@@ -114,7 +114,7 @@ Do not select an EKF or factor graph by fashion. First specify state, frames, pr
 | A6 | Optical/IMU fusion vertical slice | Short optical dropout: orientation propagation, uncertainty growth, optical reacquisition correction; optical-only A/B report | **Software-only attitude fusion primitive added in PR #45**; independent-reference A/B qualification and hardware timing remain open |
 | A7 | Versioned fused state output | New schema does not weaken PoseStream v1; consumers can distinguish measured and predicted state | **Merged** — PR #47; additive `fused_attitude_state` validated by independent consumer and journal |
 | A8 | Deterministic capture/replay | Same bundle + same config reproduces state sequence within declared tolerances | **Merged software harness** — PR #49; bounded typed-event replay with config/input/output digests; hardware capture qualification remains open |
-| A9 | Benchmark/qualification | Independent reference, position/orientation error, drift, reacquisition jump, latency percentiles and invalid-output rate | **Partial** — PR #49 provides single-series orientation metrics; PR #50 tracks paired optical-only vs fused comparison; physical reference and latency qualification remain open |
+| A9 | Benchmark/qualification | Independent reference, position/orientation error, drift, reacquisition jump, latency percentiles and invalid-output rate | **Software orientation reporting present** — PR #49 single-series metrics, PR #51 paired optical-only/fused comparison, PR #52 strict offline CLI; physical reference and latency qualification remain open |
 | A10 | Real hardware adapters | Only after HW-01–HW-05 supply independently verifiable evidence; HW-06 remains separate | Blocked on hardware evidence |
 
 ## 7. Validation matrix
@@ -144,6 +144,7 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `optical_imu_fusion.py` | Bounded optical attitude correction over interpolated gyro history, isotropic uncertainty, explicit TRACKING/DEGRADED/LOST states; no position/velocity |
 | `fused_attitude_stream.py` | Additive strict fused-attitude payload and state serializer; existing optical PoseStream v1 remains unchanged |
 | `fusion_replay.py` | Bounded deterministic typed-event replay, canonical digests and quaternion geodesic reference metrics |
+| `fusion_ab_report_cli.py`, `docs/FUSION_AB_REPORT.md` | Strict versioned offline optical-vs-fused report input and machine-readable metrics output |
 | `pose_stream.py`, `pose_stream_broker.py`, `pose_stream_recording.py` | Versioned output, bounded distribution and deterministic recording/replay |
 | `capture_bundle_manifest.py`, `bundle_gated_offline_replay.py` | Evidence integrity and gated offline qualification |
 | `index.py`, legacy serial handlers | Legacy app/controller adapter only; not core state estimation |
