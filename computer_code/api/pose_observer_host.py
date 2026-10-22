@@ -24,7 +24,6 @@ from identity_locked_board_tracker import LockedBoardFrame
 from pose_stream_broker import (
     BoundedPoseStreamPublisher,
     _bounded_positive,
-    flush_to_socketio,
 )
 
 POSE_OBSERVER_NAMESPACE = "/pose-observe"
@@ -136,21 +135,22 @@ class PoseObserverHost:
         with self._lock:
             return len(self.publisher.subscriber_ids)
 
-    def _flush(self, sid: str, *, max_messages: int | None = None) -> int:
-        limit = self._max_dispatch if max_messages is None else max_messages
+    def _drain_poll(self, sid: str) -> list[dict]:
+        """Return a bounded batch in the poll acknowledgement, not async emit.
+
+        Dynamic poses stay in the broker until a client poll, avoiding an
+        unbounded backlog in Socket.IO's outgoing transport queue. At most
+        max_emit_per_dispatch envelopes are returned in one acknowledgement.
+        """
         key = self._subscriber_key(sid)
-        def local_emit(event: str, packet: dict, *, to: str):
-            # Publisher subscription identity is a *normalized hash*;
-            # wire delivery must still address the original Socket.IO SID.
-            if to != key:
-                raise ValueError("observer publisher/subscriber identity mismatch")
-            self.socketio.emit(
-                event, packet, to=sid, namespace=POSE_OBSERVER_NAMESPACE
-            )
-        return flush_to_socketio(
-            self.publisher, key, local_emit,
-            max_messages=limit, event_name=POSE_OBSERVER_EVENT,
-        )
+        packets = []
+        for _ in range(self._max_dispatch):
+            packet = self.publisher.peek_next(key)
+            if packet is None:
+                break
+            packets.append(packet)
+            self.publisher.acknowledge(key, packet["sequence"])
+        return packets
 
     def _install_handlers(self) -> None:
         @self.app.get("/pose-observe/healthz")
@@ -177,9 +177,8 @@ class PoseObserverHost:
                 try:
                     self.publisher.subscribe(key)
                     self._last_poll_ns[sid] = -1
-                    # Only static assets at connection time. Dynamic frames
-                    # must come from a host-side publish_frame invocation.
-                    self._flush(sid, max_messages=1)
+                    # No asynchronous pose emits. The next authorized poll
+                    # receives the static asset as its first acknowledgement.
                 except (ValueError, RuntimeError):
                     if key in self.publisher.subscriber_ids:
                         self.publisher.unsubscribe(key)
@@ -210,10 +209,10 @@ class PoseObserverHost:
                 if last >= 0 and now - last < self._min_poll_ns:
                     return {"ok": False, "error": "rate-limited"}
                 self._last_poll_ns[sid] = now
-                sent = self._flush(sid)
+                packets = self._drain_poll(sid)
                 stats = self.publisher.subscriber_statistics(key)
                 return {
-                    "ok": True, "sent": sent,
+                    "ok": True, "sent": len(packets), "messages": packets,
                     "pending_frames": stats.pending_frames,
                     "dropped_frames": stats.dropped_frames,
                     "session_id": stats.session_id,
@@ -235,12 +234,8 @@ class PoseObserverHost:
         """Host-only restart after a verified camera source reset."""
         with self._lock:
             self.publisher.restart_session()
-            for sid in tuple(self._last_poll_ns):
-                self._flush(sid, max_messages=1)
 
     def replace_pattern_registry(self, registry: BoardPatternRegistry) -> None:
         """Host-only pattern update and mandatory asset resend barrier."""
         with self._lock:
             self.publisher.replace_registry(registry)
-            for sid in tuple(self._last_poll_ns):
-                self._flush(sid, max_messages=1)
