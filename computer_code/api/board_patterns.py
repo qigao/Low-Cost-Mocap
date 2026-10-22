@@ -24,6 +24,45 @@ _MAX_PERIOD = 256
 _MAX_BOARDS = 32
 _MAX_MARKERS = 128
 
+# Dimensionless twice-area / longest-edge-squared threshold. This rejects
+# nearly collinear three-marker subsets independently of board scale.
+_MIN_VISIBLE_TRIANGLE_QUALITY = 1e-6
+
+
+def _validate_three_marker_subsets(cloud: np.ndarray, board_id: str) -> None:
+    """Require every possible three-marker observation to constrain a pose."""
+    count = int(cloud.shape[0])
+    for first_index in range(count - 2):
+        vectors = cloud[first_index + 1:] - cloud[first_index]
+        first_squared = np.einsum("ij,ij->i", vectors, vectors)
+        for second_index in range(vectors.shape[0] - 1):
+            remaining = vectors[second_index + 1:]
+            cross = np.cross(vectors[second_index], remaining)
+            twice_area = np.linalg.norm(cross, axis=1)
+            second_squared = np.einsum("ij,ij->i", remaining, remaining)
+            third_vectors = remaining - vectors[second_index]
+            third_squared = np.einsum("ij,ij->i", third_vectors, third_vectors)
+            longest_edge_squared = np.maximum(
+                np.maximum(first_squared[second_index], second_squared),
+                third_squared,
+            )
+            quality = np.divide(
+                twice_area,
+                longest_edge_squared,
+                out=np.zeros_like(twice_area),
+                where=longest_edge_squared > 0.0,
+            )
+            if (
+                np.any(longest_edge_squared <= 0.0)
+                or not np.isfinite(quality).all()
+                or np.any(quality <= _MIN_VISIBLE_TRIANGLE_QUALITY)
+            ):
+                raise ValueError(
+                    f"board {board_id} has a degenerate 3-marker visible subset"
+                )
+
+
+
 
 def _strict_object(
     raw: object, name: str, required: set[str], optional: set[str] = frozenset()
@@ -182,6 +221,10 @@ class BoardPatternRegistry:
             singular = np.linalg.svd(centered, compute_uv=False)
             if singular[0] == 0 or singular[1] <= 1e-10 * singular[0]:
                 raise ValueError(f"board {board_id} marker geometry is collinear or degenerate")
+            if min_visible == 3:
+                # The full point cloud may be non-collinear while one
+                # three-marker subset is still unusable after occlusion.
+                _validate_three_marker_subsets(cloud, board_id)
             R, t = _body_transform(data.get("body_from_board"))
             boards[board_id] = BoardPattern(
                 board_id, board_type, MappingProxyType(xyz_map),
