@@ -60,6 +60,10 @@ let revision: string | null = null
 let models: Model[] = []
 let gaps = 0
 let dropped = 0
+let lastFrameReceivedAt: number | null = null
+let displayedBodies: Obj[] = []
+let staleShown = false
+const DISPLAY_SILENCE_LIMIT_MS = 1000
 
 function clearCurrent(reason: string): void {
   session = null
@@ -69,6 +73,9 @@ function clearCurrent(reason: string): void {
   models = []
   gaps = 0
   dropped = 0
+  lastFrameReceivedAt = null
+  displayedBodies = []
+  staleShown = false
   frameElement.textContent = '—'
   exposureElement.textContent = '—'
   revisionElement.textContent = '—'
@@ -88,7 +95,7 @@ function clearCurrent(reason: string): void {
   rows.appendChild(blank)
 }
 
-function drawBodies(bodies: Obj[], trigger: number): void {
+function drawBodies(bodies: Obj[], trigger: number, stale = false): void {
   rows.replaceChildren()
   for (const model of models) {
     const body = bodies.find(b => b.board_id === model.board_id)
@@ -103,7 +110,8 @@ function drawBodies(bodies: Obj[], trigger: number): void {
     const quality = valid && isObject(body.quality) ? body.quality : null
     const content = [
       model.board_id,
-      valid ? 'MEASURED' : text(body?.evidence_kind ?? 'INVALID'),
+      stale ? 'STALE · no recent source frame'
+        : valid ? 'MEASURED' : text(body?.evidence_kind ?? 'INVALID'),
       visible || '—',
       valid ? vec(body.position_world_from_body, 3) : '—',
       valid ? vec(body.quaternion_world_from_body_xyzw, 4) : '—',
@@ -120,6 +128,15 @@ function drawBodies(bodies: Obj[], trigger: number): void {
     })
     rows.appendChild(row)
   }
+}
+
+function hidePoseIfReceiveStreamIsStale(): void {
+  if (lastFrameReceivedAt === null || staleShown) return
+  if (performance.now() - lastFrameReceivedAt <= DISPLAY_SILENCE_LIMIT_MS) return
+  staleShown = true
+  drawBodies(displayedBodies, -1, true)
+  boardSummary.textContent = 'No new PoseFrame for over 1 second · cached poses hidden'
+  message.textContent = 'STALE stream: last positions are hidden until a new source frame arrives.'
 }
 
 function acceptEnvelope(raw: unknown): void {
@@ -193,6 +210,9 @@ function acceptEnvelope(raw: unknown): void {
   if (sequence !== null) gaps += raw.sequence - sequence - 1
   sequence = raw.sequence
   frame = payload.frame_id
+  displayedBodies = bodies
+  lastFrameReceivedAt = performance.now()
+  staleShown = false
   frameElement.textContent = String(frame)
   exposureElement.textContent = (
     payload.latest_exposure_timestamp_ns > Number.MAX_SAFE_INTEGER ? '≈ ' : ''
@@ -274,10 +294,12 @@ startButton.addEventListener('click', () => {
     stopPoll()
     pollTimer = window.setInterval(() => {
       client.emit('pose:poll', {}, (reply: unknown) => {
-        if (!isObject(reply) || reply.ok !== true || !Array.isArray(reply.messages)) return
-        for (const packet of reply.messages) acceptEnvelope(packet)
-        if (isNonnegativeInt(reply.dropped_frames)) dropped = reply.dropped_frames
-        dropsElement.textContent = String(dropped) + ' / ' + String(gaps)
+        if (isObject(reply) && reply.ok === true && Array.isArray(reply.messages)) {
+          for (const packet of reply.messages) acceptEnvelope(packet)
+          if (isNonnegativeInt(reply.dropped_frames)) dropped = reply.dropped_frames
+          dropsElement.textContent = String(dropped) + ' / ' + String(gaps)
+        }
+        hidePoseIfReceiveStreamIsStale()
       })
     }, 250)
   })
