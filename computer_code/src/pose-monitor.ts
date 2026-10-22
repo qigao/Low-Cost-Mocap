@@ -272,7 +272,7 @@ startButton.addEventListener('click', () => {
       })
     }, 250)
   })
-  client.on('mocap:pose-stream', acceptEnvelope)
+  client.on(STREAM_EVENT, acceptEnvelope)
   client.on('connect_error', () => {
     clearCurrent('Authentication or local transport failed')
     connectionState(false, 'Local observer connection failed or token rejected.')
