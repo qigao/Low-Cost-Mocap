@@ -61,7 +61,11 @@ denied unless `MOCAP_ENABLE_LEGACY_FLIGHT_CONTROL=1` is explicitly set, and
 even then only loopback clients are authorized. Setting `MOCAP_BIND_HOST` to
 a LAN address does **not** authorize remote flight-control commands. Remote
 control requires a separately reviewed authentication design; do not expose
-this legacy controller to untrusted networks.
+this legacy controller to untrusted networks. Serial command payloads are also
+checked for exact vector lengths, valid drone indexes, finite numbers and broad
+sanity caps (PID magnitude <= 1000, setpoint coordinate magnitude <= 100 m,
+trim integer magnitude <= 1000). These are input-safety caps, **not** qualified
+flight-envelope limits; confirm hardware units/ranges before any live use.
 
 ## Documentation
 The documentation for this project is admittedly pretty lacking, if anyone would like to put type definitions in the Python code that would be amazing and probably go a long way to helping the readability of the code. Feel free to also use the [discussion](https://github.com/jyjblrd/Mocap-Drones/discussions) tab to ask questions.
