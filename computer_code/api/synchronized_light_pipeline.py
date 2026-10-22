@@ -234,9 +234,19 @@ class SynchronizedLocalLightPipeline:
                         trace=tuple(history),
                     ))
 
+        # Actual BoundedLightTracker retirement (not a temporary OFF phase)
+        # invalidates the old lock. A new local track can only inherit the
+        # same global marker after its own full-cycle code admission.
+        retired_local_tracks = tuple(
+            (lock.camera_id, lock.local_track_id)
+            for lock in tracker.active_identity_locks
+            if lock.local_track_id
+            not in stage_local[lock.camera_id].active_track_ids
+        )
         result = tracker.advance(
             frames, all_stamped,
             revalidation_traces=candidates,
+            retired_local_tracks=retired_local_tracks,
             controller_config_sha256=controller_config_sha256,
         )
         # Only publish local tracker and bounded history after the global

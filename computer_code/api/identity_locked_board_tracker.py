@@ -271,6 +271,7 @@ class IdentityLockedBoardTracker:
         tracked_roi: Sequence[StampedTrackROI],
         *,
         revalidation_traces: Sequence[LocalTrackCycle] = (),
+        retired_local_tracks: Sequence[tuple[int, int]] = (),
         controller_config_sha256: str | None = None,
     ) -> LockedBoardFrame:
         """Process one real exposure batch, atomically, with no pose caching.
@@ -348,6 +349,24 @@ class IdentityLockedBoardTracker:
                 raise ValueError("duplicate camera-local track in current frame")
             seen_roi[key] = entry
 
+        # A local tracker can certify that a physical camera-local track
+        # has expired. This is different from temporarily missing a blink:
+        # retirement revokes only that old local ID, enabling a *new* ID to
+        # reclaim the global LED identity solely after full code re-decoding.
+        retired_keys: set[tuple[int, int]] = set()
+        for retired in retired_local_tracks:
+            if not isinstance(retired, (tuple, list)) or len(retired) != 2:
+                raise ValueError("retired local track keys must be (camera_id, track_id)")
+            key = (
+                _nonnegative_int(retired[0], "retired camera_id"),
+                _nonnegative_int(retired[1], "retired local track_id"),
+            )
+            if key[0] not in self.camera_ids or key in retired_keys:
+                raise ValueError("retired local track has unknown or duplicate identity")
+            if key in seen_roi:
+                raise ValueError("retired local track still has current ROI evidence")
+            retired_keys.add(key)
+
         stage = {
             key: lock for key, lock in self._locks.items()
             if batch.trigger_id - lock.confirmed_trigger_id
@@ -357,6 +376,10 @@ class IdentityLockedBoardTracker:
             lock.marker_id for key, lock in self._locks.items()
             if key not in stage
         ]
+        for key in retired_keys:
+            old = stage.pop(key, None)
+            if old is not None:
+                invalidated.append(old.marker_id)
         newly_confirmed = []
         seen_revalidations = set()
         for candidate in revalidation_traces:

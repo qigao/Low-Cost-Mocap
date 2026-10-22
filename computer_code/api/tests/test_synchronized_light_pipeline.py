@@ -215,6 +215,36 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
         locked = {x.local_track_id for x in last.active_locks if x.camera_id == 2}
         self.assertTrue((new_ids - old_camera_ids).isdisjoint(locked))
 
+    def test_expired_real_track_revokes_old_identity_before_new_birth(self):
+        self.bootstrap()
+        old_camera_ids = set(self.pipeline.active_local_track_ids(2))
+        old_locked = {
+            x.local_track_id for x in self.identity.active_identity_locks
+            if x.camera_id == 2
+        }
+        self.assertEqual(old_camera_ids, old_locked)
+        for trigger in range(1016, 1020):
+            frames, images, detections = self.frames_and_pixels(
+                trigger, empty_cameras=frozenset((2,))
+            )
+            result = self.pipeline.process(frames, images, detections)
+        self.assertTrue(all(
+            lock.camera_id != 2 for lock in result.active_locks
+        ))
+        self.assertGreater(len(result.invalidated_marker_ids), 0)
+        # Reappearing spots create fresh local IDs, but cannot immediately
+        # adopt the previously retired global marker IDs.
+        frames, images, detections = self.frames_and_pixels(1020)
+        result = self.pipeline.process(frames, images, detections)
+        fresh_local_ids = set(self.pipeline.active_local_track_ids(2))
+        self.assertTrue(fresh_local_ids - old_camera_ids)
+        self.assertTrue(all(
+            lock.camera_id != 2 for lock in result.active_locks
+        ))
+        self.assertTrue(all(
+            x.state == "TRACKING" for x in result.boards.values()
+        ))
+
     def test_bad_source_timestamp_and_wrong_config_roll_back(self):
         self.bootstrap()
         frames, images, detections = self.frames_and_pixels(1016)
