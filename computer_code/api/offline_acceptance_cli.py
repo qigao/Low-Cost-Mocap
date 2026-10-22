@@ -140,6 +140,10 @@ def evaluate_document(document: object) -> dict[str, Any]:
             "admitted_exposure_skew_ns_percentiles": dict(
                 summary.admitted_exposure_skew_ns_percentiles
             ),
+            "comparable_exposure_skew_batch_count": summary.comparable_exposure_skew_batch_count,
+            "comparable_exposure_skew_ns_percentiles": dict(
+                summary.comparable_exposure_skew_ns_percentiles
+            ),
             "rejection_reasons": dict(summary.rejection_reasons),
             "hardware_provenance_verified": False,
         }
