@@ -177,66 +177,231 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             ))
             self.assertFalse(as_json["hardware_provenance_verified"])
 
-    def test_atomic_rollback_of_camera_detection_collision(self):
+    def test_duplicate_camera_detections_quarantine_only_that_camera(self):
         self.bootstrap()
         frames, images, detections = self.frames_and_pixels(1016)
-        good = tuple(self.pipeline.active_local_track_ids(c) for c in self.cameras)
-        count = self.pipeline.retained_roi_sample_count
+        original_5 = self.pipeline.active_local_track_ids(5)
         bad = dict(detections)
         bad[5] = list(bad[5])
         bad[5].append(bad[5][0])  # duplicate/overlapping detector centroids
-        with self.assertRaisesRegex(ValueError, "overlapping"):
-            self.pipeline.process(frames, images, bad)
-        self.assertEqual(self.identity.last_trigger_id, 1015)
-        self.assertEqual(count, self.pipeline.retained_roi_sample_count)
-        self.assertEqual(good, tuple(
-            self.pipeline.active_local_track_ids(c) for c in self.cameras
-        ))
-        accepted = self.pipeline.process(frames, images, detections)
-        self.assertEqual(accepted.trigger_id, 1016)
-        self.assertTrue(all(x.state == "TRACKING" for x in accepted.boards.values()))
 
-    def test_crossing_near_tie_fails_without_any_camera_state_advance(self):
+        # A rejected local assignment MUST consume this exposure and
+        # invalidate all of camera 5's old LED identities. A pure rollback
+        # would risk using their stale IDs on the next trigger.
+        frame = self.pipeline.process(frames, images, bad)
+        self.assertEqual(frame.trigger_id, 1016)
+        self.assertEqual(self.identity.last_trigger_id, 1016)
+        self.assertEqual(frame.quarantined_camera_ids, (5,))
+        self.assertEqual(self.pipeline.quarantined_camera_ids, (5,))
+        self.assertEqual(self.pipeline.active_local_track_ids(5), ())
+        self.assertGreater(len(original_5), 0)
+        self.assertFalse(any(
+            lock.camera_id == 5 for lock in frame.active_locks
+        ))
+        self.assertTrue(all(
+            b.evidence_kind == "MEASURED" for b in frame.boards.values()
+        ))
+        emitted = pose_frame_to_dict(frame, self.registry)
+        self.assertEqual(emitted["quarantined_camera_ids"], [5])
+
+        next_frame = self.process(1017)
+        self.assertEqual(next_frame.quarantined_camera_ids, (5,))
+        self.assertTrue(self.pipeline.active_local_track_ids(5))
+        self.assertFalse(any(
+            lock.camera_id == 5 for lock in next_frame.active_locks
+        ))
+
+    def test_crossing_near_tie_forces_persistent_camera_quarantine(self):
         self.bootstrap()
         frames, images, detections = self.frames_and_pixels(1016)
-        original = tuple(
-            self.pipeline.active_local_track_ids(camera)
-            for camera in self.cameras
+        old_ids = self.pipeline.active_local_track_ids(2)
+        old_locks = tuple(
+            lock for lock in self.identity.active_identity_locks
+            if lock.camera_id == 2
         )
-        samples_before = self.pipeline.retained_roi_sample_count
+        self.assertEqual({x.local_track_id for x in old_locks}, set(old_ids))
 
-        # Board B LEDs 105 and 107 are only about 15 px apart on camera
-        # 2. Two bright detections close to their midpoint produce two
-        # equally plausible local-track assignments without being duplicate
-        # detections. It is unsafe to arbitrarily choose either identity.
+        # Two near-midpoint detections have an equally plausible assignment
+        # to different local IDs. Even if a later frame looks good, these
+        # identities must remain untrusted until a new code cycle is decoded.
         p105 = np.asarray(self.project(2, 105, 1016))
         p107 = np.asarray(self.project(2, 107, 1016))
         middle = 0.5 * (p105 + p107)
-        pairs = list(detections[2])
-        a = min(range(len(pairs)), key=lambda i: np.linalg.norm(
-            np.asarray(pairs[i]) - p105
+        points = list(detections[2])
+        left = min(range(len(points)), key=lambda i: np.linalg.norm(
+            np.asarray(points[i]) - p105
         ))
-        b = min(range(len(pairs)), key=lambda i: np.linalg.norm(
-            np.asarray(pairs[i]) - p107
+        right = min(range(len(points)), key=lambda i: np.linalg.norm(
+            np.asarray(points[i]) - p107
         ))
-        self.assertNotEqual(a, b)
-        pairs[a] = (float(middle[0]), float(middle[1] + 0.35))
-        pairs[b] = (float(middle[0]), float(middle[1] - 0.35))
+        self.assertNotEqual(left, right)
+        points[left] = (float(middle[0]), float(middle[1] + 0.35))
+        points[right] = (float(middle[0]), float(middle[1] - 0.35))
         bad = dict(detections)
-        bad[2] = pairs
+        bad[2] = points
 
-        with self.assertRaisesRegex(ValueError, "ambiguous light-track"):
+        output = self.pipeline.process(frames, images, bad)
+        self.assertEqual(output.quarantined_camera_ids, (2,))
+        self.assertEqual(self.identity.last_trigger_id, 1016)
+        self.assertEqual(self.pipeline.active_local_track_ids(2), ())
+        self.assertFalse(any(
+            lock.camera_id == 2 for lock in output.active_locks
+        ))
+        self.assertTrue(all(
+            status.evidence_kind == "MEASURED"
+            for status in output.boards.values()
+        ))
+
+        next_output = self.process(1017)
+        self.assertEqual(next_output.quarantined_camera_ids, (2,))
+        new_ids = self.pipeline.active_local_track_ids(2)
+        self.assertTrue(set(new_ids).isdisjoint(set(old_ids)))
+        self.assertFalse(any(
+            lock.camera_id == 2 for lock in next_output.active_locks
+        ))
+
+    def test_multi_trigger_quarantine_only_releases_after_new_full_cycle(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        bad = dict(detections)
+        bad[2] = list(bad[2]) + [bad[2][0]]
+        first = self.pipeline.process(frames, images, bad)
+        self.assertEqual(first.quarantined_camera_ids, (2,))
+        self.assertFalse(any(l.camera_id == 2 for l in first.active_locks))
+
+        # A *second* independent unsafe assignment at the next trigger
+        # must keep the same camera quarantined rather than resurrecting IDs.
+        frames, images, detections = self.frames_and_pixels(1017)
+        bad_again = dict(detections)
+        bad_again[2] = list(bad_again[2]) + [bad_again[2][0]]
+        second = self.pipeline.process(frames, images, bad_again)
+        self.assertEqual(second.quarantined_camera_ids, (2,))
+        self.assertEqual(self.identity.last_trigger_id, 1017)
+        self.assertFalse(any(l.camera_id == 2 for l in second.active_locks))
+        self.assertEqual(self.pipeline.active_local_track_ids(2), ())
+
+        last = None
+        for trigger in range(1018, 1032):
+            last = self.process(trigger)
+        self.assertEqual(last.quarantined_camera_ids, (2,))
+        self.assertFalse(any(l.camera_id == 2 for l in last.active_locks))
+        self.assertTrue(all(x.evidence_kind == "MEASURED" for x in last.boards.values()))
+
+        # Partial post-crossing samples cannot establish identity even if
+        # current pixels are geometrically near the prior LED location.
+        for trigger in range(1032, 1047):
+            last = self.process(trigger)
+            self.assertEqual(last.quarantined_camera_ids, (2,))
+            self.assertFalse(any(l.camera_id == 2 for l in last.active_locks))
+        restored = self.process(1047)
+        self.assertEqual(restored.quarantined_camera_ids, ())
+        self.assertEqual(self.pipeline.quarantined_camera_ids, ())
+        confirmed = [l for l in restored.active_locks if l.camera_id == 2]
+        self.assertEqual(len(confirmed), 8)
+        self.assertEqual(
+            {l.marker_id for l in confirmed},
+            set(self.registry.marker_to_board),
+        )
+        self.assertTrue(all(
+            x.evidence_kind == "MEASURED"
+            for x in restored.boards.values()
+        ))
+
+    def test_two_quarantined_cameras_withhold_pose_until_sufficient_views(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        unsafe = dict(detections)
+        for camera in (2, 5):
+            unsafe[camera] = list(unsafe[camera]) + [unsafe[camera][0]]
+        first = self.pipeline.process(frames, images, unsafe)
+        self.assertEqual(first.quarantined_camera_ids, (2, 5))
+        self.assertEqual(len(first.active_locks), 8)
+        for body in first.boards.values():
+            self.assertEqual(body.evidence_kind, "INVALID")
+            self.assertIsNone(body.outcome.pose)
+            self.assertEqual(body.state, "DEGRADED")
+        wire = pose_frame_to_dict(first, self.registry)
+        self.assertEqual(wire["quarantined_camera_ids"], [2, 5])
+        for body in wire["rigid_bodies"]:
+            self.assertIsNone(body["position_world_from_body"])
+            self.assertIsNone(body["quality"])
+            self.assertGreater(body["measurement_age_ns"], 0)
+
+        next_frame = self.process(1017)
+        self.assertEqual(next_frame.quarantined_camera_ids, (2, 5))
+        self.assertTrue(all(
+            body.evidence_kind == "INVALID"
+            and body.outcome.pose is None
+            for body in next_frame.boards.values()
+        ))
+
+    def test_unsafe_assignment_followed_by_other_camera_error_rolls_back(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        bad = dict(detections)
+        bad[2] = list(bad[2]) + [bad[2][0]]  # would quarantine camera 2
+        bad[9] = [["bad", "pixel"]]  # unrelated fatal input on next camera
+        previous = tuple(
+            self.pipeline.active_local_track_ids(camera)
+            for camera in self.cameras
+        )
+        with self.assertRaisesRegex(ValueError, "numeric coordinates"):
             self.pipeline.process(frames, images, bad)
         self.assertEqual(self.identity.last_trigger_id, 1015)
+        self.assertEqual(self.pipeline.quarantined_camera_ids, ())
         self.assertEqual(
-            original,
-            tuple(self.pipeline.active_local_track_ids(cam) for cam in self.cameras),
+            previous,
+            tuple(
+                self.pipeline.active_local_track_ids(camera)
+                for camera in self.cameras
+            ),
         )
-        self.assertEqual(self.pipeline.retained_roi_sample_count, samples_before)
-        good = self.pipeline.process(frames, images, detections)
+        valid = self.pipeline.process(frames, images, detections)
+        self.assertEqual(valid.quarantined_camera_ids, ())
         self.assertTrue(all(
-            x.evidence_kind == "MEASURED" for x in good.boards.values()
+            b.evidence_kind == "MEASURED"
+            for b in valid.boards.values()
         ))
+
+    def test_unsafe_assignment_plus_wrong_registry_revision_rolls_back(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        unsafe = dict(detections)
+        unsafe[5] = list(unsafe[5]) + [unsafe[5][0]]
+        prev_ids = self.pipeline.active_local_track_ids(5)
+        with self.assertRaisesRegex(ValueError, "controller pattern SHA-256"):
+            self.pipeline.process(
+                frames, images, unsafe,
+                controller_config_sha256="0" * 64,
+            )
+        self.assertEqual(self.identity.last_trigger_id, 1015)
+        self.assertEqual(self.pipeline.quarantined_camera_ids, ())
+        self.assertEqual(self.pipeline.active_local_track_ids(5), prev_ids)
+        success = self.pipeline.process(
+            frames, images, detections,
+            controller_config_sha256=self.registry.config_sha256,
+        )
+        self.assertEqual(success.trigger_id, 1016)
+        self.assertEqual(success.quarantined_camera_ids, ())
+
+    def test_fatal_input_error_still_rolls_back_all_camera_states(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        malformed = dict(detections)
+        malformed[5] = [["bad", "pixel"]]
+        before = tuple(self.pipeline.active_local_track_ids(c) for c in self.cameras)
+        history_size = self.pipeline.retained_roi_sample_count
+        with self.assertRaisesRegex(ValueError, "numeric coordinates"):
+            self.pipeline.process(frames, images, malformed)
+        self.assertEqual(self.identity.last_trigger_id, 1015)
+        self.assertEqual(self.pipeline.quarantined_camera_ids, ())
+        self.assertEqual(history_size, self.pipeline.retained_roi_sample_count)
+        self.assertEqual(
+            tuple(self.pipeline.active_local_track_ids(c) for c in self.cameras),
+            before,
+        )
+        accepted = self.pipeline.process(frames, images, detections)
+        self.assertEqual(accepted.trigger_id, 1016)
 
     def test_detector_capacity_failure_does_not_partially_commit(self):
         self.bootstrap()

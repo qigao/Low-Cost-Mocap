@@ -18,6 +18,19 @@ The software input to `SynchronizedLocalLightPipeline.process` is:
 - Optionally, the LED controller's pattern `config_sha256` for software
   revision equality; a matching string is not proof of hardware authenticity.
 
+A detector overlap or an ambiguous global assignment is a **special
+fail-closed state transition**, not a generic malformed input. On the
+accepted trigger, the affected physical camera retires its old local IDs,
+releases the corresponding marker identity locks, removes its ROI history,
+and enters persistent camera quarantine. Subsequent positions cannot
+inherit those IDs by proximity. Only a full *new* temporal code cycle
+can admit new global LED IDs, after which quarantine may clear. Other
+cameras may still emit measured poses if the remaining independent
+current-frame geometry is sufficient. If there are fewer than two valid
+camera views, the entire affected board is INVALID and contains no pose.
+Malformed frame arrays, capacity violations, invalid revision/clock
+metadata and other non-assignment errors still roll the whole frame back.
+
 The adapter calls the existing `BoundedLightTracker.update` to associate
 local bright points, stores only bounded stamped ROI contrast metadata
 (no raw image persistence), and at the end of a code period proposes
@@ -95,6 +108,10 @@ Each board reports:
 
 - `tracking_status`: TRACKING / DEGRADED / LOST / DISCOVER
 - `evidence_kind`: MEASURED or INVALID (no prediction output in v1)
+- `quarantined_camera_ids` at frame level: physical camera IDs whose
+  local assignments were ambiguous and whose old temporal identity locks
+  have been revoked. Their current bright pixels are excluded from measured
+  3D geometry until a full new code cycle revalidates an identity.
 - `visible_marker_ids` / `excluded_marker_ids`
 - `measurement_trigger_id` / `measurement_age_triggers`
 - `last_measurement_exposure_timestamp_ns` / `measurement_age_ns`

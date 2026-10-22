@@ -122,6 +122,15 @@ def pose_frame_to_dict(
         raise ValueError("pose frame camera IDs must be unique and nonempty")
     if set(frame.boards) != set(registry.boards):
         raise ValueError("pose frame must describe exactly the registered boards")
+    quarantined = tuple(
+        _nonnegative_int(camera, "quarantined camera_id")
+        for camera in frame.quarantined_camera_ids
+    )
+    if (
+        len(set(quarantined)) != len(quarantined)
+        or not set(quarantined).issubset(set(cameras))
+    ):
+        raise ValueError("quarantined camera IDs must be unique and expected")
 
     bodies = []
     for board_id in sorted(registry.boards):
@@ -262,6 +271,7 @@ def pose_frame_to_dict(
         "latest_exposure_timestamp_ns": exposure_ns,
         "exposure_skew_ns": skew_ns,
         "camera_ids": list(cameras),
+        "quarantined_camera_ids": sorted(quarantined),
         "pattern_sha256": frame.pattern_sha256,
         "calibration_sha256": frame.calibration_sha256,
         "hardware_provenance_verified": False,

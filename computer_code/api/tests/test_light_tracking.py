@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from light_tracking import BoundedLightTracker
+from light_tracking import BoundedLightTracker, AmbiguousLightAssociation
 
 
 class BoundedLightTrackerTests(unittest.TestCase):
@@ -79,6 +79,38 @@ class BoundedLightTrackerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     tracker.update(11, [(21., 20.)], forbidden_track_ids=ids)
                 self.assertEqual(tracker.last_trigger_id, 10)
+
+    def test_quarantine_consumes_unsafe_trigger_and_never_reuses_ids(self):
+        tracker = BoundedLightTracker(camera_id=3, max_missing_triggers=3)
+        original = tracker.update(20, [(10., 20.), (30., 20.)])
+        old_ids = set(x.track_id for x in original)
+        self.assertEqual(old_ids, {0, 1})
+        before = tracker.staged_copy()
+        with self.assertRaises(AmbiguousLightAssociation):
+            before.update(21, [(12., 20.), (12.1, 20.)])
+        # An isolated quarantine is a deliberate and monotonic state change.
+        before.quarantine_trigger(21)
+        self.assertEqual(before.last_trigger_id, 21)
+        self.assertEqual(before.active_track_ids, ())
+        self.assertEqual(tracker.last_trigger_id, 20)
+        new = before.update(22, [(10., 20.), (30., 20.)])
+        self.assertTrue(all(x.track_id not in old_ids for x in new))
+        self.assertEqual([x.track_id for x in new], [2, 3])
+        with self.assertRaisesRegex(ValueError, "stale"):
+            before.quarantine_trigger(22)
+
+    def test_ambiguous_assignment_subclass_is_distinguishable_from_input_failure(self):
+        tracker = BoundedLightTracker(
+            camera_id=2, minimum_detection_separation_px=0.0,
+            max_motion_px_per_trigger=4.0,
+        )
+        tracker.update(50, [(10., 20.), (12., 20.)])
+        with self.assertRaises(AmbiguousLightAssociation):
+            tracker.update(51, [(10.99, 20.), (11.01, 20.)])
+        with self.assertRaises(ValueError) as wrong:
+            tracker.update(51, [["10", 20.]])
+        self.assertNotIsInstance(wrong.exception, AmbiguousLightAssociation)
+        self.assertEqual(tracker.last_trigger_id, 50)
 
     def test_trigger_gap_rejected_and_missing_tracks_expire(self):
         tracker = BoundedLightTracker(
