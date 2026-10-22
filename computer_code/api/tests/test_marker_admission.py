@@ -73,6 +73,30 @@ class MarkerAdmissionTests(unittest.TestCase):
         self.assertEqual(group.excluded_marker_ids, ())
         self.assertEqual(tuple(group.observations_by_marker_id), (13,))
 
+    def test_over_budget_unique_decode_is_diagnostic_only(self):
+        trace = self.make_trace()
+        for phase in (0, 1):
+            item = trace[phase]
+            trace[phase] = StampedTrackROI(
+                item.frame_stamp, item.track_evidence, None,
+                predicted_roi_qualified=True,
+            )
+
+        with self.assertRaisesRegex(ValueError, "guaranteed erasure budget"):
+            self.admit(trace)
+
+        diagnostic = admit_track_marker_at_frame(
+            trace, self.codes, self.calibration,
+            camera_id=0, local_track_id=3,
+            target_frame=trace[-1].frame_stamp,
+            trigger_epoch=self.epoch,
+            allow_degraded_erasure_decode=True,
+        )
+        self.assertEqual(diagnostic.detection.marker_id, self.source_id)
+        self.assertEqual(diagnostic.erased_samples, 2)
+        self.assertEqual(diagnostic.guaranteed_erasure_budget, 1)
+        self.assertFalse(diagnostic.within_guaranteed_erasure_budget)
+
     def test_rejects_old_decode_with_a_new_frame(self):
         old = self.make_trace()
         next_cycle = FrameStamp(
