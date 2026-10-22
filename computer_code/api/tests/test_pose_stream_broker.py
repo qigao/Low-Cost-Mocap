@@ -127,7 +127,9 @@ class BoundedPoseStreamTests(unittest.TestCase):
             fresh,
             measurement_age_triggers=1,
         )
-        with self.assertRaisesRegex(ValueError, "MEASURED"):
+        # The independent producer must reject inconsistent source
+        # trigger age *before* considering any pose to be fresh MEASURED.
+        with self.assertRaisesRegex(ValueError, "measurement trigger age is inconsistent"):
             self.publisher.publish(replace(bogus, boards=fake))
         self.assertEqual(self.publisher.subscriber_statistics("viewerA").pending_frames, 0)
         self.publisher.publish(self.frame(1, measured=False))
