@@ -212,6 +212,19 @@ class IMUSampleContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "horizon"):
             mapping.map_timestamp(3_000_000_101)
 
+        near_epoch = fit_clock_mapping(
+            [
+                ClockAnchor(100_000_000, 100),
+                ClockAnchor(110_000_000, 10_000_100),
+                ClockAnchor(120_000_000, 20_000_100),
+            ],
+            source_clock_domain="imu", target_clock_domain="optical",
+            max_drift_ppm=1, max_residual_ns=0,
+            max_extrapolation_ns=200_000_000, min_anchor_span_ns=1,
+        )
+        with self.assertRaisesRegex(ValueError, "nonnegative signed 64-bit"):
+            near_epoch.map_timestamp(1)
+
         i64_max = (1 << 63) - 1
         overflow_mapping = fit_clock_mapping(
             [
