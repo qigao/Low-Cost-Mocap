@@ -45,7 +45,9 @@ jobs:
           python -m pip install --upgrade pip
           # The observer host is a strictly optional Socket.IO service
           # which requires no camera SDK, serial port or flight controller.
-          python -m pip install numpy scipy Flask Flask-SocketIO
+          # Requests is used only by the independent localhost
+          # python-socketio integration client (not the server itself).
+          python -m pip install numpy scipy Flask Flask-SocketIO requests
 
       - name: Check installed dependencies
         run: python -m pip check
