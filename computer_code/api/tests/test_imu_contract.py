@@ -97,8 +97,8 @@ class IMUSampleContractTests(unittest.TestCase):
     def test_clock_mapping_fits_known_offset_and_drift(self):
         anchors = [
             ClockAnchor(1_000_000_000, 1_000_100_000, event_id="pulse-1"),
-            ClockAnchor(2_000_000_000, 2_000_100_100, event_id="pulse-2"),
-            ClockAnchor(3_000_000_000, 3_000_100_200, event_id="pulse-3"),
+            ClockAnchor(2_000_000_000, 2_000_200_000, event_id="pulse-2"),
+            ClockAnchor(3_000_000_000, 3_000_300_000, event_id="pulse-3"),
         ]
         mapping = fit_clock_mapping(
             anchors,
@@ -112,7 +112,7 @@ class IMUSampleContractTests(unittest.TestCase):
         self.assertEqual(mapping.anchor_count, 3)
         self.assertAlmostEqual(mapping.drift_ppm, 100.0, places=4)
         self.assertLessEqual(mapping.observed_max_residual_ns, 10)
-        self.assertEqual(mapping.map_timestamp(1_500_000_000), 1_500_100_050)
+        self.assertEqual(mapping.map_timestamp(1_500_000_000), 1_500_150_000)
         self.assertEqual(len(mapping.mapping_sha256), 64)
 
     def test_clock_mapping_rejects_too_few_or_host_receive_only_anchors(self):
