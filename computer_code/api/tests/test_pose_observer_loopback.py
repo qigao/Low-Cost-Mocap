@@ -31,6 +31,7 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         self.host = PoseObserverHost(
             self.registry, viewer_secret=SECRET,
             max_subscribers=2, max_pending_frames=2,
+            min_poll_interval_ms=1,
         )
         self.server = make_server(
             "127.0.0.1", 0, self.host.app, threaded=True
@@ -95,9 +96,6 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         )
 
     def test_real_local_transport_asset_then_invalid_pose_and_latency(self):
-        received = []
-        asset_seen = threading.Event()
-        frame_seen = threading.Event()
         session = requests.Session()
         session.trust_env = False
         client = socketio.Client(
@@ -105,16 +103,6 @@ class LoopbackObserverTransportTests(unittest.TestCase):
             http_session=session,
         )
         self.clients.append(client)
-
-        @client.on("mocap:pose-stream", namespace=POSE_OBSERVER_NAMESPACE)
-        def on_data(packet):
-            received.append((time.monotonic_ns(), packet))
-            kind = packet["payload"]["kind"]
-            if kind == "asset_description":
-                asset_seen.set()
-            elif kind == "pose_frame":
-                frame_seen.set()
-
         origin = "http://127.0.0.1:" + str(self.port)
         with build_opener(ProxyHandler({})).open(
             origin + "/pose-observe/healthz", timeout=4
@@ -127,19 +115,31 @@ class LoopbackObserverTransportTests(unittest.TestCase):
             transports=["polling"],
             wait_timeout=5,
         )
-        self.assertTrue(asset_seen.wait(5), "asset was not delivered via HTTP polling")
-        self.assertEqual(received[0][1]["payload"]["kind"], "asset_description")
+        # Dynamic data is delivered only inside the bounded poll response,
+        # never by unbounded asynchronous Socket.IO emits.
+        asset_reply = client.call(
+            "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, timeout=5
+        )
+        self.assertTrue(asset_reply["ok"])
+        self.assertEqual(len(asset_reply["messages"]), 1)
+        asset_packet = asset_reply["messages"][0]
+        self.assertEqual(asset_packet["payload"]["kind"], "asset_description")
         started_ns = time.monotonic_ns()
         self.host.publish_frame(self.invalid_frame(10))
-        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
-        self.assertTrue(frame_seen.wait(5), "pose frame was not delivered via HTTP polling")
-        self.assertEqual(len(received), 2)
-        elapsed = received[1][0] - started_ns
+        time.sleep(0.003)  # obey the explicit 1 ms minimum poll interval
+        frame_reply = client.call(
+            "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, timeout=5
+        )
+        received_ns = time.monotonic_ns()
+        self.assertTrue(frame_reply["ok"])
+        self.assertEqual(len(frame_reply["messages"]), 1)
+        packet = frame_reply["messages"][0]
+        elapsed = received_ns - started_ns
         self.assertGreaterEqual(elapsed, 0)
         self.assertLess(elapsed, 5_000_000_000)  # generous CI-only bound
         consumer = PoseStreamConsumer()
-        consumer.consume(received[0][1])
-        frame = consumer.consume(received[1][1])
+        consumer.consume(asset_packet)
+        frame = consumer.consume(packet)
         self.assertEqual(frame["frame_id"], 10)
         self.assertFalse(frame["hardware_provenance_verified"])
         self.assertTrue(all(
