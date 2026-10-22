@@ -81,6 +81,7 @@ def camera_stream():
     return Response(gen(cameras), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route("/api/trajectory-planning", methods=["POST"])
+@loopback_only_http_route
 def trajectory_planning_api():
     data = json.loads(request.data)
 
