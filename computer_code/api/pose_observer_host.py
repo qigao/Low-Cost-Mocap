@@ -188,7 +188,7 @@ class PoseObserverHost:
             return True
 
         @self.socketio.on("disconnect", namespace=POSE_OBSERVER_NAMESPACE)
-        def viewer_disconnected():
+        def viewer_disconnected(*_args):
             sid = request.sid
             key = self._subscriber_key(sid)
             with self._lock:
