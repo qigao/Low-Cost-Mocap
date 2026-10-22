@@ -92,7 +92,9 @@ class OpticalVsFusedReportTests(unittest.TestCase):
             clock_domain="imu-clock", max_match_delta_ns=0,
         )
         self.assertEqual(baseline.report_sha256, repeat.report_sha256)
+        self.assertEqual(baseline.input_sha256, repeat.input_sha256)
         self.assertNotEqual(baseline.report_sha256, changed.report_sha256)
+        self.assertNotEqual(baseline.input_sha256, changed.input_sha256)
 
     def test_sign_equivalent_quaternions_have_zero_error(self):
         report = compare_optical_only_vs_fused(
@@ -131,10 +133,10 @@ class OpticalVsFusedReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mixed body/pattern/calibration"):
             compare_optical_only_vs_fused(bad_optical, [fused(100,(0,0,0,1)),fused(200,(0,0,0,1))],
                 refs()[:2], clock_domain="imu-clock")
+        far_reference = [ReferenceOrientation(1_000, "imu-clock", (0,0,0,1), REFERENCE)]
         with self.assertRaisesRegex(ValueError, "both optical-only and fused"):
             compare_optical_only_vs_fused([optical(100,(0,0,0,1))],
-                [fused(100,(0,0,0,1))], refs()[:1], clock_domain="imu-clock", max_match_delta_ns=0,
-                max_report_bytes=1)
+                [fused(100,(0,0,0,1))], far_reference, clock_domain="imu-clock", max_match_delta_ns=0)
         with self.assertRaisesRegex(ValueError, "input byte capacity"):
             compare_optical_only_vs_fused([optical(100,(0,0,0,1))],
                 [fused(100,(0,0,0,1))], refs()[:1], clock_domain="imu-clock", max_report_bytes=1)
