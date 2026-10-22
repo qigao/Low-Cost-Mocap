@@ -47,6 +47,62 @@ def _reject_constant(value: str) -> None:
     raise ValueError(f"nonfinite JSON constant is forbidden: {value}")
 
 
+def _evaluate_statistical_gate(
+    bundle_report: dict[str, Any], replay_report: dict[str, Any]
+) -> dict[str, Any]:
+    """Compare replay statistics with predeclared limits without claiming independence."""
+    limits = bundle_report.get("declared_acceptance_limits", {})
+    required = {
+        "min_temporal_trials",
+        "max_wrong_accept_one_sided_upper_95",
+    }
+    if not isinstance(limits, dict) or not required.issubset(limits):
+        return {
+            "status": "not_predeclared",
+            "trial_independence_verified": False,
+            "limitations": [
+                "This legacy bundle schema has no predeclared temporal sample-size and false-accept upper-bound limits."
+            ],
+        }
+    temporal = replay_report.get("temporal")
+    if not isinstance(temporal, dict):
+        return {
+            "status": "not_evaluated_no_temporal_section",
+            "minimum_temporal_trials": limits["min_temporal_trials"],
+            "required_max_wrong_accept_one_sided_upper_95": limits[
+                "max_wrong_accept_one_sided_upper_95"
+            ],
+            "trial_independence_verified": False,
+            "limitations": [
+                "The replay input contains no temporal trial section, so the predeclared statistical gate was not evaluated."
+            ],
+        }
+    trial_count = temporal["trial_count"]
+    observed_upper = temporal["wrong_accept_one_sided_upper_95"]
+    count_ok = trial_count >= limits["min_temporal_trials"]
+    bound_ok = observed_upper <= limits["max_wrong_accept_one_sided_upper_95"]
+    return {
+        "status": (
+            "conditional_pass_assuming_independent_trials"
+            if count_ok and bound_ok
+            else "conditional_fail"
+        ),
+        "temporal_trial_count": trial_count,
+        "minimum_temporal_trials": limits["min_temporal_trials"],
+        "trial_count_meets_minimum": count_ok,
+        "observed_wrong_accept_one_sided_upper_95": observed_upper,
+        "required_max_wrong_accept_one_sided_upper_95": limits[
+            "max_wrong_accept_one_sided_upper_95"
+        ],
+        "bound_within_limit": bound_ok,
+        "trial_independence_verified": False,
+        "limitations": [
+            "The Wilson upper bound assumes independent Bernoulli trials; this report does not verify independence or model capture-session, trajectory, marker or code-cycle correlation.",
+            "A conditional software-gate result is not hardware acceptance and cannot verify reference-label independence or physical exposure provenance.",
+        ],
+    }
+
+
 def _base_report(bundle_report: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -57,6 +113,7 @@ def _base_report(bundle_report: dict[str, Any]) -> dict[str, Any]:
         "offline_replay_status": "not_started",
         "offline_replay_input_sha256": None,
         "offline_replay_report": None,
+        "statistical_gate": {"status": "not_evaluated", "trial_independence_verified": False},
         "failures": [],
         "declarations_not_verified": {
             "hardware_provenance_verified": False,
@@ -223,6 +280,7 @@ def run_bundle_gated_offline_replay(
     report["declarations_not_verified"]["independent_reference_verified"] = False
     report["declarations_not_verified"]["timestamp_semantics_verified"] = False
     report["declarations_not_verified"]["physical_metric_scale_verified"] = False
+    report["statistical_gate"] = _evaluate_statistical_gate(bundle_report, replay_report)
     return report
 
 
