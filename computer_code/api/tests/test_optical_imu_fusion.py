@@ -123,6 +123,8 @@ class OpticalIMUAttitudeFusionTests(unittest.TestCase):
         fusion.ingest_imu(states[0])
         fusion.ingest_imu(states[1])
         fusion.ingest_optical(optical(1_010_000_000, 10))
+        fusion.ingest_imu(states[2])
+        fusion.ingest_imu(states[3])
         lost = fusion.ingest_imu(states[4])
         self.assertEqual(lost.status, "LOST")
         self.assertIsNone(lost.quaternion_world_from_body_xyzw)
