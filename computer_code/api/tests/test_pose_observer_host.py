@@ -166,6 +166,47 @@ class PoseObserverHostTests(unittest.TestCase):
         b.disconnect(namespace=POSE_OBSERVER_NAMESPACE)
         reopened.disconnect(namespace=POSE_OBSERVER_NAMESPACE)
 
+    def test_slow_viewer_drops_old_frames_not_assets_or_other_subscribers(self):
+        first = self.connect()
+        second = self.connect()
+        self.assertEqual(len(self.messages(first)), 1)
+        self.assertEqual(len(self.messages(second)), 1)
+        # Synthetic trusted producer fills the broker without dispatching.
+        # A slow subscriber must remain bounded; no background worker,
+        # hardware source or failed transport assumption is involved.
+        for trigger in range(1, 8):
+            self.host.publisher.publish(self.frame(trigger))
+        first_sid = first.eio_sid
+        second_sid = second.eio_sid
+        first_key = self.host._subscriber_key(first_sid)
+        second_key = self.host._subscriber_key(second_sid)
+        self.assertEqual(
+            self.host.publisher.subscriber_statistics(first_key).dropped_frames, 5
+        )
+        self.assertEqual(
+            self.host.publisher.subscriber_statistics(second_key).pending_frames, 2
+        )
+        first_ack = first.emit(
+            "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True
+        )
+        reply = first_ack[0] if isinstance(first_ack, list) else first_ack
+        self.assertEqual(reply["sent"], 2)
+        received = self.messages(first)
+        self.assertEqual(
+            [packet["payload"]["frame_id"] for packet in received],
+            [6, 7],
+        )
+        self.assertEqual(
+            self.host.publisher.subscriber_statistics(second_key).pending_frames, 2
+        )
+        self.assertEqual(self.messages(second), [])
+        second.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
+        self.assertEqual(
+            [p["payload"]["frame_id"] for p in self.messages(second)], [6, 7]
+        )
+        first.disconnect(namespace=POSE_OBSERVER_NAMESPACE)
+        second.disconnect(namespace=POSE_OBSERVER_NAMESPACE)
+
     def test_source_restart_sends_new_assets_and_resets_clock(self):
         client = self.connect()
         first = self.messages(client)
