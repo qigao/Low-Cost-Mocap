@@ -111,7 +111,8 @@ class CaptureBundleManifestTests(unittest.TestCase):
                 ],
             },
             "revisions": {
-                "pattern_sha256": hashes["pattern_config"],
+                "pattern_sha256": hashlib.sha256(b"canonical-pattern-registry").hexdigest(),
+                "pattern_config_artifact_sha256": hashes["pattern_config"],
                 "codebook_sha256": hashes["codebook"],
                 "controller_config_sha256": hashes["controller_config"],
                 "calibration_sha256": hashes["calibration_config"],

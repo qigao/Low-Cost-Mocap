@@ -259,8 +259,9 @@ def _validate_structure(
     _exact_keys(
         revisions,
         {
-            "pattern_sha256", "codebook_sha256",
-            "controller_config_sha256", "calibration_sha256",
+            "pattern_sha256", "pattern_config_artifact_sha256",
+            "codebook_sha256", "controller_config_sha256",
+            "calibration_sha256",
         },
         "revisions",
     )
@@ -452,7 +453,7 @@ def validate_capture_bundle(
         if artifact["role"] != "supplemental"
     }
     revision_links = (
-        ("pattern_config", "pattern_sha256"),
+        ("pattern_config", "pattern_config_artifact_sha256"),
         ("codebook", "codebook_sha256"),
         ("controller_config", "controller_config_sha256"),
         ("calibration_config", "calibration_sha256"),

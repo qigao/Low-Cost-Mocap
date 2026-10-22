@@ -86,10 +86,12 @@ in 1 MiB chunks; raw video/frame data is never loaded wholesale into memory.
 - Missing, tampered, wrong-size, duplicate or unreadable artifacts make
   `bundle_integrity_valid` false. The validator reports these per artifact
   and exits nonzero.
-- Pattern, codebook, controller and calibration revision IDs must match
-  the hashes of their corresponding declared artifact bytes. A matching hash
-  proves only byte equality with the submitted file, not that the file was
-  actually used by the physical rig.
+- `pattern_sha256` is the declared semantic/canonical pattern-registry
+  fingerprint, which may differ from the hash of a pretty-printed source file.
+  `pattern_config_artifact_sha256` binds the exact raw pattern-config bytes.
+  Codebook/controller/calibration hashes bind their exact artifact bytes.
+  Matching hashes prove byte equality with the submitted files, not that
+  those files were actually loaded by the physical rig.
 - A manifest cannot add a `hardware_verified` field; unknown fields reject.
   Even when every artifact passes, the report always contains
   `hardware_provenance_verified=false`,
