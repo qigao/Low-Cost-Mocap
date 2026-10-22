@@ -13,7 +13,16 @@ import json
 import math
 from numbers import Real
 
+import numpy as np
+
 from imu_contract import IMUSample
+
+_IDENTITY3 = (
+    (1.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0),
+    (0.0, 0.0, 1.0),
+)
+_SCHEMA_VERSION = 1
 
 
 def _text(value: object, name: str) -> str:
@@ -70,6 +79,25 @@ def _rotation3(value: object) -> tuple[tuple[float, float, float], ...]:
     return matrix
 
 
+def _matrix3(value: object, name: str) -> tuple[tuple[float, float, float], ...]:
+    if not isinstance(value, (tuple, list)) or len(value) != 3:
+        raise ValueError(f"{name} must be a 3x3 matrix")
+    rows = []
+    for row in value:
+        if not isinstance(row, (tuple, list)) or len(row) != 3:
+            raise ValueError(f"{name} must be a 3x3 matrix")
+        rows.append(tuple(_real(item, name) for item in row))
+    matrix = np.asarray(rows, dtype=np.float64)
+    condition = float(np.linalg.cond(matrix))
+    if (
+        not np.isfinite(matrix).all()
+        or not math.isfinite(condition)
+        or condition > 1_000.0
+    ):
+        raise ValueError(f"{name} must be finite and well-conditioned (condition <= 1000)")
+    return tuple(tuple(float(value) for value in row) for row in matrix)
+
+
 def _rotate(
     rotation: tuple[tuple[float, float, float], ...],
     vector: tuple[float, float, float],
@@ -99,6 +127,8 @@ class IMUCalibration:
     gyro_noise_density_rad_s_sqrt_hz: tuple[float, float, float]
     accel_noise_density_m_s2_sqrt_hz: tuple[float, float, float]
     calibration_method: str
+    gyro_correction_matrix: tuple[tuple[float, float, float], ...] = _IDENTITY3
+    accel_correction_matrix: tuple[tuple[float, float, float], ...] = _IDENTITY3
     valid_from_timestamp_ns: int = 0
     valid_until_timestamp_ns: int | None = None
     calibration_sha256: str = ""
@@ -109,6 +139,8 @@ class IMUCalibration:
         object.__setattr__(self, "imu_clock_domain", _text(self.imu_clock_domain, "imu_clock_domain"))
         object.__setattr__(self, "calibration_method", _text(self.calibration_method, "calibration_method"))
         object.__setattr__(self, "rotation_body_from_imu", _rotation3(self.rotation_body_from_imu))
+        object.__setattr__(self, "gyro_correction_matrix", _matrix3(self.gyro_correction_matrix, "gyro_correction_matrix"))
+        object.__setattr__(self, "accel_correction_matrix", _matrix3(self.accel_correction_matrix, "accel_correction_matrix"))
         object.__setattr__(self, "translation_body_from_imu_m", _vector3(self.translation_body_from_imu_m, "translation_body_from_imu_m"))
         object.__setattr__(self, "gyro_bias_rad_s", _vector3(self.gyro_bias_rad_s, "gyro_bias_rad_s"))
         object.__setattr__(self, "accel_bias_m_s2", _vector3(self.accel_bias_m_s2, "accel_bias_m_s2"))
@@ -147,9 +179,57 @@ class IMUCalibration:
             "gyro_noise_density_rad_s_sqrt_hz": self.gyro_noise_density_rad_s_sqrt_hz,
             "accel_noise_density_m_s2_sqrt_hz": self.accel_noise_density_m_s2_sqrt_hz,
             "calibration_method": self.calibration_method,
+            "gyro_correction_matrix": self.gyro_correction_matrix,
+            "accel_correction_matrix": self.accel_correction_matrix,
+            "schema_version": _SCHEMA_VERSION,
             "valid_from_timestamp_ns": self.valid_from_timestamp_ns,
             "valid_until_timestamp_ns": self.valid_until_timestamp_ns,
         }
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the canonical versioned calibration object including its digest."""
+        return {**self._digest_payload(), "calibration_sha256": self.calibration_sha256}
+
+    @classmethod
+    def from_dict(cls, raw: object) -> "IMUCalibration":
+        """Parse a strict JSON-like object; unknown and missing fields fail closed."""
+        if not isinstance(raw, dict):
+            raise ValueError("IMU calibration must be an object")
+        required = {
+            "schema_version", "imu_id", "revision", "imu_clock_domain",
+            "rotation_body_from_imu", "translation_body_from_imu_m",
+            "gyro_bias_rad_s", "accel_bias_m_s2",
+            "gyro_noise_density_rad_s_sqrt_hz",
+            "accel_noise_density_m_s2_sqrt_hz", "calibration_method",
+            "valid_from_timestamp_ns", "valid_until_timestamp_ns",
+            "calibration_sha256",
+        }
+        optional = {"gyro_correction_matrix", "accel_correction_matrix"}
+        unknown = set(raw) - required - optional
+        missing = required - set(raw)
+        if unknown:
+            raise ValueError("unknown IMU calibration fields: " + ", ".join(sorted(unknown)))
+        if missing:
+            raise ValueError("missing IMU calibration fields: " + ", ".join(sorted(missing)))
+        if type(raw["schema_version"]) is not int or raw["schema_version"] != _SCHEMA_VERSION:
+            raise ValueError("unsupported IMU calibration schema_version")
+        return cls(
+            imu_id=raw["imu_id"],
+            revision=raw["revision"],
+            imu_clock_domain=raw["imu_clock_domain"],
+            rotation_body_from_imu=raw["rotation_body_from_imu"],
+            translation_body_from_imu_m=raw["translation_body_from_imu_m"],
+            gyro_bias_rad_s=raw["gyro_bias_rad_s"],
+            accel_bias_m_s2=raw["accel_bias_m_s2"],
+            gyro_noise_density_rad_s_sqrt_hz=raw["gyro_noise_density_rad_s_sqrt_hz"],
+            accel_noise_density_m_s2_sqrt_hz=raw["accel_noise_density_m_s2_sqrt_hz"],
+            calibration_method=raw["calibration_method"],
+            gyro_correction_matrix=raw.get("gyro_correction_matrix", _IDENTITY3),
+            accel_correction_matrix=raw.get("accel_correction_matrix", _IDENTITY3),
+            valid_from_timestamp_ns=raw["valid_from_timestamp_ns"],
+            valid_until_timestamp_ns=raw["valid_until_timestamp_ns"],
+            calibration_sha256=raw["calibration_sha256"],
+        )
 
     def validate_sample(self, sample: IMUSample) -> None:
         if not isinstance(sample, IMUSample):
@@ -188,14 +268,16 @@ def correct_imu_sample(sample: IMUSample, calibration: IMUCalibration) -> Correc
     if not isinstance(calibration, IMUCalibration):
         raise ValueError("calibration must be IMUCalibration")
     calibration.validate_sample(sample)
-    gyro_sensor = tuple(
+    gyro_unscaled = tuple(
         sample.gyro_rad_s[i] - calibration.gyro_bias_rad_s[i]
         for i in range(3)
     )
-    force_sensor = tuple(
+    force_unscaled = tuple(
         sample.accel_m_s2[i] - calibration.accel_bias_m_s2[i]
         for i in range(3)
     )
+    gyro_sensor = _rotate(calibration.gyro_correction_matrix, gyro_unscaled)
+    force_sensor = _rotate(calibration.accel_correction_matrix, force_unscaled)
     gyro_body = _rotate(calibration.rotation_body_from_imu, gyro_sensor)
     force_body = _rotate(calibration.rotation_body_from_imu, force_sensor)
     if not all(math.isfinite(value) for value in (*gyro_body, *force_body)):
