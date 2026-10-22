@@ -5,7 +5,12 @@ import './pose-monitor.css'
 // arm-drone and set-drone-setpoint events from its React lifecycle.
 const NS = '/pose-observe'
 type Obj = Record<string, unknown>
-type Model = { board_id: string, type: string }
+type Model = {
+  board_id: string
+  type: string
+  marker_ids: number[]
+  min_visible_markers: number
+}
 
 function isObject(value: unknown): value is Obj {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -18,6 +23,18 @@ function isNonnegativeInt(value: unknown): value is number {
 // timing or perform sub-microsecond arithmetic in the browser.
 function isDisplayTimestamp(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+function finiteVector(value: unknown, count: number): value is number[] {
+  return Array.isArray(value) && value.length === count
+    && value.every(x => typeof x === 'number' && Number.isFinite(x))
+}
+function unitQuaternion(value: unknown): value is number[] {
+  if (!finiteVector(value, 4)) return false
+  const norm = value.reduce((sum, x) => sum + x * x, 0)
+  return Math.abs(norm - 1) <= 1e-5
+}
+function isSHA256(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
 }
 function get<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id)
@@ -100,11 +117,23 @@ function drawBodies(bodies: Obj[], trigger: number, stale = false): void {
   for (const model of models) {
     const body = bodies.find(b => b.board_id === model.board_id)
     const valid = body !== undefined
+      && !stale
       && body.tracking_status === 'TRACKING'
       && body.evidence_kind === 'MEASURED'
       && body.measurement_trigger_id === trigger
       && body.measurement_age_triggers === 0
       && body.measurement_age_ns === 0
+      && finiteVector(body.position_world_from_body, 3)
+      && unitQuaternion(body.quaternion_world_from_body_xyzw)
+      && finiteVector(body.position_world_from_board, 3)
+      && unitQuaternion(body.quaternion_world_from_board_xyzw)
+      && isObject(body.quality)
+      && typeof body.quality.rigid_rms_world_units === 'number'
+      && Number.isFinite(body.quality.rigid_rms_world_units)
+      && body.quality.rigid_rms_world_units >= 0
+      && typeof body.quality.reprojection_max_rms_px === 'number'
+      && Number.isFinite(body.quality.reprojection_max_rms_px)
+      && body.quality.reprojection_max_rms_px >= 0
     const visible = body !== undefined && Array.isArray(body.visible_marker_ids)
       ? body.visible_marker_ids.filter(isNonnegativeInt).join(', ') : '—'
     const quality = valid && isObject(body.quality) ? body.quality : null
@@ -154,18 +183,48 @@ function acceptEnvelope(raw: unknown): void {
   }
   if (payload.kind === 'asset_description') {
     if (raw.sequence !== 0 || (session !== null && raw.session_id <= session)
-        || typeof payload.pattern_sha256 !== 'string' || !Array.isArray(payload.boards)) {
+        || !isSHA256(payload.pattern_sha256)
+        || !isNonnegativeInt(payload.period_triggers) || payload.period_triggers < 4
+        || !isNonnegativeInt(payload.max_bit_errors)
+        || payload.max_bit_errors >= payload.period_triggers
+        || !Array.isArray(payload.boards) || payload.boards.length === 0
+        || payload.model_coordinates_are_declared_not_metrologically_verified !== true) {
       message.textContent = 'Rejected stale or malformed asset description.'
       return
     }
     const candidates: Model[] = []
+    const allMarkerIds = new Set<number>()
     for (const board of payload.boards) {
       if (!isObject(board) || typeof board.board_id !== 'string'
-          || typeof board.type !== 'string') {
-        message.textContent = 'Rejected malformed board identities.'
+          || board.board_id.length === 0 || board.board_id.length > 64
+          || typeof board.type !== 'string'
+          || !isNonnegativeInt(board.min_visible_markers)
+          || !Array.isArray(board.markers) || board.markers.length < 3
+          || board.min_visible_markers < 3
+          || board.min_visible_markers > board.markers.length) {
+        message.textContent = 'Rejected malformed board identities or marker minimum.'
         return
       }
-      candidates.push({board_id:board.board_id, type:board.type})
+      const markerIds: number[] = []
+      for (const marker of board.markers) {
+        if (!isObject(marker) || !isNonnegativeInt(marker.marker_id)
+            || allMarkerIds.has(marker.marker_id)
+            || typeof marker.code !== 'string'
+            || marker.code.length !== payload.period_triggers
+            || !/^[01]+$/.test(marker.code)
+            || !finiteVector(marker.xyz_m, 3)) {
+          message.textContent = 'Rejected duplicate or malformed static marker definition.'
+          return
+        }
+        allMarkerIds.add(marker.marker_id)
+        markerIds.push(marker.marker_id)
+      }
+      candidates.push({
+        board_id: board.board_id,
+        type: board.type,
+        marker_ids: markerIds,
+        min_visible_markers: board.min_visible_markers,
+      })
     }
     if (new Set(candidates.map(b => b.board_id)).size !== candidates.length) {
       message.textContent = 'Rejected duplicate board identities.'
@@ -192,6 +251,18 @@ function acceptEnvelope(raw: unknown): void {
       || revision === null || payload.pattern_sha256 !== revision
       || !isNonnegativeInt(payload.frame_id)
       || !isDisplayTimestamp(payload.latest_exposure_timestamp_ns)
+      || !isSHA256(payload.calibration_sha256)
+      || typeof payload.clock_domain !== 'string' || payload.clock_domain.length === 0
+      || !Array.isArray(payload.camera_ids) || payload.camera_ids.length === 0
+      || !payload.camera_ids.every(isNonnegativeInt)
+      || new Set(payload.camera_ids).size !== payload.camera_ids.length
+      || !Array.isArray(payload.quarantined_camera_ids)
+      || !payload.quarantined_camera_ids.every(isNonnegativeInt)
+      || new Set(payload.quarantined_camera_ids).size !== payload.quarantined_camera_ids.length
+      || !payload.quarantined_camera_ids.every(id => payload.camera_ids.includes(id))
+      || !isNonnegativeInt(payload.exposure_skew_ns)
+      || payload.hardware_provenance_verified !== false
+      || payload.position_units !== 'uncalibrated_world'
       || !Array.isArray(payload.rigid_bodies)
       || payload.rigid_bodies.length !== models.length) {
     message.textContent = 'Rejected incompatible or stale PoseFrame.'
@@ -208,6 +279,77 @@ function acceptEnvelope(raw: unknown): void {
         || !models.some(model => model.board_id === body.board_id)
         || bodies.some(other => other.board_id === body.board_id)) {
       message.textContent = 'Rejected missing or unknown board.'
+      return
+    }
+    const model = models.find(item => item.board_id === body.board_id)
+    if (model === undefined || !Array.isArray(body.visible_marker_ids)
+        || !Array.isArray(body.excluded_marker_ids)
+        || !body.visible_marker_ids.every(isNonnegativeInt)
+        || !body.excluded_marker_ids.every(isNonnegativeInt)
+        || new Set(body.visible_marker_ids).size !== body.visible_marker_ids.length
+        || new Set(body.excluded_marker_ids).size !== body.excluded_marker_ids.length
+        || body.visible_marker_ids.some(id => body.excluded_marker_ids.includes(id))
+        || [...body.visible_marker_ids, ...body.excluded_marker_ids]
+          .some(id => !model.marker_ids.includes(id))
+        || body.metric_scale_validated !== false) {
+      message.textContent = 'Rejected marker ownership or scale metadata.'
+      return
+    }
+    const poseFields = [
+      'position_world_from_body', 'quaternion_world_from_body_xyzw',
+      'position_world_from_board', 'quaternion_world_from_board_xyzw',
+    ]
+    const measured = body.evidence_kind === 'MEASURED'
+    if (measured) {
+      if (body.tracking_status !== 'TRACKING'
+          || body.measurement_trigger_id !== payload.frame_id
+          || body.measurement_age_triggers !== 0
+          || body.last_measurement_exposure_timestamp_ns !== payload.latest_exposure_timestamp_ns
+          || body.measurement_age_ns !== 0
+          || body.visible_marker_ids.length < model.min_visible_markers
+          || !finiteVector(body.position_world_from_body, 3)
+          || !unitQuaternion(body.quaternion_world_from_body_xyzw)
+          || !finiteVector(body.position_world_from_board, 3)
+          || !unitQuaternion(body.quaternion_world_from_board_xyzw)
+          || !isObject(body.quality)
+          || typeof body.quality.rigid_rms_world_units !== 'number'
+          || !Number.isFinite(body.quality.rigid_rms_world_units)
+          || body.quality.rigid_rms_world_units < 0
+          || typeof body.quality.reprojection_max_rms_px !== 'number'
+          || !Number.isFinite(body.quality.reprojection_max_rms_px)
+          || body.quality.reprojection_max_rms_px < 0) {
+        message.textContent = 'Rejected stale or malformed MEASURED body.'
+        return
+      }
+    } else if (body.evidence_kind !== 'INVALID'
+        || !['DISCOVER', 'DEGRADED', 'LOST'].includes(String(body.tracking_status))
+        || poseFields.some(key => body[key] !== null)
+        || body.quality !== null) {
+      message.textContent = 'Rejected invalid body with cached pose or unknown status.'
+      return
+    }
+    const sourceTrigger = body.measurement_trigger_id
+    const triggerAge = body.measurement_age_triggers
+    if ((sourceTrigger === null) !== (triggerAge === null)
+        || (sourceTrigger !== null && (
+          !isNonnegativeInt(sourceTrigger) || !isNonnegativeInt(triggerAge)
+          || sourceTrigger > payload.frame_id
+          || payload.frame_id - sourceTrigger !== triggerAge
+        ))) {
+      message.textContent = 'Rejected inconsistent measurement trigger age.'
+      return
+    }
+    const sourceTime = body.last_measurement_exposure_timestamp_ns
+    const ageNs = body.measurement_age_ns
+    if ((sourceTime === null) !== (ageNs === null)
+        || (sourceTime !== null && (
+          !isDisplayTimestamp(sourceTime) || !isDisplayTimestamp(ageNs)
+          || sourceTime > payload.latest_exposure_timestamp_ns
+          || (Number.isSafeInteger(sourceTime)
+            && Number.isSafeInteger(payload.latest_exposure_timestamp_ns)
+            && payload.latest_exposure_timestamp_ns - sourceTime !== ageNs)
+        ))) {
+      message.textContent = 'Rejected inconsistent measurement exposure age.'
       return
     }
     bodies.push(body)
