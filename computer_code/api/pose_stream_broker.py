@@ -27,6 +27,7 @@ from temporal_pattern import _nonnegative_int
 _STREAM_PROTOCOL = "low_cost_mocap_stream"
 _PAYLOAD_PROTOCOL = "low_cost_mocap_pose"
 _SESSION_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
+_EVENT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}\Z")
 _HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -296,7 +297,9 @@ class BoundedPoseStreamPublisher:
         """
         if not callable(emit):
             raise ValueError("emit callback must be callable")
-        name = _session_name(event_name, "event_name")
+        if not isinstance(event_name, str) or _EVENT_NAME.fullmatch(event_name) is None:
+            raise ValueError("event_name must be a safe nonempty event identifier")
+        name = event_name
         count = _bounded_positive(max_messages, "max_messages", maximum=10000)
         sent = 0
         for _ in range(count):
