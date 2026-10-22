@@ -387,6 +387,18 @@ def _require_dirfd_primitives() -> None:
         raise ValueError("secure bundle validation requires descriptor-relative open support")
 
 
+def _absolute_bundle_path_without_resolution(path: str | Path) -> Path:
+    """Make a root path absolute lexically; never resolve through symlinks."""
+    candidate = Path(path)
+    if ".." in candidate.parts:
+        raise ValueError("bundle root path must not contain parent traversal")
+    if candidate.is_absolute():
+        absolute = candidate
+    else:
+        absolute = Path(os.getcwd()) / candidate
+    return Path(os.path.normpath(str(absolute)))
+
+
 def _open_directory_path_no_follow(path: Path) -> int:
     """Open an absolute directory by walking components without following links."""
     _require_dirfd_primitives()
@@ -537,15 +549,7 @@ def validate_capture_bundle(
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
 ) -> dict[str, Any]:
     """Validate a manifest and hash artifacts through an anchored root descriptor."""
-    root_input = Path(bundle_root)
-    if root_input.is_symlink():
-        raise ValueError("bundle root must not itself be a symlink")
-    try:
-        root = root_input.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise ValueError("bundle root must exist and resolve safely") from exc
-    if not root.is_dir():
-        raise ValueError("bundle root must be a directory")
+    root = _absolute_bundle_path_without_resolution(bundle_root)
     root_fd = _open_directory_path_no_follow(root)
     try:
         return _validate_capture_bundle_at(
@@ -721,18 +725,9 @@ def validate_capture_bundle_directory(
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
 ) -> dict[str, Any]:
     """Read the manifest and validate every artifact under one anchored root FD."""
-    root_input = Path(bundle_root)
-    if root_input.is_symlink():
-        raise ValueError("bundle root must not itself be a symlink")
     if manifest_name != MANIFEST_NAME:
         raise ValueError("manifest name must be capture-bundle.json")
-    try:
-        root = root_input.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise ValueError("bundle root must exist and resolve safely") from exc
-    if not root.is_dir():
-        raise ValueError("bundle root must be a directory")
-
+    root = _absolute_bundle_path_without_resolution(bundle_root)
     root_fd = _open_directory_path_no_follow(root)
     try:
         raw = _read_regular_file_at(
