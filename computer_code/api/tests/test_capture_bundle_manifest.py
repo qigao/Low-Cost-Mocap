@@ -171,6 +171,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
     def test_v2_statistical_limits_reject_invalid_probability_and_sample_size(self):
         for field, value in (
             ("max_wrong_accept_one_sided_upper_95", -0.01),
+            ("max_wrong_accept_one_sided_upper_95", 0.0),
             ("max_wrong_accept_one_sided_upper_95", 1.01),
             ("max_wrong_accept_one_sided_upper_95", True),
             ("max_wrong_accept_one_sided_upper_95", float("nan")),
@@ -182,6 +183,13 @@ class CaptureBundleManifestTests(unittest.TestCase):
                 candidate["acceptance_limits"][field] = value
                 with self.assertRaisesRegex(ValueError, field):
                     validate_capture_bundle(candidate, self.root)
+
+    def test_v2_sample_size_must_be_feasible_for_declared_upper_bound(self):
+        candidate = deepcopy(self.manifest)
+        candidate["acceptance_limits"]["min_temporal_trials"] = 10
+        candidate["acceptance_limits"]["max_wrong_accept_one_sided_upper_95"] = 0.01
+        with self.assertRaisesRegex(ValueError, "at least 268 trials are required"):
+            validate_capture_bundle(candidate, self.root)
 
     def test_canonical_manifest_sha_does_not_depend_on_key_insertion_order(self):
         first = validate_capture_bundle(self.manifest, self.root)
