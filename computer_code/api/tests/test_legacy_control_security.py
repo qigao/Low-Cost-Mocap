@@ -5,6 +5,7 @@ from legacy_control_security import (
     DEFAULT_ALLOWED_ORIGINS,
     configured_origins,
     legacy_control_peer_allowed,
+    is_loopback_peer,
     validate_arm_payload,
     validate_pid_payload,
     validate_setpoint_payload,
@@ -13,6 +14,23 @@ from legacy_control_security import (
 
 
 class LegacyControlSecurityTests(unittest.TestCase):
+    def test_loopback_peer_policy_handles_remote_and_mapped_addresses(self):
+        self.assertTrue(is_loopback_peer("127.0.0.1"))
+        self.assertTrue(is_loopback_peer("::1"))
+        self.assertTrue(is_loopback_peer("::ffff:127.0.0.1"))
+        self.assertFalse(is_loopback_peer("192.168.1.20"))
+        self.assertFalse(is_loopback_peer(None))
+        self.assertFalse(is_loopback_peer("localhost"))
+
+    def test_camera_stream_guards_before_initializing_hardware(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "index.py").read_text(encoding="utf-8")
+        start = source.index('@app.route("/api/camera-stream")')
+        end = source.index('@app.route("/api/trajectory-planning")', start + 1)
+        handler = source[start:end]
+        self.assertIn("is_loopback_peer(request.remote_addr)", handler)
+        self.assertLess(handler.index("is_loopback_peer(request.remote_addr)"), handler.index("Cameras.instance()"))
     def test_control_is_disabled_without_explicit_opt_in(self):
         for address in ("127.0.0.1", "::1", "localhost", "192.168.1.20", None):
             with self.subTest(address=address):
