@@ -69,12 +69,12 @@ def optical_measurement_from_pose_frame(frame, *, body_id, expected_pattern_sha2
         raise ValueError("unsupported PoseStream frame")
     if frame.get("hardware_provenance_verified") is not False:
         raise ValueError("unexpected hardware provenance claim")
-    pattern = _sha(frame.get("pattern_sha256"), "pattern digest")
-    calibration = _sha(frame.get("calibration_sha256"), "optical calibration digest")
+    pattern = _h(frame.get("pattern_sha256"), "pattern digest")
+    calibration = _h(frame.get("calibration_sha256"), "optical calibration digest")
     if pattern != expected_pattern_sha256 or calibration != expected_calibration_sha256:
         raise ValueError("optical pattern/calibration revision mismatch")
-    frame_id = _time(frame.get("frame_id"), "frame_id")
-    timestamp = _time(frame.get("latest_exposure_timestamp_ns"), "exposure timestamp")
+    frame_id = _t(frame.get("frame_id"), "frame_id")
+    timestamp = _t(frame.get("latest_exposure_timestamp_ns"), "exposure timestamp")
     clock = _s(frame.get("clock_domain"), "clock domain")
     bodies = frame.get("rigid_bodies")
     if not isinstance(bodies, list):
@@ -170,7 +170,8 @@ class OpticalIMUAttitudeFusion:
         return self.state
     def ingest_optical(self,m: OpticalAttitudeMeasurement, *, allow_reseed_after_lost=False):
         if not isinstance(m,OpticalAttitudeMeasurement): raise ValueError("expected optical measurement")
-        if m.body_id!=self.body or m.pattern_sha256!=self.pattern or m.calibration_sha256!=self.optcal: raise ValueError("optical identity/calibration mismatch")
+        if m.body_id!=self.body: raise ValueError("optical body mismatch")
+        if m.pattern_sha256!=self.pattern or m.calibration_sha256!=self.optcal: raise ValueError("optical identity/calibration mismatch")
         if m.clock_domain!=self.mapping.source_clock_domain: raise ValueError("optical clock mapping source mismatch")
         t=self.mapping.map_timestamp(m.timestamp_ns)
         if not self.history: raise ValueError("IMU history not initialized")
