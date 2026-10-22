@@ -112,6 +112,33 @@ class TemporalIdentityTests(unittest.TestCase):
         self.assertEqual(self.codes.minimum_hamming_distance, 4)
         self.assertEqual(self.codes.guaranteed_erasure_budget, 1)
 
+    def test_decode_reports_when_unique_result_exceeds_guaranteed_erasure_budget(self):
+        truth = self.patterns[12]
+        samples = [
+            LightSample(150 + phase, None if phase in (0, 1) else bit)
+            for phase, bit in enumerate(truth)
+        ]
+        decoded = decode_temporal_marker(
+            samples, self.codes, trigger_epoch=150, min_valid_samples=6
+        )
+        self.assertEqual(decoded.marker_id, 12)
+        self.assertEqual(decoded.erased_samples, 2)
+        self.assertEqual(decoded.guaranteed_erasure_budget, 1)
+        self.assertFalse(decoded.within_guaranteed_erasure_budget)
+
+    def test_complete_cycle_reports_guaranteed_erasure_budget_satisfied(self):
+        truth = self.patterns[12]
+        samples = [
+            LightSample(180 + phase, bit)
+            for phase, bit in enumerate(truth)
+        ]
+        decoded = decode_temporal_marker(
+            samples, self.codes, trigger_epoch=180
+        )
+        self.assertEqual(decoded.erased_samples, 0)
+        self.assertEqual(decoded.guaranteed_erasure_budget, 1)
+        self.assertTrue(decoded.within_guaranteed_erasure_budget)
+
     def test_decode_with_occlusion_noise_and_out_of_order_arrivals(self):
         truth = self.patterns[12]
         samples = [
