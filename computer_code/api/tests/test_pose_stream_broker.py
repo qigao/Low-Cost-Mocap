@@ -100,6 +100,34 @@ class BoundedPoseStreamTests(unittest.TestCase):
         self.assertIsNone(received[-1]["rigid_bodies"][1]["position_world_from_body"])
         self.assertEqual(self.publisher.subscriber_statistics("viewerA").pending_frames, 0)
 
+    def test_asset_content_must_match_semantic_registry_revision(self):
+        self.publisher.subscribe("viewerA")
+        asset = self.publisher.peek_next("viewerA")
+        consumer = PoseStreamConsumer()
+        self.assertIsNone(self.registry.pose_phase)
+        self.assertIsNone(asset["payload"]["pose_phase"])
+        mutated = deepcopy(asset)
+        mutated["payload"]["boards"][0]["markers"][0]["xyz_m"][0] += 0.004
+        with self.assertRaisesRegex(ValueError, "semantic pattern SHA-256 mismatch"):
+            consumer.consume(mutated)
+        self.assertIsNone(consumer.session_id)
+        accepted = consumer.consume(asset)
+        self.assertEqual(accepted["pattern_sha256"], self.registry.config_sha256)
+
+    def test_consumer_rejects_unregistered_asset_fields_or_board_transform(self):
+        self.publisher.subscribe("viewerA")
+        asset = self.publisher.peek_next("viewerA")
+        for malformed in (
+            ("extra", lambda p: p.update({"is_live_hardware": True})),
+            ("mirror", lambda p: p["boards"][0]["body_from_board"]["rotation"][0].__setitem__(0,-1)),
+        ):
+            packet = deepcopy(asset)
+            malformed[1](packet["payload"])
+            consumer = PoseStreamConsumer()
+            with self.subTest(case=malformed[0]), self.assertRaises(ValueError):
+                consumer.consume(packet)
+            self.assertIsNone(consumer.session_id)
+
     def test_source_stale_frame_calibration_change_and_clock_mix_fail_closed(self):
         self.publisher.subscribe("viewerA")
         self.publisher.publish(self.frame(10))

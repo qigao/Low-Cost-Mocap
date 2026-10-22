@@ -343,6 +343,13 @@ def _asset_identity(
         or payload.get("hardware_provenance_verified") is not False
     ):
         raise ValueError("invalid or hardware-asserting asset description")
+    if set(payload) != {
+        "protocol", "schema_version", "kind", "pattern_sha256",
+        "hardware_provenance_verified",
+        "model_coordinates_are_declared_not_metrologically_verified",
+        "period_triggers", "max_bit_errors", "pose_phase", "boards",
+    } or payload["model_coordinates_are_declared_not_metrologically_verified"] is not True:
+        raise ValueError("asset description fields do not match schema version 1")
     revision = _sha(payload.get("pattern_sha256"), "pattern_sha256")
     period = _bounded_positive(payload.get("period_triggers"), "period_triggers", maximum=256)
     errors = _nonnegative_int(payload.get("max_bit_errors"), "max_bit_errors")
@@ -408,6 +415,43 @@ def _asset_identity(
         expected[name] = local
         requirements[name] = minimum
         transforms[name] = (R, t)
+
+    # The SHA is a fingerprint of *all* semantic board definitions, not
+    # merely a caller-supplied label. Reconstruct the active registry from
+    # the wire asset and verify its exact canonical configuration revision.
+    manifest_boards = {}
+    for board in boards:
+        name = board["board_id"]
+        if set(board) != {
+            "board_id", "type", "min_visible_markers",
+            "body_from_board", "markers",
+        }:
+            raise ValueError("unexpected board asset fields")
+        if set(board["body_from_board"]) != {"rotation", "translation_m"}:
+            raise ValueError("unexpected board mounting asset fields")
+        serialized_markers = {}
+        for entry in board["markers"]:
+            if set(entry) != {"marker_id", "xyz_m", "code"}:
+                raise ValueError("unexpected marker asset fields")
+            serialized_markers[str(entry["marker_id"])] = {
+                "xyz_m": entry["xyz_m"],
+                "code": entry["code"],
+            }
+        manifest_boards[name] = {
+            "type": board["type"],
+            "min_visible_markers": board["min_visible_markers"],
+            "body_from_board": board["body_from_board"],
+            "markers": serialized_markers,
+        }
+    actual = BoardPatternRegistry.from_mapping({
+        "version": 1,
+        "period_triggers": period,
+        "max_bit_errors": errors,
+        "pose_phase": payload["pose_phase"],
+        "boards": manifest_boards,
+    })
+    if actual.config_sha256 != revision:
+        raise ValueError("asset semantic pattern SHA-256 mismatch")
     return revision, expected, requirements, transforms
 
 
