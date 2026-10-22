@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from offline_acceptance_cli import evaluate_document, main
 
@@ -111,6 +112,60 @@ class OfflineRecordingCliTests(unittest.TestCase):
         doc["trigger"]["recordings"][0]["camera_frames"][0]["received_at"] = 50
         with self.assertRaisesRegex(ValueError, "incomplete or unknown"):
             evaluate_document(doc)
+
+    def test_unknown_fields_fail_closed_at_every_document_section(self):
+        doc = self.sample()
+        doc["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "unknown unexpected"):
+            evaluate_document(doc)
+
+        doc = self.sample()
+        doc["trigger"]["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "unknown unexpected"):
+            evaluate_document(doc)
+
+        doc = self.sample()
+        doc["trigger"]["recordings"][0]["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "unknown unexpected"):
+            evaluate_document(doc)
+
+        doc = self.sample()
+        doc["temporal"]["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "unknown unexpected"):
+            evaluate_document(doc)
+
+        doc = self.sample()
+        doc["temporal"]["trials"][0]["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "unknown unexpected"):
+            evaluate_document(doc)
+
+    def test_cli_rejects_duplicate_json_keys_without_partial_stdout(self):
+        payload = b'{"schema_version":1,"schema_version":1,"temporal":{"codebook":{},"trials":[]}}'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "duplicate.json"
+            path.write_bytes(payload)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as raised:
+                    main([str(path)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("duplicate JSON object key", stderr.getvalue())
+
+    def test_cli_rejects_oversized_input_before_parsing_or_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "oversized.json"
+            path.write_bytes(b" " * 17)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("offline_acceptance_cli.MAX_RECORDING_BYTES", 16):
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        main([str(path)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("byte limit", stderr.getvalue())
 
     def test_fabricated_hardware_label_is_never_certification(self):
         doc = self.sample()
