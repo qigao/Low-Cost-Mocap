@@ -81,6 +81,7 @@ def describe_board_assets(registry: BoardPatternRegistry) -> dict[str, Any]:
         "model_coordinates_are_declared_not_metrologically_verified": True,
         "period_triggers": registry.period_triggers,
         "max_bit_errors": registry.max_bit_errors,
+        "pose_phase": registry.pose_phase,
         "boards": boards,
     }
 
