@@ -574,13 +574,43 @@ def validate_capture_bundle_directory(
         raise ValueError("manifest file must not be a symlink")
     if manifest_name != MANIFEST_NAME:
         raise ValueError("manifest name must be capture-bundle.json")
+    # Open once, then validate and read through the same descriptor. A
+    # separate is_symlink/stat/read sequence is vulnerable to path replacement
+    # between checks. Fail closed where O_NOFOLLOW is unavailable rather than
+    # silently claiming race-resistant symlink protection.
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("manifest validation requires platform O_NOFOLLOW support")
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
     try:
-        size = manifest_path.stat().st_size
-        if size > MAX_MANIFEST_BYTES:
-            raise ValueError("manifest exceeds byte cap")
-        raw = manifest_path.read_bytes()
+        descriptor = os.open(manifest_path, flags)
     except OSError as exc:
-        raise ValueError("manifest file cannot be read") from exc
+        raise ValueError("manifest file cannot be opened without following links") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("manifest must be a regular file")
+        if metadata.st_size > MAX_MANIFEST_BYTES:
+            raise ValueError("manifest exceeds byte cap")
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                min(CHUNK_BYTES, MAX_MANIFEST_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_MANIFEST_BYTES:
+                raise ValueError("manifest exceeds byte cap")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+    except OSError as exc:
+        raise ValueError("manifest file cannot be read safely") from exc
+    finally:
+        os.close(descriptor)
     manifest = load_manifest_bytes(raw)
     report = validate_capture_bundle(
         manifest, root, max_artifacts=max_artifacts,
