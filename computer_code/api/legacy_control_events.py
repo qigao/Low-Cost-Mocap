@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 import os
 import time
+from functools import wraps
 from typing import Any, Callable
 
 from flask import request
 
 from legacy_control_security import (
     ArmCounterRegistry,
+    is_loopback_peer,
     legacy_control_peer_allowed,
     validate_arm_payload,
     validate_pid_payload,
@@ -22,6 +24,22 @@ from legacy_control_security import (
     validate_trim_payload,
 )
 
+
+def loopback_only_event(socketio: Any):
+    """Guard a stateful Socket.IO event from non-loopback peers until remote auth exists."""
+    def decorate(handler: Callable[..., Any]):
+        @wraps(handler)
+        def guarded(*args: Any, **kwargs: Any):
+            if not is_loopback_peer(request.remote_addr):
+                socketio.emit(
+                    "legacy-control-rejected",
+                    {"reason": "stateful camera events are loopback-only until remote authentication is implemented"},
+                    to=request.sid,
+                )
+                return
+            return handler(*args, **kwargs)
+        return guarded
+    return decorate
 
 def register_legacy_control_handlers(
     socketio: Any,
