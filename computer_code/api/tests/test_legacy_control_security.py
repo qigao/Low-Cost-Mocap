@@ -38,7 +38,7 @@ class LegacyControlSecurityTests(unittest.TestCase):
         for event in ("arm-drone", "set-drone-pid", "set-drone-setpoint", "set-drone-trim"):
             with self.subTest(event=event):
                 start = index_source.index(f'@socketio.on("{event}")')
-                next_handler = index_source.find("\\n@socketio.on(", start + 1)
+                next_handler = index_source.find("\n@socketio.on(", start + 1)
                 handler = index_source[start: next_handler if next_handler >= 0 else len(index_source)]
                 self.assertIn("_legacy_control_authorized()", handler)
         self.assertIn('os.environ.get("MOCAP_BIND_HOST", "127.0.0.1")', index_source)
