@@ -5,9 +5,11 @@
 The repository originated as an indoor multi-drone mocap project. Its target architecture is now a reusable Outside-In motion-capture engine: optical measurement, time alignment, state estimation and quality-qualified pose output are core capabilities; drone control is a separate downstream consumer.
 
 - [General optical–IMU architecture and implementation roadmap](docs/GENERAL_MOCAP_ARCHITECTURE.md)
+- [Typed IMU sample and clock mapping contract](computer_code/api/imu_contract.py)
+- [IMU-to-body calibration contract](computer_code/api/imu_calibration.py)
 - [Architecture epic / acceptance tasks](https://github.com/qigao/Low-Cost-Mocap/issues/33)
 
-**Implementation status:** LED identity tracking, synchronized-batch software contracts, multi-view geometry, rigid-body fitting, PoseStream and bounded offline replay exist as software modules. A hardware-qualified camera trigger/exposure adapter and a general IMU clock-alignment/fusion estimator are **not implemented yet**. The selected camera+IMU topology is the roadmap, not a claim of current capability. Hardware evidence gates remain in [Issues #2–#7](docs/HARDWARE_VALIDATION.md).
+**Implementation status:** LED identity tracking, synchronized-batch software contracts, multi-view geometry, rigid-body fitting, PoseStream, bounded offline replay, a typed IMU sample/clock-mapping contract, and an immutable IMU calibration contract now exist as software modules. The hardware-qualified camera trigger/exposure adapter, hardware-qualified clock mapping, inertial propagation, and optical–IMU fusion estimator are **not implemented yet**. The selected camera+IMU topology is the target architecture, not a claim of current fused tracking capability. Hardware evidence gates remain in [Issues #2–#7](docs/HARDWARE_VALIDATION.md).
 
 ## YouTube Video
 Watch this for information about the project & a demo!
