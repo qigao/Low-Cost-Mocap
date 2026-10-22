@@ -25,6 +25,18 @@ from legacy_control_security import (
 )
 
 
+def loopback_only_http_route(handler: Callable[..., Any]):
+    """Deny remote access before a side-effecting camera route touches hardware."""
+    @wraps(handler)
+    def guarded(*args: Any, **kwargs: Any):
+        if not is_loopback_peer(request.remote_addr):
+            return (
+                "camera stream is loopback-only until remote authentication is implemented",
+                403,
+            )
+        return handler(*args, **kwargs)
+    return guarded
+
 def loopback_only_event(socketio: Any):
     """Guard a stateful Socket.IO event from non-loopback peers until remote auth exists."""
     def decorate(handler: Callable[..., Any]):

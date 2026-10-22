@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from flask import Flask
 from flask_socketio import SocketIO
 
-from legacy_control_events import loopback_only_event, register_legacy_control_handlers
+from legacy_control_events import loopback_only_event, loopback_only_http_route, register_legacy_control_handlers
 
 
 class RecordingSerial:
@@ -149,6 +149,28 @@ class LegacyControlEventIntegrationTests(unittest.TestCase):
         self.assertEqual(self.serial.writes, [])
         self.assertEqual(self.state.drone_armed, [False, False])
 
+    def test_http_camera_stream_guard_rejects_remote_before_side_effect(self):
+        app = Flask("camera-stream-guard-test")
+        calls = []
+
+        @app.route("/camera-stream")
+        @loopback_only_http_route
+        def camera_stream():
+            calls.append("camera-init")
+            return "stream-body"
+
+        remote = app.test_client()
+        remote.environ_base["REMOTE_ADDR"] = "192.168.1.20"
+        response = remote.get("/camera-stream")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(calls, [])
+
+        local = app.test_client()
+        local.environ_base["REMOTE_ADDR"] = "127.0.0.1"
+        response = local.get("/camera-stream")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_data(as_text=True), "stream-body")
+        self.assertEqual(calls, ["camera-init"])
     def test_loopback_only_camera_event_rejects_remote_peer(self):
         remote = self.make_client("192.168.1.20")
         remote.emit("protected-camera-config", {"exposure": 100})

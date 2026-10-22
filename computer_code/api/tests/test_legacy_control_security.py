@@ -29,8 +29,8 @@ class LegacyControlSecurityTests(unittest.TestCase):
         start = source.index('@app.route("/api/camera-stream")')
         end = source.index('@app.route("/api/trajectory-planning",', start + 1)
         handler = source[start:end]
-        self.assertIn("is_loopback_peer(request.remote_addr)", handler)
-        self.assertLess(handler.index("is_loopback_peer(request.remote_addr)"), handler.index("Cameras.instance()"))
+        self.assertIn("@loopback_only_http_route", handler)
+        self.assertLess(handler.index("@loopback_only_http_route"), handler.index("def camera_stream("))
     def test_control_is_disabled_without_explicit_opt_in(self):
         for address in ("127.0.0.1", "::1", "localhost", "192.168.1.20", None):
             with self.subTest(address=address):
