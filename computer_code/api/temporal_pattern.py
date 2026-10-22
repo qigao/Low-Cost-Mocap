@@ -114,13 +114,16 @@ def validate_trigger_batch(
 class TemporalCodebook:
     """Periodic per-marker on/off codes with bounded Hamming error correction.
 
-    Code distance greater than twice max_bit_errors is required before an
-    erasure-free period can uniquely correct that many corrupted observations.
-    Erasures still reduce distance and must pass runtime ambiguity checks.
+    For minimum pairwise distance d, t bit errors and e erasures are
+    guaranteed uniquely decodable when d > 2*t + e. The erasure budget assumes
+    a known trigger epoch and phase; runtime decoding must still reject actual
+    candidate ambiguity rather than selecting the first match.
     """
     patterns: Mapping[int, Sequence[int]]
     max_bit_errors: int = 1
     period: int = field(init=False)
+    minimum_hamming_distance: int = field(init=False)
+    guaranteed_erasure_budget: int = field(init=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.patterns, Mapping) or len(self.patterns) < 2:
@@ -147,15 +150,22 @@ class TemporalCodebook:
                 raise ValueError("marker pattern must have both illuminated and dark phases")
             normalized[marker] = tuple(bits)
         ids = list(normalized)
+        minimum_distance = int(period)
         for i, first in enumerate(ids):
             for second in ids[i + 1:]:
                 distance = sum(
                     a != b for a, b in zip(normalized[first], normalized[second])
                 )
+                minimum_distance = min(minimum_distance, distance)
                 if distance <= 2 * errors:
                     raise ValueError("temporal codebook Hamming distance is insufficient")
         object.__setattr__(self, "patterns", MappingProxyType(normalized))
         object.__setattr__(self, "period", int(period))
+        object.__setattr__(self, "minimum_hamming_distance", minimum_distance)
+        object.__setattr__(
+            self, "guaranteed_erasure_budget",
+            minimum_distance - 2 * errors - 1,
+        )
 
 
 @dataclass(frozen=True)
