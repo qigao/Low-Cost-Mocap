@@ -14,6 +14,12 @@ function isObject(value: unknown): value is Obj {
 function isNonnegativeInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
+// Real nanoseconds since an epoch may exceed JavaScript's safe integer
+// precision. Accept finite display-only timestamps; never claim exact
+// timing or perform sub-microsecond arithmetic in the browser.
+function isDisplayTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
 function get<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id)
   if (found === null) throw new Error('Missing observer element: ' + id)
@@ -164,7 +170,7 @@ function acceptEnvelope(raw: unknown): void {
   if (payload.kind !== 'pose_frame' || session !== raw.session_id
       || revision === null || payload.pattern_sha256 !== revision
       || !isNonnegativeInt(payload.frame_id)
-      || !isNonnegativeInt(payload.latest_exposure_timestamp_ns)
+      || !isDisplayTimestamp(payload.latest_exposure_timestamp_ns)
       || !Array.isArray(payload.rigid_bodies)
       || payload.rigid_bodies.length !== models.length) {
     message.textContent = 'Rejected incompatible or stale PoseFrame.'
@@ -189,7 +195,9 @@ function acceptEnvelope(raw: unknown): void {
   sequence = raw.sequence
   frame = payload.frame_id
   frameElement.textContent = String(frame)
-  exposureElement.textContent = String(payload.latest_exposure_timestamp_ns)
+  exposureElement.textContent = (
+    payload.latest_exposure_timestamp_ns > Number.MAX_SAFE_INTEGER ? '≈ ' : ''
+  ) + String(payload.latest_exposure_timestamp_ns)
   calibrationSHA.textContent = text(payload.calibration_sha256)
   clockDomain.textContent = text(payload.clock_domain)
   quarantined.textContent = Array.isArray(payload.quarantined_camera_ids)

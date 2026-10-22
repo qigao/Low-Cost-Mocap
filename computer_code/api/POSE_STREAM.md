@@ -219,6 +219,23 @@ immutable JSON strings. It does not persist live camera buffers or device
 state. SHA-256 is not a signature: independently captured timing, calibration
 and marker ground truth are still required.
 
+## Separate opt-in read-only localhost observer
+
+The software transport can now be hosted in a standalone Flask-SocketIO
+development app factory, `pose_observer_host.PoseObserverHost`, with a
+strictly read-only `/pose-observe` namespace, explicit viewer token,
+bounded subscriber rooms, local polling limits and no legacy `index.py`
+import. A separate standalone Vite page `/pose-monitor.html` only
+subscribes to AssetDescription/PoseFrame; it does not import the legacy
+React flight control application. Both entry points start **only** when
+explicitly launched by the developer. They have **no live camera input**
+unless a trusted host application explicitly calls `publish_frame()`.
+
+For setup, exact namespace/security boundaries and client examples see
+[POSE_OBSERVER.md](POSE_OBSERVER.md). The local observer is a preview and
+not an independently audited network service, physical exposure clock,
+flight-controller link or a NatNet wire-compatible implementation.
+
 ## Explicit non-goals and next acceptance
 
 - This is **not** NatNet/UDP wire-compatible transport or an activated
