@@ -128,7 +128,7 @@ class OpticalIMUAttitudeFusion:
     def __init__(self, *, body_id, imu_id, imu_clock_domain, imu_calibration_revision, imu_calibration_sha256,
         optical_pattern_sha256, optical_calibration_sha256, clock_mapping: ClockMapping,
         gyro_noise_density_rad_s_sqrt_hz, optical_variance_rad2=0.0025, max_dropout_ns=100_000_000,
-        max_innovation_rad=1.2, history_capacity=256):
+        max_innovation_rad=1.2, max_alignment_angular_rate_rad_s=20.0, history_capacity=256):
         self.body=_s(body_id,"body_id"); self.imu=_s(imu_id,"imu_id"); self.clock=_s(imu_clock_domain,"IMU clock")
         self.calrev=_s(imu_calibration_revision,"IMU calibration revision"); self.calsha=_h(imu_calibration_sha256,"IMU calibration digest")
         self.pattern=_h(optical_pattern_sha256,"pattern digest"); self.optcal=_h(optical_calibration_sha256,"optical calibration digest")
@@ -140,7 +140,8 @@ class OpticalIMUAttitudeFusion:
         self.r=_f(optical_variance_rad2,"optical variance")
         if self.r<=0: raise ValueError("optical variance must be positive")
         self.dropout=_t(max_dropout_ns,"dropout limit"); self.innovation=_f(max_innovation_rad,"innovation limit")
-        if self.dropout<1 or not 0<self.innovation<=math.pi: raise ValueError("invalid dropout/innovation limit")
+        self.max_alignment_rate=_f(max_alignment_angular_rate_rad_s,"max alignment angular rate")
+        if self.dropout<1 or not 0<self.innovation<=math.pi or self.max_alignment_rate<0: raise ValueError("invalid dropout/innovation/alignment limit")
         if type(history_capacity) is not int or not 3<=history_capacity<=4096: raise ValueError("history capacity must be 3..4096")
         self.history=deque(maxlen=history_capacity); self.q=None; self.p=None; self.last_optical=None; self.last_frame=None; self.expired=False; self.state=None
     def _state(self,ts,status,source):
