@@ -137,6 +137,9 @@ def evaluate_document(document: object) -> dict[str, Any]:
             "rejected_batches": summary.rejected_batches,
             "reference_gaps": summary.reference_gaps,
             "maximum_declared_skew_ns": summary.maximum_declared_skew_ns,
+            "admitted_exposure_skew_ns_percentiles": dict(
+                summary.admitted_exposure_skew_ns_percentiles
+            ),
             "rejection_reasons": dict(summary.rejection_reasons),
             "hardware_provenance_verified": False,
         }
