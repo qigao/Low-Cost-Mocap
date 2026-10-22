@@ -77,6 +77,17 @@ class OpticalIMUAttitudeFusionTests(unittest.TestCase):
         self.assertIsNone(state.global_position_m)
         self.assertFalse(state.global_position_observable)
 
+    def test_optical_seed_between_imu_samples_is_transported_to_current_time(self):
+        fusion, states = setup_pipeline()
+        fusion.ingest_imu(states[0])
+        fusion.ingest_imu(states[1])
+        fusion.ingest_imu(states[2])
+        state = fusion.ingest_optical(optical(1_015_000_000, 10))
+        self.assertEqual(state.status, "DEGRADED")
+        self.assertEqual(state.optical_age_ns, 5_000_000)
+        self.assertEqual(state.source, "OPTICAL_CORRECTED_WITH_ALIGNMENT")
+        self.assertIsNotNone(state.quaternion_world_from_body_xyzw)
+
     def test_imu_dropout_propagates_orientation_and_increases_variance(self):
         fusion, states = setup_pipeline(noise=(0.1, 0.1, 0.1))
         fusion.ingest_imu(states[0])
@@ -152,6 +163,21 @@ class OpticalIMUAttitudeFusionTests(unittest.TestCase):
             expected_calibration_sha256=OPTICAL_CAL_SHA,
         )
         self.assertEqual(measured.quality, "MEASURED")
+        malformed = dict(frame)
+        malformed["schema_version"] = True
+        with self.assertRaisesRegex(ValueError, "unsupported PoseStream frame"):
+            optical_measurement_from_pose_frame(
+                malformed, body_id="board-A", expected_pattern_sha256=PATTERN_SHA,
+                expected_calibration_sha256=OPTICAL_CAL_SHA,
+            )
+        malformed = dict(frame)
+        malformed["rigid_bodies"] = [dict(frame["rigid_bodies"][0])]
+        malformed["rigid_bodies"][0]["measurement_age_triggers"] = False
+        with self.assertRaisesRegex(ValueError, "stale or not a current"):
+            optical_measurement_from_pose_frame(
+                malformed, body_id="board-A", expected_pattern_sha256=PATTERN_SHA,
+                expected_calibration_sha256=OPTICAL_CAL_SHA,
+            )
         frame["rigid_bodies"][0]["evidence_kind"] = "INVALID"
         with self.assertRaisesRegex(ValueError, "stale or not a current"):
             optical_measurement_from_pose_frame(
