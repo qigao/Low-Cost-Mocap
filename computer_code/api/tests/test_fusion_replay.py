@@ -122,6 +122,8 @@ class FusionReplayTests(unittest.TestCase):
             replay_fusion_events(cfg, trace, max_events=3)
         with self.assertRaisesRegex(ValueError, "input byte capacity"):
             replay_fusion_events(cfg, trace, max_input_bytes=10)
+        with self.assertRaisesRegex(ValueError, "max_input_bytes"):
+            replay_fusion_events(cfg, trace, max_input_bytes=True)
 
     def test_reference_metrics_use_geodesic_error_and_quaternion_sign_equivalence(self):
         identity = fusion_state("TRACKING", 100, (0,0,0,1), 100, 1, 0.01)
@@ -136,6 +138,8 @@ class FusionReplayTests(unittest.TestCase):
         report = evaluate_orientation_error([identity], [ref], clock_domain="imu-clock", max_match_delta_ns=0)
         self.assertAlmostEqual(report.rmse_rad, angle, places=6)
         self.assertAlmostEqual(report.max_rad, angle, places=6)
+        self.assertAlmostEqual(report.rmse_deg, math.degrees(angle), places=5)
+        self.assertAlmostEqual(report.max_deg, math.degrees(angle), places=5)
 
     def test_reference_report_counts_degraded_and_lost_states(self):
         tracking = fusion_state("TRACKING", 100, (0,0,0,1), 100, 1, 0.01)
@@ -165,6 +169,23 @@ class FusionReplayTests(unittest.TestCase):
         far = [ReferenceOrientation(1_000, "imu-clock", (0,0,0,1), REF_SHA)]
         with self.assertRaisesRegex(ValueError, "no publishable"):
             evaluate_orientation_error([state], far, clock_domain="imu-clock", max_match_delta_ns=0)
+
+    def test_rejects_mixed_fusion_identity_or_calibration_revisions(self):
+        first = fusion_state("TRACKING", 100, (0,0,0,1), 100, 1, 0.01)
+        second = OpticalIMUFusionState(
+            body_id="another-board", imu_id="imu-1", timestamp_ns=200, clock_domain="imu-clock",
+            quaternion_world_from_body_xyzw=(0,0,0,1), attitude_variance_rad2=0.01,
+            status="TRACKING", source="OPTICAL_CORRECTED", last_optical_timestamp_ns=200,
+            last_optical_frame_id=2, optical_age_ns=0, clock_mapping_sha256="e"*64,
+            imu_calibration_sha256=IMU_SHA, optical_pattern_sha256=PATTERN_SHA,
+            optical_calibration_sha256=OPTICAL_SHA,
+        )
+        refs = [
+            ReferenceOrientation(100, "imu-clock", (0,0,0,1), REF_SHA),
+            ReferenceOrientation(200, "imu-clock", (0,0,0,1), REF_SHA),
+        ]
+        with self.assertRaisesRegex(ValueError, "mixed body/IMU/calibration"):
+            evaluate_orientation_error([first, second], refs, clock_domain="imu-clock", max_match_delta_ns=0)
 
     def test_rejects_invalid_reference_quaternion_and_changed_dataset_digest(self):
         with self.assertRaisesRegex(ValueError, "nonzero norm"):
