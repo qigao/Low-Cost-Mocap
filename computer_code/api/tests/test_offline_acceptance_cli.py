@@ -78,6 +78,10 @@ class OfflineRecordingCliTests(unittest.TestCase):
         self.assertFalse(summary["hardware_provenance_verified"])
         self.assertEqual(summary["trigger"]["admitted_batches"], 1)
         self.assertEqual(summary["trigger"]["rejected_batches"], 1)
+        self.assertEqual(
+            summary["trigger"]["admitted_exposure_skew_ns_percentiles"],
+            {"p50": 5, "p95": 5, "p99": 5, "max": 5},
+        )
         self.assertEqual(summary["temporal"]["correct_accepts"], 1)
         self.assertEqual(summary["temporal"]["wrong_accepts"], 0)
         self.assertGreater(
