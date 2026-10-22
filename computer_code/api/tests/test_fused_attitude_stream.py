@@ -120,7 +120,7 @@ class FusedAttitudeStreamTests(unittest.TestCase):
         payload = fused_attitude_state_to_dict(state(timestamp=20, optical_timestamp=10))
         cases = [
             ({"optical_age_ns": 8}, "age is inconsistent"),
-            ({"optical_pattern_sha256": "x" * 64}, "pattern revision"),
+            ({"optical_pattern_sha256": "e" * 64}, "pattern revision"),
             ({"global_position_observable": True}, "cannot claim global position"),
             ({"global_position_m": [0, 0, 0]}, "cannot publish global position"),
         ]
