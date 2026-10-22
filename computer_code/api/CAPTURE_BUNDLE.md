@@ -86,6 +86,10 @@ in 1 MiB chunks; raw video/frame data is never loaded wholesale into memory.
 - Missing, tampered, wrong-size, duplicate or unreadable artifacts make
   `bundle_integrity_valid` false. The validator reports these per artifact
   and exits nonzero.
+- The supplied bundle-root path is made absolute lexically without
+  resolving symlinks; parent-traversal components are rejected. The root and
+  every ancestor component are opened with no-follow directory descriptors,
+  so a symlinked root/ancestor is rejected rather than silently canonicalized.
 - Both directory and in-memory validation open an anchored bundle-root
   directory descriptor and walk each artifact path with descriptor-relative
   `openat`-style calls. Intermediate components require
