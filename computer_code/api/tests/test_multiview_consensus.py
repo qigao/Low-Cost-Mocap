@@ -356,7 +356,7 @@ class MultiviewConsensusTests(unittest.TestCase):
             point + offset for point, offset in zip(observations, offsets)
         ]
 
-        threshold = 35.0
+        threshold = 35.2
         support_a = (0, 1, 2, 3)
         support_b = (2, 3, 4, 5)
 
