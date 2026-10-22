@@ -148,6 +148,12 @@ class LoopbackObserverTransportTests(unittest.TestCase):
             for body in frame["rigid_bodies"]
         ))
         client.disconnect()
+        # Polling transport shutdown is asynchronous with respect to the
+        # client method return. Wait for the actual server disconnect handler
+        # instead of asserting against a transport race.
+        deadline = time.monotonic() + 2.0
+        while self.host.subscriber_count and time.monotonic() < deadline:
+            time.sleep(0.01)
         self.assertEqual(self.host.subscriber_count, 0)
 
     def test_wrong_token_cannot_connect_to_real_local_listener(self):
