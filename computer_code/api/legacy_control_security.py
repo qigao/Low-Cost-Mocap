@@ -51,3 +51,89 @@ def legacy_control_peer_allowed(remote_addr: str | None, enabled: str | None = N
         return ipaddress.ip_address(remote_addr).is_loopback
     except ValueError:
         return False
+
+NUM_DRONES = 2
+PID_PARAMETER_COUNT = 17
+TRIM_PARAMETER_COUNT = 4
+MAX_ABS_PID_PARAMETER = 1_000.0
+MAX_ABS_SETPOINT_COORDINATE = 100.0
+MAX_ABS_TRIM_PARAMETER = 1_000
+
+
+def _numeric_value(value: object, *, label: str, integer: bool = False) -> float | int:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{label} must be numeric")
+    if isinstance(value, str) and not value.strip():
+        raise ValueError(f"{label} must be numeric")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{label} must be numeric") from exc
+    import math
+    if not math.isfinite(parsed):
+        raise ValueError(f"{label} must be finite")
+    if integer:
+        if not parsed.is_integer():
+            raise ValueError(f"{label} must be an integer")
+        return int(parsed)
+    return parsed
+
+
+def _drone_index(value: object) -> int:
+    if type(value) is not int or not 0 <= value < NUM_DRONES:
+        raise ValueError("droneIndex must be an integer in the configured drone range")
+    return value
+
+
+def validate_arm_payload(data: object) -> tuple[list[bool], int, int]:
+    if not isinstance(data, dict):
+        raise ValueError("arm payload must be an object")
+    if set(data) != {"droneArmed", "count", "currentDroneIndex"}:
+        raise ValueError("arm payload has missing or unknown fields")
+    armed = data["droneArmed"]
+    if not isinstance(armed, list) or len(armed) != NUM_DRONES or any(type(v) is not bool for v in armed):
+        raise ValueError(f"droneArmed must contain exactly {NUM_DRONES} booleans")
+    count = data["count"]
+    if type(count) is not int or count < 0:
+        raise ValueError("count must be a nonnegative integer")
+    current_index = _drone_index(data["currentDroneIndex"])
+    return list(armed), count, current_index
+
+
+def validate_pid_payload(data: object) -> tuple[int, list[float]]:
+    if not isinstance(data, dict) or set(data) != {"dronePID", "droneIndex"}:
+        raise ValueError("PID payload has missing or unknown fields")
+    index = _drone_index(data["droneIndex"])
+    raw = data["dronePID"]
+    if not isinstance(raw, (list, tuple)) or len(raw) != PID_PARAMETER_COUNT:
+        raise ValueError(f"dronePID must contain exactly {PID_PARAMETER_COUNT} values")
+    values = [_numeric_value(v, label="PID parameter") for v in raw]
+    if any(abs(v) > MAX_ABS_PID_PARAMETER for v in values):
+        raise ValueError("PID parameter exceeds configured numeric bounds")
+    return index, values
+
+
+def validate_setpoint_payload(data: object) -> tuple[int, list[float]]:
+    if not isinstance(data, dict) or set(data) != {"droneSetpoint", "droneIndex"}:
+        raise ValueError("setpoint payload has missing or unknown fields")
+    index = _drone_index(data["droneIndex"])
+    raw = data["droneSetpoint"]
+    if not isinstance(raw, (list, tuple)) or len(raw) != 3:
+        raise ValueError("droneSetpoint must contain exactly 3 coordinates")
+    values = [_numeric_value(v, label="setpoint coordinate") for v in raw]
+    if any(abs(v) > MAX_ABS_SETPOINT_COORDINATE for v in values):
+        raise ValueError("setpoint coordinate exceeds configured numeric bounds")
+    return index, values
+
+
+def validate_trim_payload(data: object) -> tuple[int, list[int]]:
+    if not isinstance(data, dict) or set(data) != {"droneTrim", "droneIndex"}:
+        raise ValueError("trim payload has missing or unknown fields")
+    index = _drone_index(data["droneIndex"])
+    raw = data["droneTrim"]
+    if not isinstance(raw, (list, tuple)) or len(raw) != TRIM_PARAMETER_COUNT:
+        raise ValueError(f"droneTrim must contain exactly {TRIM_PARAMETER_COUNT} values")
+    values = [_numeric_value(v, label="trim parameter", integer=True) for v in raw]
+    if any(abs(v) > MAX_ABS_TRIM_PARAMETER for v in values):
+        raise ValueError("trim parameter exceeds configured numeric bounds")
+    return index, values
