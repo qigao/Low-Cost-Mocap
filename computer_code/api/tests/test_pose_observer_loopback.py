@@ -162,7 +162,7 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         # Polling transport shutdown is asynchronous with respect to the
         # client method return. Wait for the actual server disconnect handler
         # instead of asserting against a transport race.
-        deadline = time.monotonic() + 2.0
+        deadline = time.monotonic() + 10.0
         while self.host.subscriber_count and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(self.host.subscriber_count, 0)

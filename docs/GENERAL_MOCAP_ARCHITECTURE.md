@@ -144,7 +144,7 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `optical_imu_fusion.py` | Bounded optical attitude correction over interpolated gyro history, isotropic uncertainty, explicit TRACKING/DEGRADED/LOST states; no position/velocity |
 | `fused_attitude_stream.py` | Additive strict fused-attitude payload and state serializer; existing optical PoseStream v1 remains unchanged |
 | `fusion_replay.py` | Bounded deterministic typed-event replay, canonical digests and quaternion geodesic reference metrics |
-| `fusion_ab_report_cli.py`, `docs/FUSION_AB_REPORT.md` | Strict versioned offline optical-vs-fused report input and machine-readable metrics output |
+| `fusion_ab_report_cli.py`, `fusion_ab_bundle_report_cli.py`, `docs/FUSION_AB_REPORT.md` | Strict versioned optical-vs-fused report; bundle-gated mode binds output to verified capture-bundle/artifact hashes without asserting hardware authenticity |
 | `pose_stream.py`, `pose_stream_broker.py`, `pose_stream_recording.py` | Versioned output, bounded distribution and deterministic recording/replay |
 | `capture_bundle_manifest.py`, `bundle_gated_offline_replay.py` | Evidence integrity and gated offline qualification |
 | `index.py`, legacy serial handlers | Legacy app/controller adapter only; not core state estimation |
