@@ -43,6 +43,7 @@ join the correct board without distance-only drone-index heuristics.
 - [Atomic multi-camera local track integration and PoseStream v1 contract](computer_code/api/POSE_STREAM.md)
 - [Bounded publisher and independent consumer](computer_code/api/pose_stream_broker.py)
 - [Bounded JSONL recording/replay](computer_code/api/pose_stream_recording.py)
+- [Isolated read-only Socket.IO observer and Vite Pose Monitor](computer_code/api/POSE_OBSERVER.md) — bounded poll acknowledgements, **not connected to hardware or flight control**
 - Software-only checker: `cd computer_code/api && python board_pattern_cli.py board-patterns.continuous.example.json --require-every-phase`
 
 **Important:** These are standalone software modules and tests. The legacy

@@ -160,6 +160,12 @@ The pure serializer is complemented by three *isolated* software modules:
   capacity overflow. This protects *local recording integrity*, not hardware
   timestamp truth or authenticity.
 
+The isolated Flask-SocketIO observer returns envelopes inside a bounded
+`pose:poll` acknowledgement response (`messages: [envelope, ...])) rather
+than asynchronously pushing every frame. This keeps slow-client backpressure
+in the bounded per-subscriber broker. A lost acknowledgement can lose its
+batch; the subscriber reconnects to receive a new asset/session barrier.
+
 The publisher/consumer wire envelope has
 `protocol="low_cost_mocap_stream"`, `schema_version=1`, a monotonic
 `session_id`, a **per-subscriber** `sequence` and a `payload` containing
@@ -218,6 +224,23 @@ The journal is capped by both message count and byte size, and only records
 immutable JSON strings. It does not persist live camera buffers or device
 state. SHA-256 is not a signature: independently captured timing, calibration
 and marker ground truth are still required.
+
+## Separate opt-in read-only localhost observer
+
+The software transport can now be hosted in a standalone Flask-SocketIO
+development app factory, `pose_observer_host.PoseObserverHost`, with a
+strictly read-only `/pose-observe` namespace, explicit viewer token,
+bounded subscriber rooms, local polling limits and no legacy `index.py`
+import. A separate standalone Vite page `/pose-monitor.html` only
+subscribes to AssetDescription/PoseFrame; it does not import the legacy
+React flight control application. Both entry points start **only** when
+explicitly launched by the developer. They have **no live camera input**
+unless a trusted host application explicitly calls `publish_frame()`.
+
+For setup, exact namespace/security boundaries and client examples see
+[POSE_OBSERVER.md](POSE_OBSERVER.md). The local observer is a preview and
+not an independently audited network service, physical exposure clock,
+flight-controller link or a NatNet wire-compatible implementation.
 
 ## Explicit non-goals and next acceptance
 
