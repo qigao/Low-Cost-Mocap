@@ -16,14 +16,31 @@ import threading
 from ruckig import InputParameter, OutputParameter, Result, Ruckig
 from flask_cors import CORS
 import json
+import os
+
+from legacy_control_security import configured_origins, legacy_control_peer_allowed
+
+ALLOWED_ORIGINS = configured_origins(os.environ.get("MOCAP_ALLOWED_ORIGINS"))
 
 serialLock = threading.Lock()
 
 ser = serial.Serial("/dev/cu.usbserial-02X2K2GE", 1000000, write_timeout=1, )
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
-socketio = SocketIO(app, cors_allowed_origins='*')
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS)
+
+
+def _legacy_control_authorized() -> bool:
+    """Fail closed for serial commands unless explicitly enabled from loopback."""
+    if legacy_control_peer_allowed(request.remote_addr, os.environ.get("MOCAP_ENABLE_LEGACY_FLIGHT_CONTROL")):
+        return True
+    socketio.emit(
+        "legacy-control-rejected",
+        {"reason": "legacy flight control is disabled or the client is not loopback"},
+        to=request.sid,
+    )
+    return False
 
 cameras_init = False
 
@@ -114,6 +131,8 @@ def plan_trajectory(start_pos, end_pos, waypoints, max_vel, max_accel, max_jerk,
 
 @socketio.on("arm-drone")
 def arm_drone(data):
+    if not _legacy_control_authorized():
+        return
     global cameras_init
     if not cameras_init:
         return
@@ -130,6 +149,8 @@ def arm_drone(data):
 
 @socketio.on("set-drone-pid")
 def arm_drone(data):
+    if not _legacy_control_authorized():
+        return
     serial_data = {
         "pid": [float(x) for x in data["dronePID"]],
     }
@@ -139,6 +160,8 @@ def arm_drone(data):
 
 @socketio.on("set-drone-setpoint")
 def arm_drone(data):
+    if not _legacy_control_authorized():
+        return
     serial_data = {
         "setpoint": [float(x) for x in data["droneSetpoint"]],
     }
@@ -148,6 +171,8 @@ def arm_drone(data):
 
 @socketio.on("set-drone-trim")
 def arm_drone(data):
+    if not _legacy_control_authorized():
+        return
     serial_data = {
         "trim": [int(x) for x in data["droneTrim"]],
     }
@@ -355,4 +380,5 @@ def live_mocap(data):
 
 
 if __name__ == '__main__':
-    socketio.run(app, port=3001, debug=True)
+    bind_host = os.environ.get("MOCAP_BIND_HOST", "127.0.0.1")
+    socketio.run(app, host=bind_host, port=3001, debug=False, use_reloader=False)

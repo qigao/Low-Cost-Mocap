@@ -53,6 +53,16 @@ camera capture and serial flight-control code has **not** been switched.
 Real sensor-exposure synchronization, physical scale and motion-to-control
 safety remain in [hardware validation Issues #2–#7](docs/HARDWARE_VALIDATION.md).
 
+**Legacy controller safety default:** `computer_code/api/index.py` now binds to
+`127.0.0.1` with debug/reloader disabled by default. CORS origins are an
+explicit local-development allowlist; override with
+`MOCAP_ALLOWED_ORIGINS` only when needed. Serial flight-control events are
+denied unless `MOCAP_ENABLE_LEGACY_FLIGHT_CONTROL=1` is explicitly set, and
+even then only loopback clients are authorized. Setting `MOCAP_BIND_HOST` to
+a LAN address does **not** authorize remote flight-control commands. Remote
+control requires a separately reviewed authentication design; do not expose
+this legacy controller to untrusted networks.
+
 ## Documentation
 The documentation for this project is admittedly pretty lacking, if anyone would like to put type definitions in the Python code that would be amazing and probably go a long way to helping the readability of the code. Feel free to also use the [discussion](https://github.com/jyjblrd/Mocap-Drones/discussions) tab to ask questions.
 
