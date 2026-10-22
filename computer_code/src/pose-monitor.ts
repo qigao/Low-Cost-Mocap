@@ -247,19 +247,21 @@ function acceptEnvelope(raw: unknown): void {
     drawBodies([], -1)
     return
   }
+  const cameraIds = payload.camera_ids
+  const quarantinedIds = payload.quarantined_camera_ids
   if (payload.kind !== 'pose_frame' || session !== raw.session_id
       || revision === null || payload.pattern_sha256 !== revision
       || !isNonnegativeInt(payload.frame_id)
       || !isDisplayTimestamp(payload.latest_exposure_timestamp_ns)
       || !isSHA256(payload.calibration_sha256)
       || typeof payload.clock_domain !== 'string' || payload.clock_domain.length === 0
-      || !Array.isArray(payload.camera_ids) || payload.camera_ids.length === 0
-      || !payload.camera_ids.every(isNonnegativeInt)
-      || new Set(payload.camera_ids).size !== payload.camera_ids.length
-      || !Array.isArray(payload.quarantined_camera_ids)
-      || !payload.quarantined_camera_ids.every(isNonnegativeInt)
-      || new Set(payload.quarantined_camera_ids).size !== payload.quarantined_camera_ids.length
-      || !payload.quarantined_camera_ids.every(id => payload.camera_ids.includes(id))
+      || !Array.isArray(cameraIds) || cameraIds.length === 0
+      || !cameraIds.every(isNonnegativeInt)
+      || new Set(cameraIds).size !== cameraIds.length
+      || !Array.isArray(quarantinedIds)
+      || !quarantinedIds.every(isNonnegativeInt)
+      || new Set(quarantinedIds).size !== quarantinedIds.length
+      || !quarantinedIds.every(id => cameraIds.includes(id))
       || !isNonnegativeInt(payload.exposure_skew_ns)
       || payload.hardware_provenance_verified !== false
       || payload.position_units !== 'uncalibrated_world'
@@ -282,14 +284,16 @@ function acceptEnvelope(raw: unknown): void {
       return
     }
     const model = models.find(item => item.board_id === body.board_id)
-    if (model === undefined || !Array.isArray(body.visible_marker_ids)
-        || !Array.isArray(body.excluded_marker_ids)
-        || !body.visible_marker_ids.every(isNonnegativeInt)
-        || !body.excluded_marker_ids.every(isNonnegativeInt)
-        || new Set(body.visible_marker_ids).size !== body.visible_marker_ids.length
-        || new Set(body.excluded_marker_ids).size !== body.excluded_marker_ids.length
-        || body.visible_marker_ids.some(id => body.excluded_marker_ids.includes(id))
-        || [...body.visible_marker_ids, ...body.excluded_marker_ids]
+    const visibleMarkerIds = body.visible_marker_ids
+    const excludedMarkerIds = body.excluded_marker_ids
+    if (model === undefined || !Array.isArray(visibleMarkerIds)
+        || !Array.isArray(excludedMarkerIds)
+        || !visibleMarkerIds.every(isNonnegativeInt)
+        || !excludedMarkerIds.every(isNonnegativeInt)
+        || new Set(visibleMarkerIds).size !== visibleMarkerIds.length
+        || new Set(excludedMarkerIds).size !== excludedMarkerIds.length
+        || visibleMarkerIds.some(id => excludedMarkerIds.includes(id))
+        || [...visibleMarkerIds, ...excludedMarkerIds]
           .some(id => !model.marker_ids.includes(id))
         || body.metric_scale_validated !== false) {
       message.textContent = 'Rejected marker ownership or scale metadata.'
@@ -306,7 +310,7 @@ function acceptEnvelope(raw: unknown): void {
           || body.measurement_age_triggers !== 0
           || body.last_measurement_exposure_timestamp_ns !== payload.latest_exposure_timestamp_ns
           || body.measurement_age_ns !== 0
-          || body.visible_marker_ids.length < model.min_visible_markers
+          || visibleMarkerIds.length < model.min_visible_markers
           || !finiteVector(body.position_world_from_body, 3)
           || !unitQuaternion(body.quaternion_world_from_body_xyzw)
           || !finiteVector(body.position_world_from_board, 3)
