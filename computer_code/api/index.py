@@ -19,7 +19,7 @@ import json
 import os
 
 from legacy_control_security import configured_origins, is_loopback_peer
-from legacy_control_events import register_legacy_control_handlers
+from legacy_control_events import register_legacy_control_handlers, loopback_only_event
 
 ALLOWED_ORIGINS = configured_origins(os.environ.get("MOCAP_ALLOWED_ORIGINS"))
 
@@ -134,6 +134,7 @@ def plan_trajectory(start_pos, end_pos, waypoints, max_vel, max_accel, max_jerk,
     return setpoints
 
 @socketio.on("acquire-floor")
+@loopback_only_event(socketio)
 def acquire_floor(data):
     cameras = Cameras.instance()
     object_points = data["objectPoints"]
@@ -173,6 +174,7 @@ def acquire_floor(data):
 
 
 @socketio.on("set-origin")
+@loopback_only_event(socketio)
 def set_origin(data):
     cameras = Cameras.instance()
     object_point = np.array(data["objectPoint"])
@@ -188,12 +190,14 @@ def set_origin(data):
     socketio.emit("to-world-coords-matrix", {"to_world_coords_matrix": cameras.to_world_coords_matrix.tolist()})
 
 @socketio.on("update-camera-settings")
+@loopback_only_event(socketio)
 def change_camera_settings(data):
     cameras = Cameras.instance()
     
     cameras.edit_settings(data["exposure"], data["gain"])
 
 @socketio.on("capture-points")
+@loopback_only_event(socketio)
 def capture_points(data):
     start_or_stop = data["startOrStop"]
     cameras = Cameras.instance()
@@ -205,6 +209,7 @@ def capture_points(data):
         cameras.stop_capturing_points()
 
 @socketio.on("calculate-camera-pose")
+@loopback_only_event(socketio)
 def calculate_camera_pose(data):
     """Seed all camera extrinsics from pairwise calibrated, local-frame poses.
 
@@ -285,6 +290,7 @@ def calculate_camera_pose(data):
     })
 
 @socketio.on("determine-scale")
+@loopback_only_event(socketio)
 def determine_scale(data):
     object_points = data["objectPoints"]
     camera_poses = data["cameraPoses"]
