@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="no-referrer" />
+  <title>MoCap · Read-only Pose Monitor</title>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOW-COST MOCAP / OBSERVATION ONLY</p>
+        <h1>Live Pose Monitor</h1>
+        <p class="subline">Independent PoseStream v1 · No camera control · No flight commands</p>
+      </div>
+      <span id="connection" class="state-pill" aria-live="polite">Disconnected</span>
+    </header>
+
+    <section class="panel connect-panel" aria-labelledby="connect-title">
+      <div class="section-title"><h2 id="connect-title">Local observer connection</h2><span class="muted">Separate service · port 3102</span></div>
+      <div class="form-grid">
+        <label for="server-url">Server origin
+          <input id="server-url" type="url" spellcheck="false" value="http://127.0.0.1:3102"
+                 autocomplete="off" aria-describedby="origin-warning" />
+        </label>
+        <label for="viewer-token">Read-only viewer token
+          <input id="viewer-token" type="password" spellcheck="false" autocomplete="off"
+                 placeholder="Enter the local observer token" />
+        </label>
+      </div>
+      <p id="origin-warning" class="muted">Connections are restricted to localhost / 127.0.0.1. Tokens are held only for the current session and are not stored.</p>
+      <div class="controls">
+        <button id="connect-button" type="button">Connect as viewer</button>
+        <button id="disconnect-button" type="button" class="secondary" disabled>Disconnect</button>
+        <span id="message" role="status" aria-live="polite">No session is connected.</span>
+      </div>
+    </section>
+
+    <section class="facts" aria-label="Stream diagnostics">
+      <div class="fact"><span class="caption">Trigger</span><strong id="frame-trigger">—</strong></div>
+      <div class="fact"><span class="caption">Declared exposure (ns)</span><strong id="exposure-time">—</strong></div>
+      <div class="fact"><span class="caption">Revision</span><strong id="pattern-revision">—</strong></div>
+      <div class="fact"><span class="caption">Queue drops / wire gaps</span><strong id="drop-count">0 / 0</strong></div>
+    </section>
+
+    <section class="panel" aria-labelledby="body-title">
+      <div class="section-title"><h2 id="body-title">Rigid-body status</h2><span class="muted" id="board-summary">Waiting for AssetDescription</span></div>
+      <div class="table-viewport">
+        <table>
+          <thead><tr><th>Board</th><th>Evidence</th><th>Visible LEDs</th><th>Body position *</th><th>Body orientation (XYZW)</th><th>Measurement age</th><th>Fit / reprojection</th></tr></thead>
+          <tbody id="rigid-bodies"><tr><td colspan="7" class="empty">No current PoseFrame.</td></tr></tbody>
+        </table>
+      </div>
+      <p class="footnote">* Position units remain <strong>uncalibrated world units</strong> until an independent metric-scale qualification. INVALID/LOST/DEGRADED data never display a cached old pose.</p>
+    </section>
+
+    <section class="panel diagnostics">
+      <div><span class="caption">Configuration revision</span><code id="config-sha">—</code></div>
+      <div><span class="caption">Camera calibration revision</span><code id="calibration-sha">—</code></div>
+      <div><span class="caption">Quarantined physical cameras</span><strong id="quarantined">—</strong></div>
+      <div><span class="caption">Exposure clock domain</span><strong id="clock-domain">—</strong></div>
+      <p id="confidence-warning" class="warning">Hardware synchronization, metric scale and live-flight safety are NOT verified by this software stream.</p>
+    </section>
+  </main>
+  <script type="module" src="/src/pose-monitor.ts"></script>
+</body>
+</html>
