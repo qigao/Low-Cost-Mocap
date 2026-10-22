@@ -9,7 +9,7 @@ The repository originated as an indoor multi-drone mocap project. Its target arc
 - [IMU-to-body calibration contract](computer_code/api/imu_calibration.py)
 - [Architecture epic / acceptance tasks](https://github.com/qigao/Low-Cost-Mocap/issues/33)
 
-**Implementation status:** LED identity tracking, synchronized-batch software contracts, multi-view geometry, rigid-body fitting, PoseStream, bounded offline replay, a typed IMU sample/clock-mapping contract, and an immutable IMU calibration contract now exist as software modules. The hardware-qualified camera trigger/exposure adapter, hardware-qualified clock mapping, inertial propagation, and optical–IMU fusion estimator are **not implemented yet**. The selected camera+IMU topology is the target architecture, not a claim of current fused tracking capability. Hardware evidence gates remain in [Issues #2–#7](docs/HARDWARE_VALIDATION.md).
+**Implementation status:** LED identity tracking, synchronized-batch software contracts, multi-view geometry, rigid-body fitting, PoseStream, bounded offline replay, typed IMU sample/clock-mapping and calibration contracts, and a bounded gyro-only attitude propagation primitive now exist as software modules. Hardware-qualified camera trigger/exposure, hardware clock qualification and optical–IMU fusion are **not implemented yet**. The gyro primitive does not estimate global position/velocity or provide a fused pose. The selected camera+IMU topology is the target architecture, not a claim of current hardware-qualified fused tracking. Hardware evidence gates remain in [Issues #2–#7](docs/HARDWARE_VALIDATION.md).
 
 ## YouTube Video
 Watch this for information about the project & a demo!
