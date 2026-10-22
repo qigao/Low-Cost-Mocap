@@ -19,6 +19,7 @@ import json
 import os
 
 from legacy_control_security import (
+    ArmCounterRegistry,
     configured_origins,
     legacy_control_peer_allowed,
     validate_arm_payload,
@@ -61,6 +62,14 @@ def _validated_control_payload(validator, data):
             to=request.sid,
         )
         return None
+
+
+arm_counter_registry = ArmCounterRegistry(max_clients=64)
+
+
+@socketio.on("disconnect")
+def _discard_legacy_control_session():
+    arm_counter_registry.discard(request.sid)
 
 cameras_init = False
 
@@ -159,7 +168,14 @@ def arm_drone(data):
     validated = _validated_control_payload(validate_arm_payload, data)
     if validated is None:
         return
-    drone_armed, _count, _current_drone_index = validated
+    drone_armed, count, _current_drone_index = validated
+    if not arm_counter_registry.accept(request.sid, count):
+        socketio.emit(
+            "legacy-control-rejected",
+            {"reason": "stale or replayed arm command counter"},
+            to=request.sid,
+        )
+        return
 
     # Validate the complete command before any serial write or shared-state update.
     serial_messages = [
