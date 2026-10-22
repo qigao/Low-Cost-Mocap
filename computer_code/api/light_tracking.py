@@ -32,6 +32,10 @@ def _positive_float(value: object, name: str, *, zero_allowed: bool = False) -> 
     return result
 
 
+class AmbiguousLightAssociation(ValueError):
+    """Unsafe local assignment: old physical marker identity must be revoked."""
+
+
 @dataclass(frozen=True)
 class TrackEvidence:
     track_id: int
@@ -104,6 +108,23 @@ class BoundedLightTracker:
     def active_track_ids(self) -> tuple[int, ...]:
         return tuple(sorted(self._tracks))
 
+    def quarantine_trigger(self, trigger_id: int) -> None:
+        """Consume an unsafe exposure and retire *all* camera-local tracks.
+
+        This is an explicit fail-closed transition, not a second matching
+        algorithm. Active IDs disappear immediately; future births receive
+        fresh, monotonic local IDs and must pass a new timecode admission.
+        Call on a staged clone; a failed multi-camera batch is not committed.
+        """
+        trigger = _nonnegative_int(trigger_id, "trigger_id")
+        if self._previous_trigger is not None:
+            if trigger <= self._previous_trigger:
+                raise ValueError("stale or repeated tracker trigger_id")
+            if not self.allow_trigger_gaps and trigger != self._previous_trigger + 1:
+                raise ValueError("missing tracker trigger frame")
+        self._tracks = {}
+        self._previous_trigger = trigger
+
     def staged_copy(self) -> "BoundedLightTracker":
         """Clone bounded numerical state for atomic multi-camera admission.
 
@@ -166,7 +187,7 @@ class BoundedLightTracker:
         for i, first in enumerate(positions):
             for second in positions[i + 1:]:
                 if np.linalg.norm(first - second) <= self.min_separation:
-                    raise ValueError("duplicate or overlapping light detections")
+                    raise AmbiguousLightAssociation("duplicate or overlapping light detections")
 
         # Work on copies. Every failure below leaves committed tracks and
         # last-trigger bookkeeping unchanged.
@@ -234,7 +255,7 @@ class BoundedLightTracker:
                 and float(alternative[alt_rows, alt_cols].sum())
                 <= baseline_cost + self.ambiguity_margin * max(1, baseline_count)
             ):
-                raise ValueError("ambiguous light-track association")
+                raise AmbiguousLightAssociation("ambiguous light-track association")
 
         matched_cols = {col for _, col in selected}
         matched_rows = {row for row, _ in selected}
@@ -255,7 +276,7 @@ class BoundedLightTracker:
                 if row in expiring_rows:
                     continue
                 if np.linalg.norm(positions[col] - predicted) <= self.min_separation:
-                    raise ValueError("ambiguous new light-track birth")
+                    raise AmbiguousLightAssociation("ambiguous new light-track birth")
 
         evidence = {}
         for row, col in selected:
