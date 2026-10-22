@@ -2,6 +2,7 @@ import unittest
 
 import numpy as np
 
+from geometry import triangulate_point
 from multiview_consensus import triangulate_consensus
 
 
@@ -306,6 +307,125 @@ class MultiviewConsensusTests(unittest.TestCase):
             triangulate_consensus(
                 observations, self.poses, self.Ks,
                 min_views=3, min_parallax_angle_deg=45.0,
+            )
+
+
+    def test_ambiguity_uses_refitted_rms_when_seed_ranking_reverses(self):
+        intrinsic = np.array([
+            [800.0, 0.0, 320.0],
+            [0.0, 800.0, 240.0],
+            [0.0, 0.0, 1.0],
+        ])
+        # Cameras 2 and 3 lie on the line between the two possible 3-D
+        # points, so both hypotheses share those two image observations.
+        # Cameras 0/1 support point A; cameras 4/5 support point B.
+        centers = [
+            np.array([-1.0, 0.0, 0.0]),
+            np.array([0.0, 1.0, 0.0]),
+            np.array([0.0, 0.0, 0.0]),
+            np.array([0.0, 0.0, 1.0]),
+            np.array([-1.0, 0.0, 1.5]),
+            np.array([0.0, 1.0, 1.5]),
+        ]
+        poses = [{"R": np.eye(3), "t": -center} for center in centers]
+        intrinsics = [intrinsic.copy() for _ in poses]
+        point_a = np.array([0.0, 0.0, 4.0])
+        point_b = np.array([0.0, 0.0, 6.0])
+
+        observations = []
+        for camera_id, pose in enumerate(poses):
+            point = point_a if camera_id < 4 else point_b
+            camera_point = pose["R"] @ point + pose["t"]
+            pixel = intrinsic @ camera_point
+            observations.append(pixel[:2] / pixel[2])
+
+        # Fixed measurement noise creates a deliberate differential: the
+        # 5-camera seed fits rank B ahead of A, while refitting each candidate
+        # to its own four-camera support ranks A ahead of B. The refitted RMS
+        # values remain within the ambiguity tolerance, so selecting either
+        # spatially distinct solution is unsafe.
+        offsets = np.array([
+            [0.261435447420, 0.178934838824],
+            [-0.331551757263, -0.308253073341],
+            [0.217432051735, -0.098521389238],
+            [-0.021575854302, -1.245997625156],
+            [-1.350051989943, 0.168574096034],
+            [0.164779328175, 0.696715935722],
+        ])
+        observations = [
+            point + offset for point, offset in zip(observations, offsets)
+        ]
+
+        threshold = 35.0
+        support_a = (0, 1, 2, 3)
+        support_b = (2, 3, 4, 5)
+
+        def reprojection_rms(point, camera_ids):
+            errors = []
+            for camera_id in camera_ids:
+                camera_point = (
+                    poses[camera_id]["R"] @ point + poses[camera_id]["t"]
+                )
+                projected_h = intrinsics[camera_id] @ camera_point
+                projected = projected_h[:2] / projected_h[2]
+                errors.append(
+                    float(np.linalg.norm(projected - observations[camera_id]))
+                )
+            return float(np.sqrt(np.mean(np.square(errors))))
+
+        def sparse(camera_ids):
+            return [
+                observations[i] if i in camera_ids else None
+                for i in range(len(observations))
+            ]
+
+        seed_a, _ = triangulate_point(
+            sparse((0, 1, 2, 3, 4)), poses, intrinsics, min_views=3
+        )
+        seed_b, _ = triangulate_point(
+            sparse((0, 2, 3, 4, 5)), poses, intrinsics, min_views=3
+        )
+
+        seed_a_rms = reprojection_rms(seed_a, support_a)
+        seed_b_rms = reprojection_rms(seed_b, support_b)
+        seed_a_errors = [
+            reprojection_rms(seed_a, (i,)) for i in range(len(observations))
+        ]
+        seed_b_errors = [
+            reprojection_rms(seed_b, (i,)) for i in range(len(observations))
+        ]
+        self.assertEqual(
+            tuple(i for i, error in enumerate(seed_a_errors) if error <= threshold),
+            support_a,
+        )
+        self.assertEqual(
+            tuple(i for i, error in enumerate(seed_b_errors) if error <= threshold),
+            support_b,
+        )
+
+        refit_a, metrics_a = triangulate_point(
+            sparse(support_a), poses, intrinsics, min_views=3
+        )
+        refit_b, metrics_b = triangulate_point(
+            sparse(support_b), poses, intrinsics, min_views=3
+        )
+        refit_rms_a = metrics_a["reprojection_rms_px"]
+        refit_rms_b = metrics_b["reprojection_rms_px"]
+
+        self.assertGreater(seed_a_rms, seed_b_rms + 1.0)
+        self.assertLess(refit_rms_a, refit_rms_b)
+        self.assertLess(abs(refit_rms_a - refit_rms_b), 0.01)
+        self.assertGreater(np.linalg.norm(refit_a - refit_b), 1.0)
+
+        with self.assertRaisesRegex(
+            ValueError, "ambiguous multiview consensus"
+        ):
+            triangulate_consensus(
+                observations, poses, intrinsics,
+                min_views=3,
+                inlier_threshold_px=threshold,
+                max_reprojection_rms_px=1.0,
+                ambiguity_rms_tolerance_px=0.01,
             )
 
 
