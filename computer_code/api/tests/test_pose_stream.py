@@ -179,6 +179,20 @@ class PoseStreamTests(unittest.TestCase):
                         self.registry,
                     )
 
+    def test_quarantine_metadata_is_separate_from_measured_pose(self):
+        quarantined = replace(self.frame, quarantined_camera_ids=(9,))
+        report = pose_frame_to_dict(quarantined, self.registry)
+        self.assertEqual(report["quarantined_camera_ids"], [9])
+        self.assertEqual(report["rigid_bodies"][0]["evidence_kind"], "MEASURED")
+        self.assertEqual(report["rigid_bodies"][1]["evidence_kind"], "INVALID")
+        for invalid in ((9, 9), (99,), (True,)):
+            with self.subTest(invalid=repr(invalid)):
+                with self.assertRaises(ValueError):
+                    pose_frame_to_dict(
+                        replace(self.frame, quarantined_camera_ids=invalid),
+                        self.registry,
+                    )
+
     def test_missing_board_status_cannot_contain_a_pose(self):
         fake = replace(self.frame.boards["board_A"], evidence_kind="INVALID")
         with self.assertRaises(ValueError):
