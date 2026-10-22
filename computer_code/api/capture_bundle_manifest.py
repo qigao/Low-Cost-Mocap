@@ -507,6 +507,39 @@ def validate_capture_bundle(
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
 ) -> dict[str, Any]:
+    """Validate a manifest and hash artifacts through an anchored root descriptor."""
+    root_input = Path(bundle_root)
+    if root_input.is_symlink():
+        raise ValueError("bundle root must not itself be a symlink")
+    try:
+        root = root_input.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("bundle root must exist and resolve safely") from exc
+    if not root.is_dir():
+        raise ValueError("bundle root must be a directory")
+    root_fd = _open_directory_path_no_follow(root)
+    try:
+        return _validate_capture_bundle_at(
+            manifest,
+            root,
+            root_fd,
+            max_artifacts=max_artifacts,
+            max_artifact_bytes=max_artifact_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+    finally:
+        os.close(root_fd)
+
+
+def _validate_capture_bundle_at(
+    manifest: object,
+    bundle_root: Path,
+    root_fd: int,
+    *,
+    max_artifacts: int = DEFAULT_MAX_ARTIFACTS,
+    max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+) -> dict[str, Any]:
     """Validate manifest schema and artifact bytes without authenticating hardware.
 
     Unsafe paths, missing files and digest/size mismatches appear as per-file
@@ -521,15 +554,7 @@ def validate_capture_bundle(
         manifest_obj, max_artifacts=max_count,
         max_artifact_bytes=max_one, max_total_bytes=max_all,
     )
-    root_input = Path(bundle_root)
-    if root_input.is_symlink():
-        raise ValueError("bundle root must not itself be a symlink")
-    try:
-        root = root_input.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise ValueError("bundle root must exist and resolve safely") from exc
-    if not root.is_dir():
-        raise ValueError("bundle root must be a directory")
+    root = bundle_root
 
     canonical = _canonical_json(manifest_obj)
     manifest_digest = hashlib.sha256(canonical).hexdigest()
@@ -581,19 +606,21 @@ def validate_capture_bundle(
             entry["errors"].append("artifact path duplicates another entry")
         else:
             try:
-                artifact_path = _safe_artifact_path(root, artifact["path"])
-                if not artifact_path.is_file():
-                    raise ValueError("artifact is not a regular file")
-                size_before = artifact_path.stat().st_size
-                if size_before > max_one:
-                    raise ValueError("actual artifact exceeds per-file byte cap")
-                if total_actual_bytes + size_before > max_all:
+                remaining_total = max_all - total_actual_bytes
+                if remaining_total <= 0:
                     raise ValueError("actual artifacts exceed total byte cap")
-                actual_size, actual_hash = _hash_regular_file(
-                    artifact_path, max_bytes=max_one
+                cap = min(max_one, remaining_total)
+                cap_error = (
+                    "actual artifacts exceed total byte cap"
+                    if remaining_total < max_one
+                    else "actual artifact exceeds per-file byte cap"
                 )
-                if total_actual_bytes + actual_size > max_all:
-                    raise ValueError("actual artifacts exceed total byte cap")
+                actual_size, actual_hash = _hash_regular_file_at(
+                    root_fd,
+                    artifact["path"],
+                    max_bytes=cap,
+                    cap_error=cap_error,
+                )
                 total_actual_bytes += actual_size
                 entry["actual_size_bytes"] = actual_size
                 entry["actual_sha256"] = actual_hash
