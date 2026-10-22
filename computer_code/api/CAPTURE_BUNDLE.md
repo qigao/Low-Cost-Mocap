@@ -37,7 +37,10 @@ that this timestamp precede the capture start, but cannot independently prove
 when the limits were written. A self-reported declaration is not a signature.
 
 Manifest v2 adds predeclared `min_temporal_trials` and
-`max_wrong_accept_one_sided_upper_95` limits. The bundle-gated replay report
+`max_wrong_accept_one_sided_upper_95` limits. The validator checks that the
+declared minimum sample size could meet the upper-bound target even with zero
+wrong accepts, using the one-sided 95% Wilson formula; for example, a 1% target
+requires at least 268 independent trials. The bundle-gated replay report
 compares observed temporal trial count and the reported Wilson upper bound
 against these limits. The result is explicitly conditional on independent
 Bernoulli trials; `trial_independence_verified` remains false, and the

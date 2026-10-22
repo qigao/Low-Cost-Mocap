@@ -159,7 +159,7 @@ class BundleGatedOfflineReplayTests(unittest.TestCase):
         self.assertFalse(report["statistical_gate"]["trial_independence_verified"])
 
     def test_predeclared_statistical_gate_fails_closed_on_count_or_bound(self):
-        self.manifest["acceptance_limits"]["min_temporal_trials"] = 2
+        self.manifest["acceptance_limits"]["min_temporal_trials"] = 3
         self.manifest["acceptance_limits"]["max_wrong_accept_one_sided_upper_95"] = 0.5
         self.write_manifest()
         report = run_bundle_gated_offline_replay(self.root)
