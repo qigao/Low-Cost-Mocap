@@ -78,6 +78,8 @@ class BoardFrameStatus:
 class LockedBoardFrame:
     trigger_id: int
     camera_ids: tuple[int, ...]
+    clock_domain: str
+    exposure_skew_ns: int
     latest_exposure_timestamp_ns: int
     pattern_sha256: str
     calibration_sha256: str
@@ -501,6 +503,8 @@ class IdentityLockedBoardTracker:
         frame = LockedBoardFrame(
             trigger_id=batch.trigger_id,
             camera_ids=batch.camera_ids,
+            clock_domain=batch.clock_domain,
+            exposure_skew_ns=batch.exposure_skew_ns,
             latest_exposure_timestamp_ns=latest_exposure_ns,
             pattern_sha256=self.registry.config_sha256,
             calibration_sha256=self.calibration_sha256,
