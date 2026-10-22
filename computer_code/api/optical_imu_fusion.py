@@ -65,7 +65,7 @@ class OpticalAttitudeMeasurement:
 
 def optical_measurement_from_pose_frame(frame, *, body_id, expected_pattern_sha256, expected_calibration_sha256):
     """Extract only a current PoseStream v1 measured pose; reject stale/invalid records."""
-    if not isinstance(frame, dict) or frame.get("protocol") != "low_cost_mocap" or frame.get("schema_version") != 1 or frame.get("kind") != "pose_frame":
+    if not isinstance(frame, dict) or frame.get("protocol") != "low_cost_mocap" or type(frame.get("schema_version")) is not int or frame.get("schema_version") != 1 or frame.get("kind") != "pose_frame":
         raise ValueError("unsupported PoseStream frame")
     if frame.get("hardware_provenance_verified") is not False:
         raise ValueError("unexpected hardware provenance claim")
@@ -84,8 +84,10 @@ def optical_measurement_from_pose_frame(frame, *, body_id, expected_pattern_sha2
         raise ValueError("frame must contain exactly one requested body")
     body = matches[0]
     if (body.get("tracking_status") != "TRACKING" or body.get("evidence_kind") != "MEASURED"
-        or body.get("measurement_trigger_id") != frame_id or body.get("measurement_age_triggers") != 0
-        or body.get("last_measurement_exposure_timestamp_ns") != timestamp or body.get("measurement_age_ns") != 0):
+        or type(body.get("measurement_trigger_id")) is not int or body.get("measurement_trigger_id") != frame_id
+        or type(body.get("measurement_age_triggers")) is not int or body.get("measurement_age_triggers") != 0
+        or type(body.get("last_measurement_exposure_timestamp_ns")) is not int or body.get("last_measurement_exposure_timestamp_ns") != timestamp
+        or type(body.get("measurement_age_ns")) is not int or body.get("measurement_age_ns") != 0):
         raise ValueError("optical pose is stale or not a current measured observation")
     return OpticalAttitudeMeasurement(
         body_id, timestamp, clock, body.get("quaternion_world_from_body_xyzw"),
@@ -112,7 +114,11 @@ class OpticalIMUFusionState:
     global_velocity_m_s: None = None
     global_position_observable: bool = False
     def __post_init__(self):
+        _s(self.body_id,"body_id"); _s(self.imu_id,"imu_id"); _s(self.clock_domain,"clock domain")
+        _t(self.timestamp_ns,"fusion timestamp")
         if self.status not in {"TRACKING","DEGRADED","LOST"}: raise ValueError("invalid fusion status")
+        if self.source not in {"OPTICAL_CORRECTED","IMU_PROPAGATED","LOST"}: raise ValueError("invalid fusion source")
+        if self.status=="LOST" and self.source!="LOST": raise ValueError("LOST state must use LOST source")
         if self.status=="LOST":
             if self.quaternion_world_from_body_xyzw is not None or self.attitude_variance_rad2 is not None: raise ValueError("LOST must not publish pose")
         else:
@@ -122,6 +128,16 @@ class OpticalIMUFusionState:
             if v<0: raise ValueError("variance must be nonnegative")
         if self.global_position_m is not None or self.global_velocity_m_s is not None or self.global_position_observable is not False: raise ValueError("attitude fusion cannot publish global position")
         _h(self.clock_mapping_sha256,"mapping digest"); _h(self.imu_calibration_sha256,"IMU calibration digest")
+        for name in ("last_optical_timestamp_ns","last_optical_frame_id","optical_age_ns"):
+            value=getattr(self,name)
+            if value is not None: _t(value,name)
+        if (self.last_optical_timestamp_ns is None) != (self.last_optical_frame_id is None):
+            raise ValueError("optical timestamp and frame ID must be present together")
+        if self.last_optical_timestamp_ns is None and self.optical_age_ns is not None:
+            raise ValueError("optical age requires an optical timestamp")
+        if self.last_optical_timestamp_ns is not None:
+            if self.last_optical_timestamp_ns>self.timestamp_ns or self.optical_age_ns!=self.timestamp_ns-self.last_optical_timestamp_ns:
+                raise ValueError("optical age is inconsistent with fusion timestamp")
 
 class OpticalIMUAttitudeFusion:
     """Isotropic small-angle covariance update with bounded interpolation history."""
