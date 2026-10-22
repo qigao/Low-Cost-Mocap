@@ -1,6 +1,13 @@
-# Low Cost Mocap (for drones)
+# Low-Cost-Mocap
 
-### A general purpose motion capture system built from the ground up, used to autonomously fly multiple drones indoors
+### A general-purpose optical motion-capture engine for fixed external cameras, active LED/IR rigid-body markers, and optional body-mounted IMU fusion
+
+The repository originated as an indoor multi-drone mocap project. Its target architecture is now a reusable Outside-In motion-capture engine: optical measurement, time alignment, state estimation and quality-qualified pose output are core capabilities; drone control is a separate downstream consumer.
+
+- [General optical–IMU architecture and implementation roadmap](docs/GENERAL_MOCAP_ARCHITECTURE.md)
+- [Architecture epic / acceptance tasks](https://github.com/qigao/Low-Cost-Mocap/issues/33)
+
+**Implementation status:** LED identity tracking, synchronized-batch software contracts, multi-view geometry, rigid-body fitting, PoseStream and bounded offline replay exist as software modules. A hardware-qualified camera trigger/exposure adapter and a general IMU clock-alignment/fusion estimator are **not implemented yet**. The selected camera+IMU topology is the roadmap, not a claim of current capability. Hardware evidence gates remain in [Issues #2–#7](docs/HARDWARE_VALIDATION.md).
 
 ## YouTube Video
 Watch this for information about the project & a demo!
