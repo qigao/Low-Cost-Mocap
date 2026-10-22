@@ -176,16 +176,13 @@ class PoseObserverHostTests(unittest.TestCase):
         # hardware source or failed transport assumption is involved.
         for trigger in range(1, 8):
             self.host.publisher.publish(self.frame(trigger))
-        first_sid = first.eio_sid
-        second_sid = second.eio_sid
-        first_key = self.host._subscriber_key(first_sid)
-        second_key = self.host._subscriber_key(second_sid)
-        self.assertEqual(
-            self.host.publisher.subscriber_statistics(first_key).dropped_frames, 5
-        )
-        self.assertEqual(
-            self.host.publisher.subscriber_statistics(second_key).pending_frames, 2
-        )
+        current_stats = [
+            self.host.publisher.subscriber_statistics(key)
+            for key in self.host.publisher.subscriber_ids
+        ]
+        self.assertEqual(len(current_stats), 2)
+        self.assertTrue(all(stats.dropped_frames == 5 for stats in current_stats))
+        self.assertTrue(all(stats.pending_frames == 2 for stats in current_stats))
         first_ack = first.emit(
             "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True
         )
@@ -196,8 +193,13 @@ class PoseObserverHostTests(unittest.TestCase):
             [packet["payload"]["frame_id"] for packet in received],
             [6, 7],
         )
+        # The other subscriber still holds its own independent 2 frames.
         self.assertEqual(
-            self.host.publisher.subscriber_statistics(second_key).pending_frames, 2
+            sorted(
+                self.host.publisher.subscriber_statistics(key).pending_frames
+                for key in self.host.publisher.subscriber_ids
+            ),
+            [0, 2],
         )
         self.assertEqual(self.messages(second), [])
         second.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
