@@ -189,10 +189,10 @@ class FusionABBundleReportTests(unittest.TestCase):
                     evaluate_bundle(root)
 
     def test_revision_and_reference_artifact_mismatches_are_rejected(self):
-        artifact = next(a for a in self.manifest["artifacts"] if a["role"] == "reference_orientations")
+        manifest = json.loads((self.root / MANIFEST_NAME).read_text(encoding="utf-8"))
+        artifact = next(a for a in manifest["artifacts"] if a["role"] == "reference_orientations")
         path = self.root / artifact["path"]
         path.write_bytes(b'{"schema_version":1,"clock_domain":"imu-clock","poses":[]}') 
-        manifest = json.loads((self.root / MANIFEST_NAME).read_text(encoding="utf-8"))
         artifact["size_bytes"] = path.stat().st_size
         artifact["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
         (self.root / MANIFEST_NAME).write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
