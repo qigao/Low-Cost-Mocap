@@ -569,9 +569,18 @@ def validate_capture_bundle_directory(
     root = Path(bundle_root)
     if root.is_symlink():
         raise ValueError("bundle root must not itself be a symlink")
-    manifest_path = root / manifest_name
     if manifest_name != MANIFEST_NAME:
         raise ValueError("manifest name must be capture-bundle.json")
+    try:
+        # Canonicalize once before reading the manifest and validating its
+        # artifacts, so an ancestor symlink alias cannot select different
+        # roots for those two phases.
+        root = root.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("bundle root must exist and resolve safely") from exc
+    if not root.is_dir():
+        raise ValueError("bundle root must be a directory")
+    manifest_path = root / manifest_name
     # Open once, then validate and read through the same descriptor. A
     # separate is_symlink/stat/read sequence is vulnerable to path replacement
     # between checks. Fail closed where O_NOFOLLOW is unavailable rather than
@@ -579,6 +588,9 @@ def validate_capture_bundle_directory(
     if not hasattr(os, "O_NOFOLLOW"):
         raise ValueError("manifest validation requires platform O_NOFOLLOW support")
     flags = os.O_RDONLY | os.O_NOFOLLOW
+    # Prevent a FIFO/device path from blocking before fstat() can reject it.
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
     try:
