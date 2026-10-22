@@ -88,13 +88,14 @@ def _matrix3(value: object, name: str) -> tuple[tuple[float, float, float], ...]
             raise ValueError(f"{name} must be a 3x3 matrix")
         rows.append(tuple(_real(item, name) for item in row))
     matrix = np.asarray(rows, dtype=np.float64)
-    condition = float(np.linalg.cond(matrix))
-    if (
-        not np.isfinite(matrix).all()
-        or not math.isfinite(condition)
-        or condition > 1_000.0
-    ):
-        raise ValueError(f"{name} must be finite and well-conditioned (condition <= 1000)")
+    if not np.isfinite(matrix).all():
+        raise ValueError(f"{name} must contain only finite values")
+    try:
+        condition = float(np.linalg.cond(matrix))
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(f"{name} must be well-conditioned") from exc
+    if not math.isfinite(condition) or condition > 1_000.0:
+        raise ValueError(f"{name} must be well-conditioned (condition <= 1000)")
     return tuple(tuple(float(value) for value in row) for row in matrix)
 
 
