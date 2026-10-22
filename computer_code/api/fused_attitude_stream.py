@@ -49,7 +49,10 @@ def _digest(value: object, name: str) -> str:
 def _finite(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
         raise ValueError(f"{name} must be finite numeric")
-    result = float(value)
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be finite numeric") from exc
     if not math.isfinite(result):
         raise ValueError(f"{name} must be finite numeric")
     return result
@@ -105,6 +108,10 @@ def validate_fused_attitude_payload(
         raise ValueError("unsupported fused-attitude source")
     if (status == "LOST") != (source == "LOST"):
         raise ValueError("LOST status and source must agree")
+    if status == "TRACKING" and source != "OPTICAL_CORRECTED":
+        raise ValueError("TRACKING requires a current optical correction")
+    if status == "DEGRADED" and source not in {"IMU_PROPAGATED", "OPTICAL_CORRECTED_WITH_ALIGNMENT"}:
+        raise ValueError("DEGRADED requires bounded IMU propagation or aligned optical correction")
     q = payload["quaternion_world_from_body_xyzw"]
     variance = payload["attitude_variance_rad2"]
     if status == "LOST":
@@ -124,6 +131,8 @@ def validate_fused_attitude_payload(
     optical_frame = payload["last_optical_frame_id"]
     optical_age = payload["optical_age_ns"]
     if optical_ts is None:
+        if status != "LOST":
+            raise ValueError("publishable attitude requires an optical seed")
         if optical_frame is not None or optical_age is not None:
             raise ValueError("optical frame and age require an optical timestamp")
     else:
