@@ -340,7 +340,7 @@ def _validate_structure(
 
 
 
-def _safe_artifact_path(root: Path, raw_path: str) -> Path:
+def _canonical_artifact_parts(raw_path: str) -> tuple[str, ...]:
     if (
         not raw_path
         or "\\" in raw_path
@@ -357,8 +357,14 @@ def _safe_artifact_path(root: Path, raw_path: str) -> Path:
         or str(relative) != raw_path
     ):
         raise ValueError("artifact path contains traversal or noncanonical components")
+    return relative.parts
+
+
+def _safe_artifact_path(root: Path, raw_path: str) -> Path:
+    """Compatibility path resolver; security-sensitive reads use directory FDs."""
+    parts = _canonical_artifact_parts(raw_path)
     current = root
-    for part in relative.parts:
+    for part in parts:
         current = current / part
         if current.is_symlink():
             raise ValueError("artifact path traverses a symlink")
@@ -373,29 +379,123 @@ def _safe_artifact_path(root: Path, raw_path: str) -> Path:
     return resolved
 
 
-def _hash_regular_file(path: Path, *, max_bytes: int) -> tuple[int, str]:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+def _require_dirfd_primitives() -> None:
+    required_flags = ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK")
+    if any(not hasattr(os, flag) for flag in required_flags):
+        raise ValueError("secure bundle validation requires O_NOFOLLOW, O_DIRECTORY and O_NONBLOCK")
+    if os.open not in getattr(os, "supports_dir_fd", set()):
+        raise ValueError("secure bundle validation requires descriptor-relative open support")
+
+
+def _open_directory_path_no_follow(path: Path) -> int:
+    """Open an absolute directory by walking components without following links."""
+    _require_dirfd_primitives()
+    if not path.is_absolute():
+        raise ValueError("bundle root must be an absolute path")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    descriptor = os.open(path.anchor or "/", flags)
     try:
-        descriptor = os.open(path, flags)
+        for part in path.parts[1:]:
+            next_descriptor = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise ValueError("bundle root must be a directory")
+        return descriptor
     except OSError as exc:
-        raise ValueError("artifact cannot be opened without following links") from exc
-    digest = hashlib.sha256()
-    total = 0
+        os.close(descriptor)
+        raise ValueError("bundle root cannot be opened without following links") from exc
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _open_regular_file_at(root_fd: int, raw_path: str) -> int:
+    """Open a regular-file candidate using only no-follow descriptor-relative steps."""
+    parts = _canonical_artifact_parts(raw_path)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if hasattr(os, "O_CLOEXEC"):
+        directory_flags |= os.O_CLOEXEC
+        file_flags |= os.O_CLOEXEC
+    parent_fd = os.dup(root_fd)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, directory_flags, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = next_fd
+        descriptor = os.open(parts[-1], file_flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise ValueError("artifact path cannot be opened without following links") from exc
+    finally:
+        os.close(parent_fd)
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise ValueError("artifact is not a regular file")
-        with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            while True:
-                chunk = stream.read(CHUNK_BYTES)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    raise ValueError("actual artifact exceeds per-file byte cap")
-                digest.update(chunk)
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _read_regular_file_at(
+    root_fd: int,
+    raw_path: str,
+    *,
+    max_bytes: int,
+    cap_error: str,
+) -> bytes:
+    descriptor = _open_regular_file_at(root_fd, raw_path)
+    try:
+        metadata = os.fstat(descriptor)
+        if metadata.st_size > max_bytes:
+            raise ValueError(cap_error)
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(CHUNK_BYTES, max_bytes + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(cap_error)
+            chunks.append(chunk)
+        return b"".join(chunks)
+    except OSError as exc:
+        raise ValueError("file cannot be read safely") from exc
+    finally:
+        os.close(descriptor)
+
+
+def _hash_regular_file_at(
+    root_fd: int,
+    raw_path: str,
+    *,
+    max_bytes: int,
+    cap_error: str,
+) -> tuple[int, str]:
+    descriptor = _open_regular_file_at(root_fd, raw_path)
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        metadata = os.fstat(descriptor)
+        if metadata.st_size > max_bytes:
+            raise ValueError(cap_error)
+        while True:
+            chunk = os.read(descriptor, min(CHUNK_BYTES, max_bytes + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(cap_error)
+            digest.update(chunk)
         return total, digest.hexdigest()
+    except OSError as exc:
+        raise ValueError("artifact cannot be read safely") from exc
     finally:
         os.close(descriptor)
 
@@ -403,6 +503,39 @@ def _hash_regular_file(path: Path, *, max_bytes: int) -> tuple[int, str]:
 def validate_capture_bundle(
     manifest: object,
     bundle_root: str | Path,
+    *,
+    max_artifacts: int = DEFAULT_MAX_ARTIFACTS,
+    max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+) -> dict[str, Any]:
+    """Validate a manifest and hash artifacts through an anchored root descriptor."""
+    root_input = Path(bundle_root)
+    if root_input.is_symlink():
+        raise ValueError("bundle root must not itself be a symlink")
+    try:
+        root = root_input.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("bundle root must exist and resolve safely") from exc
+    if not root.is_dir():
+        raise ValueError("bundle root must be a directory")
+    root_fd = _open_directory_path_no_follow(root)
+    try:
+        return _validate_capture_bundle_at(
+            manifest,
+            root,
+            root_fd,
+            max_artifacts=max_artifacts,
+            max_artifact_bytes=max_artifact_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+    finally:
+        os.close(root_fd)
+
+
+def _validate_capture_bundle_at(
+    manifest: object,
+    bundle_root: Path,
+    root_fd: int,
     *,
     max_artifacts: int = DEFAULT_MAX_ARTIFACTS,
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
@@ -422,15 +555,7 @@ def validate_capture_bundle(
         manifest_obj, max_artifacts=max_count,
         max_artifact_bytes=max_one, max_total_bytes=max_all,
     )
-    root_input = Path(bundle_root)
-    if root_input.is_symlink():
-        raise ValueError("bundle root must not itself be a symlink")
-    try:
-        root = root_input.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise ValueError("bundle root must exist and resolve safely") from exc
-    if not root.is_dir():
-        raise ValueError("bundle root must be a directory")
+    root = bundle_root
 
     canonical = _canonical_json(manifest_obj)
     manifest_digest = hashlib.sha256(canonical).hexdigest()
@@ -482,19 +607,21 @@ def validate_capture_bundle(
             entry["errors"].append("artifact path duplicates another entry")
         else:
             try:
-                artifact_path = _safe_artifact_path(root, artifact["path"])
-                if not artifact_path.is_file():
-                    raise ValueError("artifact is not a regular file")
-                size_before = artifact_path.stat().st_size
-                if size_before > max_one:
-                    raise ValueError("actual artifact exceeds per-file byte cap")
-                if total_actual_bytes + size_before > max_all:
+                remaining_total = max_all - total_actual_bytes
+                if remaining_total <= 0:
                     raise ValueError("actual artifacts exceed total byte cap")
-                actual_size, actual_hash = _hash_regular_file(
-                    artifact_path, max_bytes=max_one
+                cap = min(max_one, remaining_total)
+                cap_error = (
+                    "actual artifacts exceed total byte cap"
+                    if remaining_total < max_one
+                    else "actual artifact exceeds per-file byte cap"
                 )
-                if total_actual_bytes + actual_size > max_all:
-                    raise ValueError("actual artifacts exceed total byte cap")
+                actual_size, actual_hash = _hash_regular_file_at(
+                    root_fd,
+                    artifact["path"],
+                    max_bytes=cap,
+                    cap_error=cap_error,
+                )
                 total_actual_bytes += actual_size
                 entry["actual_size_bytes"] = actual_size
                 entry["actual_sha256"] = actual_hash
@@ -565,67 +692,37 @@ def validate_capture_bundle_directory(
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
 ) -> dict[str, Any]:
-    """Load a bounded manifest from the bundle root and validate its artifacts."""
-    root = Path(bundle_root)
-    if root.is_symlink():
+    """Read the manifest and validate every artifact under one anchored root FD."""
+    root_input = Path(bundle_root)
+    if root_input.is_symlink():
         raise ValueError("bundle root must not itself be a symlink")
     if manifest_name != MANIFEST_NAME:
         raise ValueError("manifest name must be capture-bundle.json")
     try:
-        # Canonicalize once before reading the manifest and validating its
-        # artifacts, so an ancestor symlink alias cannot select different
-        # roots for those two phases.
-        root = root.resolve(strict=True)
+        root = root_input.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise ValueError("bundle root must exist and resolve safely") from exc
     if not root.is_dir():
         raise ValueError("bundle root must be a directory")
-    manifest_path = root / manifest_name
-    # Open once, then validate and read through the same descriptor. A
-    # separate is_symlink/stat/read sequence is vulnerable to path replacement
-    # between checks. Fail closed where O_NOFOLLOW is unavailable rather than
-    # silently claiming race-resistant symlink protection.
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise ValueError("manifest validation requires platform O_NOFOLLOW support")
-    flags = os.O_RDONLY | os.O_NOFOLLOW
-    # Prevent a FIFO/device path from blocking before fstat() can reject it.
-    if hasattr(os, "O_NONBLOCK"):
-        flags |= os.O_NONBLOCK
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
+
+    root_fd = _open_directory_path_no_follow(root)
     try:
-        descriptor = os.open(manifest_path, flags)
-    except OSError as exc:
-        raise ValueError("manifest file cannot be opened without following links") from exc
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("manifest must be a regular file")
-        if metadata.st_size > MAX_MANIFEST_BYTES:
-            raise ValueError("manifest exceeds byte cap")
-        chunks = []
-        total = 0
-        while True:
-            chunk = os.read(
-                descriptor,
-                min(CHUNK_BYTES, MAX_MANIFEST_BYTES + 1 - total),
-            )
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_MANIFEST_BYTES:
-                raise ValueError("manifest exceeds byte cap")
-            chunks.append(chunk)
-        raw = b"".join(chunks)
-    except OSError as exc:
-        raise ValueError("manifest file cannot be read safely") from exc
+        raw = _read_regular_file_at(
+            root_fd,
+            MANIFEST_NAME,
+            max_bytes=MAX_MANIFEST_BYTES,
+            cap_error="manifest exceeds byte cap",
+        )
+        manifest = load_manifest_bytes(raw)
+        report = _validate_capture_bundle_at(
+            manifest,
+            root,
+            root_fd,
+            max_artifacts=max_artifacts,
+            max_artifact_bytes=max_artifact_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+        report["manifest_file_sha256"] = hashlib.sha256(raw).hexdigest()
+        return report
     finally:
-        os.close(descriptor)
-    manifest = load_manifest_bytes(raw)
-    report = validate_capture_bundle(
-        manifest, root, max_artifacts=max_artifacts,
-        max_artifact_bytes=max_artifact_bytes,
-        max_total_bytes=max_total_bytes,
-    )
-    report["manifest_file_sha256"] = hashlib.sha256(raw).hexdigest()
-    return report
+        os.close(root_fd)

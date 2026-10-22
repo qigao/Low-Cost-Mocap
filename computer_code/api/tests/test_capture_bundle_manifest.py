@@ -14,6 +14,8 @@ from unittest.mock import patch
 from capture_bundle_cli import main as cli_main
 from capture_bundle_manifest import (
     MANIFEST_NAME,
+    _hash_regular_file_at,
+    _open_directory_path_no_follow,
     load_manifest_bytes,
     validate_capture_bundle,
     validate_capture_bundle_directory,
@@ -201,7 +203,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
         candidate["artifacts"][0]["path"] = "frames/external.bin"
         report = validate_capture_bundle(candidate, self.root)
         self.assertEqual(report["artifact_checks"][0]["status"], "unsafe_or_unreadable")
-        self.assertIn("symlink", report["artifact_checks"][0]["errors"][0])
+        self.assertIn("without following links", report["artifact_checks"][0]["errors"][0])
 
         duplicate = deepcopy(self.manifest)
         duplicate["artifacts"][1]["path"] = duplicate["artifacts"][0]["path"]
@@ -213,6 +215,55 @@ class CaptureBundleManifestTests(unittest.TestCase):
         case_collision["artifacts"][1]["path"] = case_collision["artifacts"][0]["path"].upper()
         report = validate_capture_bundle(case_collision, self.root)
         self.assertEqual(report["artifact_checks"][1]["status"], "duplicate_path")
+
+    def test_open_root_descriptor_does_not_follow_replaced_root_path(self):
+        artifact = self.manifest["artifacts"][0]
+        relative = artifact["path"]
+        expected_hash = artifact["sha256"]
+        root_fd = _open_directory_path_no_follow(self.root.resolve())
+        moved_root = Path(self.temp.name) / "anchored-original-root"
+        try:
+            self.root.rename(moved_root)
+            self.root.mkdir()
+            external = self.root / relative
+            external.parent.mkdir(parents=True)
+            external.write_bytes(b"attacker-controlled-replacement")
+            size, digest = _hash_regular_file_at(
+                root_fd, relative, max_bytes=1024, cap_error="test byte cap"
+            )
+        finally:
+            os.close(root_fd)
+        self.assertEqual(size, artifact["size_bytes"])
+        self.assertEqual(digest, expected_hash)
+        self.assertNotEqual(digest, hashlib.sha256(b"attacker-controlled-replacement").hexdigest())
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlink test requires OS support")
+    def test_intermediate_directory_symlink_is_rejected_by_descriptor_walk(self):
+        frames_dir = self.root / "frames"
+        outside = Path(self.temp.name) / "outside-frames"
+        outside.mkdir()
+        source = frames_dir / "camera-bundle.bin"
+        moved = outside / "camera-bundle.bin"
+        source.replace(moved)
+        frames_dir.rmdir()
+        frames_dir.symlink_to(outside, target_is_directory=True)
+
+        report = validate_capture_bundle(self.manifest, self.root)
+        self.assertFalse(report["bundle_integrity_valid"])
+        entry = next(x for x in report["artifact_checks"] if x["role"] == "raw_camera_frames")
+        self.assertEqual(entry["status"], "unsafe_or_unreadable")
+        self.assertIn("without following links", entry["errors"][0])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO test requires POSIX")
+    def test_artifact_fifo_is_rejected_without_blocking(self):
+        target = self.root / self.manifest["artifacts"][0]["path"]
+        target.unlink()
+        os.mkfifo(target)
+        report = validate_capture_bundle(self.manifest, self.root)
+        self.assertFalse(report["bundle_integrity_valid"])
+        entry = next(x for x in report["artifact_checks"] if x["role"] == "raw_camera_frames")
+        self.assertEqual(entry["status"], "unsafe_or_unreadable")
+        self.assertIn("regular file", entry["errors"][0])
 
     def test_missing_required_role_and_unlinked_revision_do_not_pass(self):
         missing = deepcopy(self.manifest)
@@ -347,7 +398,7 @@ class CaptureBundleManifestTests(unittest.TestCase):
         manifest_path = self.root / MANIFEST_NAME
         manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
         with patch("capture_bundle_manifest.os", new=object()):
-            with self.assertRaisesRegex(ValueError, "requires platform O_NOFOLLOW"):
+            with self.assertRaisesRegex(ValueError, "requires O_NOFOLLOW"):
                 validate_capture_bundle_directory(self.root)
 
     def test_directory_manifest_descriptor_enforces_size_cap(self):
