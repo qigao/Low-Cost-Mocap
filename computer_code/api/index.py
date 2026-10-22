@@ -18,8 +18,8 @@ from flask_cors import CORS
 import json
 import os
 
-from legacy_control_security import configured_origins, is_loopback_peer
-from legacy_control_events import register_legacy_control_handlers, loopback_only_event
+from legacy_control_security import configured_origins
+from legacy_control_events import register_legacy_control_handlers, loopback_only_event, loopback_only_http_route
 
 ALLOWED_ORIGINS = configured_origins(os.environ.get("MOCAP_ALLOWED_ORIGINS"))
 
@@ -46,12 +46,10 @@ register_legacy_control_handlers(
 )
 
 @app.route("/api/camera-stream")
+@loopback_only_http_route
 def camera_stream():
     # Fetching frames advances the legacy tracking loop, which can emit serial
-    # commands for armed bodies. Keep this side-effecting route loopback-only
-    # until a separately reviewed remote authentication design exists.
-    if not is_loopback_peer(request.remote_addr):
-        return Response("camera stream is loopback-only until remote authentication is implemented", status=403)
+    # commands for armed bodies. The route guard runs before camera initialization.
     cameras = Cameras.instance()
     cameras.set_socketio(socketio)
     cameras.set_ser(ser)
