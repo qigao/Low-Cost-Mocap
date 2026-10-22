@@ -189,7 +189,10 @@ def _validate_structure(
     if len(set(ids)) != len(ids):
         raise ValueError("capture.camera_ids must be unique")
     _text(capture["clock_domain"], "capture.clock_domain", maximum=128)
-    if capture["timestamp_semantics"] not in _TIMESTAMP_SEMANTICS:
+    if (
+        not isinstance(capture["timestamp_semantics"], str)
+        or capture["timestamp_semantics"] not in _TIMESTAMP_SEMANTICS
+    ):
         raise ValueError("capture.timestamp_semantics is not a supported declaration")
     if capture["timestamp_unit"] != "ns":
         raise ValueError("capture.timestamp_unit must be ns")
