@@ -9,7 +9,7 @@ import numpy as np
 from board_patterns import BoardPatternRegistry
 from board_recognizer import BoardOutcome, BoardPose
 from identity_locked_board_tracker import (
-    BoardFrameStatus, LockedBoardFrame,
+    BoardFrameStatus, LockedBoardFrame, MarkerIdentityLock,
 )
 from pose_stream import (
     describe_board_assets, pose_frame_to_dict, pose_frame_to_json,
@@ -86,6 +86,51 @@ class PoseStreamTests(unittest.TestCase):
         self.assertNotIn("boards", frame)
         self.assertEqual(frame["kind"], "pose_frame")
         self.assertNotIn("markers", frame)
+
+    def test_pose_reports_active_track_temporal_decode_evidence(self):
+        lock = MarkerIdentityLock(
+            camera_id=2,
+            local_track_id=1100,
+            marker_id=100,
+            confirmed_trigger_id=96,
+            config_sha256=self.registry.config_sha256,
+            valid_samples=self.registry.period_triggers - 1,
+            erased_samples=1,
+            bit_errors=1,
+            minimum_hamming_distance=self.registry.codebook.minimum_hamming_distance,
+            guaranteed_erasure_budget=self.registry.codebook.guaranteed_erasure_budget,
+            within_guaranteed_erasure_budget=True,
+        )
+        data = pose_frame_to_dict(replace(self.frame, active_locks=(lock,)), self.registry)
+        self.assertEqual(data["active_marker_tracks"], [{
+            "camera_id": 2,
+            "local_track_id": 1100,
+            "marker_id": 100,
+            "confirmed_trigger_id": 96,
+            "valid_samples": self.registry.period_triggers - 1,
+            "erased_samples": 1,
+            "bit_errors": 1,
+            "minimum_hamming_distance": self.registry.codebook.minimum_hamming_distance,
+            "guaranteed_erasure_budget": self.registry.codebook.guaranteed_erasure_budget,
+            "within_guaranteed_erasure_budget": True,
+        }])
+
+    def test_pose_refuses_active_track_outside_guaranteed_erasure_budget(self):
+        lock = MarkerIdentityLock(
+            camera_id=2,
+            local_track_id=1100,
+            marker_id=100,
+            confirmed_trigger_id=96,
+            config_sha256=self.registry.config_sha256,
+            valid_samples=self.registry.period_triggers - 2,
+            erased_samples=2,
+            bit_errors=0,
+            minimum_hamming_distance=self.registry.codebook.minimum_hamming_distance,
+            guaranteed_erasure_budget=self.registry.codebook.guaranteed_erasure_budget,
+            within_guaranteed_erasure_budget=False,
+        )
+        with self.assertRaisesRegex(ValueError, "guaranteed erasure budget"):
+            pose_frame_to_dict(replace(self.frame, active_locks=(lock,)), self.registry)
 
     def test_fresh_measured_and_missing_board_pose_have_disjoint_values(self):
         data = pose_frame_to_dict(self.frame, self.registry)
