@@ -154,6 +154,26 @@ class IMUSampleContractTests(unittest.TestCase):
                         min_anchor_span_ns=10_000_000,
                     )
 
+    def test_clock_mapping_rejects_boolean_fit_limits(self):
+        anchors = [
+            ClockAnchor(1_000_000, 2_000_000),
+            ClockAnchor(11_000_000, 12_000_000),
+            ClockAnchor(21_000_000, 22_000_000),
+        ]
+        for options in (
+            {"max_drift_ppm": True},
+            {"max_residual_ns": False},
+        ):
+            with self.subTest(options=options):
+                with self.assertRaisesRegex(ValueError, "finite real"):
+                    fit_clock_mapping(
+                        anchors,
+                        source_clock_domain="imu",
+                        target_clock_domain="optical",
+                        min_anchor_span_ns=1,
+                        **options,
+                    )
+
     def test_clock_mapping_rejects_excessive_drift_and_residual(self):
         drifted = [
             ClockAnchor(1_000_000_000, 1_000_000_000),
