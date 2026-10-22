@@ -13,6 +13,7 @@ import math
 import json
 import os
 from pathlib import Path, PurePosixPath
+from statistics import NormalDist
 import re
 import stat
 from typing import Any
@@ -317,8 +318,18 @@ def _validate_structure(
             upper_value = float(upper)
         except (OverflowError, TypeError, ValueError) as exc:
             raise ValueError("max_wrong_accept_one_sided_upper_95 must be within 0..1") from exc
-        if not math.isfinite(upper_value) or not 0.0 <= upper_value <= 1.0:
-            raise ValueError("max_wrong_accept_one_sided_upper_95 must be within 0..1")
+        if not math.isfinite(upper_value) or not 0.0 < upper_value <= 1.0:
+            raise ValueError("max_wrong_accept_one_sided_upper_95 must be within (0, 1]")
+        z = NormalDist().inv_cdf(0.95)
+        minimum_zero_error_trials = max(
+            1, math.ceil((z * z * (1.0 - upper_value)) / upper_value)
+        )
+        if acceptance["min_temporal_trials"] < minimum_zero_error_trials:
+            raise ValueError(
+                "min_temporal_trials cannot meet max_wrong_accept_one_sided_upper_95 "
+                "even with zero wrong accepts; at least "
+                f"{minimum_zero_error_trials} trials are required"
+            )
 
     artifacts = manifest["artifacts"]
     if not isinstance(artifacts, list) or not 1 <= len(artifacts) <= max_artifacts:
