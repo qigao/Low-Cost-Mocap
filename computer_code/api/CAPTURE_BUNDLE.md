@@ -86,6 +86,14 @@ in 1 MiB chunks; raw video/frame data is never loaded wholesale into memory.
 - Missing, tampered, wrong-size, duplicate or unreadable artifacts make
   `bundle_integrity_valid` false. The validator reports these per artifact
   and exits nonzero.
+- The directory CLI opens `capture-bundle.json` with `O_NOFOLLOW` and
+  reads it through the same descriptor after `fstat()` checks and a strict
+  byte cap. It also uses `O_NONBLOCK` where available so FIFO paths fail
+  without blocking. Platforms without `O_NOFOLLOW` support fail closed;
+  this validator is unavailable there until a native no-follow strategy is
+  implemented and tested. Artifact paths are separately checked and hashed;
+  this manifest hardening does not by itself make mutable, attacker-writable
+  bundle directories safe against every concurrent directory-entry change.
 - `pattern_sha256` is the declared semantic/canonical pattern-registry
   fingerprint, which may differ from the hash of a pretty-printed source file.
   `pattern_config_artifact_sha256` binds the exact raw pattern-config bytes.

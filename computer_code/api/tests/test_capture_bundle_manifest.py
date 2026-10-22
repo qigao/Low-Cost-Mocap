@@ -2,6 +2,9 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 from io import StringIO
@@ -285,6 +288,73 @@ class CaptureBundleManifestTests(unittest.TestCase):
                 load_manifest_bytes(raw)
         with self.assertRaisesRegex(ValueError, "no larger than"):
             load_manifest_bytes(b"x" * 1_000_001)
+
+    def test_directory_manifest_is_opened_without_following_symlinks(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        report = validate_capture_bundle_directory(self.root)
+        self.assertTrue(report["bundle_integrity_valid"], report["failures"])
+
+        # A manifest symlink must fail before its target is parsed.
+        target = Path(self.temp.name) / "outside-manifest.json"
+        target.write_text(json.dumps(self.manifest), encoding="utf-8")
+        manifest_path.unlink()
+        manifest_path.symlink_to(target)
+        with self.assertRaisesRegex(ValueError, "without following links"):
+            validate_capture_bundle_directory(self.root)
+
+    def test_directory_manifest_growth_during_read_hits_byte_cap(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_bytes(b" " * 1_000_000)
+        real_read = os.read
+        read_count = 0
+
+        def append_after_first_read(descriptor, count):
+            nonlocal read_count
+            chunk = real_read(descriptor, count)
+            read_count += 1
+            if read_count == 1:
+                with manifest_path.open("ab") as stream:
+                    stream.write(b"x")
+            return chunk
+
+        with patch("capture_bundle_manifest.os.read", side_effect=append_after_first_read):
+            with self.assertRaisesRegex(ValueError, "byte cap"):
+                validate_capture_bundle_directory(self.root)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO test requires POSIX")
+    def test_directory_manifest_fifo_fails_without_blocking(self):
+        manifest_path = self.root / MANIFEST_NAME
+        os.mkfifo(manifest_path)
+        api_dir = Path(__file__).resolve().parents[1]
+        script = (
+            "import sys\n"
+            "from capture_bundle_manifest import validate_capture_bundle_directory\n"
+            "try:\n validate_capture_bundle_directory(sys.argv[1])\n"
+            "except ValueError as exc:\n print(str(exc)); sys.exit(0)\n"
+            "sys.exit(1)"
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(api_dir)
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(self.root)],
+            cwd=api_dir, env=env, capture_output=True, text=True, timeout=3,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("regular file", result.stdout)
+
+    def test_directory_manifest_fails_closed_without_o_nofollow(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        with patch("capture_bundle_manifest.os", new=object()):
+            with self.assertRaisesRegex(ValueError, "requires platform O_NOFOLLOW"):
+                validate_capture_bundle_directory(self.root)
+
+    def test_directory_manifest_descriptor_enforces_size_cap(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_bytes(b" " * 1_000_001)
+        with self.assertRaisesRegex(ValueError, "byte cap"):
+            validate_capture_bundle_directory(self.root)
 
     def test_directory_cli_outputs_machine_report_and_never_certifies_hardware(self):
         (self.root / MANIFEST_NAME).write_text(
