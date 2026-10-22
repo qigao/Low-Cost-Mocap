@@ -9,6 +9,7 @@ cameras; none is committed unless the 6DoF service accepts the same batch.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 import numpy as np
 
@@ -19,7 +20,7 @@ from identity_locked_board_tracker import (
 from light_intensity import (
     StampedTrackROI, sample_tracked_light_roi,
 )
-from light_tracking import BoundedLightTracker
+from light_tracking import BoundedLightTracker, AmbiguousLightAssociation
 from marker_admission import admit_track_marker_at_frame
 from temporal_pattern import (
     FrameStamp, _nonnegative_int, validate_trigger_batch,
@@ -74,6 +75,14 @@ class SynchronizedLocalLightPipeline:
         }
         # Bounded per-track history of structured ROI evidence; never images.
         self._histories: dict[tuple[int, int], tuple[StampedTrackROI, ...]] = {}
+        # Quarantine persists across valid later exposures until *new*
+        # complete-cycle marker IDs have been decoded. A camera-wide
+        # quarantine is deliberately conservative for uncertain crossings.
+        self._quarantined_since: dict[int, int] = {}
+
+    @property
+    def quarantined_camera_ids(self) -> tuple[int, ...]:
+        return tuple(sorted(self._quarantined_since))
 
     def active_local_track_ids(self, camera_id: int) -> tuple[int, ...]:
         camera = _nonnegative_int(camera_id, "camera_id")
@@ -149,6 +158,7 @@ class SynchronizedLocalLightPipeline:
             for camera, state in self._local_trackers.items()
         }
         stage_histories = dict(self._histories)
+        stage_quarantined = dict(self._quarantined_since)
         all_stamped = []
         candidates = []
         for camera in camera_ids:
@@ -167,11 +177,24 @@ class SynchronizedLocalLightPipeline:
                 and batch.trigger_id - lock.confirmed_trigger_id <= tracker.max_identity_age_triggers
                 and tracker.registry.codebook.patterns[lock.marker_id][phase] == 0
             )
-            evidence = stage_local[camera].update(
-                batch.trigger_id,
-                detections_by_camera[camera],
-                forbidden_track_ids=forbidden,
-            )
+            try:
+                evidence = stage_local[camera].update(
+                    batch.trigger_id,
+                    detections_by_camera[camera],
+                    forbidden_track_ids=forbidden,
+                )
+            except AmbiguousLightAssociation:
+                # A rejected exposure alone is not enough: the next frame
+                # could swap two physical LEDs while reusing old local IDs.
+                # Retire all local tracks from this camera, consume this
+                # trigger, discard its code histories, and revoke its locks.
+                # Other cameras may still produce independent observations.
+                stage_local[camera].quarantine_trigger(batch.trigger_id)
+                stage_quarantined[camera] = batch.trigger_id
+                for key in tuple(stage_histories):
+                    if key[0] == camera:
+                        del stage_histories[key]
+                continue
             active = set(stage_local[camera].active_track_ids)
             for key in tuple(stage_histories):
                 if key[0] == camera and key[1] not in active:
@@ -211,6 +234,14 @@ class SynchronizedLocalLightPipeline:
                     and roi is not None
                     and point.observed_xy is not None
                     and len(history) >= self._min_decode_observations
+                    and (
+                        camera not in stage_quarantined
+                        or (
+                            len(history) == period
+                            and history[0].frame_stamp.trigger_id
+                            == batch.trigger_id - period + 1
+                        )
+                    )
                     and tracker.brightness_calibration_by_camera_id[camera].classify(roi.contrast) == 1
                 ):
                     try:
@@ -234,6 +265,23 @@ class SynchronizedLocalLightPipeline:
                         trace=tuple(history),
                     ))
 
+        # While quarantined, new local tracks are tracked only to collect
+        # fresh code histories. Do not expose their pixels to 3D until a
+        # *complete new code cycle* is independently decoded this frame.
+        validated_new_locks = {
+            (candidate.camera_id, candidate.local_track_id)
+            for candidate in candidates
+            if candidate.camera_id in stage_quarantined
+        }
+        admitted_roi = [
+            item for item in all_stamped
+            if item.frame_stamp.camera_id not in stage_quarantined
+            or (
+                item.frame_stamp.camera_id,
+                item.track_evidence.track_id,
+            ) in validated_new_locks
+        ]
+
         # Actual BoundedLightTracker retirement (not a temporary OFF phase)
         # invalidates the old lock. A new local track can only inherit the
         # same global marker after its own full-cycle code admission.
@@ -244,13 +292,30 @@ class SynchronizedLocalLightPipeline:
             not in stage_local[lock.camera_id].active_track_ids
         )
         result = tracker.advance(
-            frames, all_stamped,
+            frames, admitted_roi,
             revalidation_traces=candidates,
             retired_local_tracks=retired_local_tracks,
             controller_config_sha256=controller_config_sha256,
         )
-        # Only publish local tracker and bounded history after the global
-        # provenance, current-code and geometry path has accepted the batch.
+        # A camera is cleared only once *this same frame* has newly
+        # confirmed a valid global LED identity. All other provisional
+        # tracks remain untrusted until independently admitted.
+        confirmed = {
+            (lock.camera_id, lock.local_track_id)
+            for lock in result.active_locks
+        }
+        for camera in tuple(stage_quarantined):
+            if any(
+                key[0] == camera and key in confirmed
+                for key in validated_new_locks
+            ):
+                del stage_quarantined[camera]
+        result = replace(
+            result,
+            quarantined_camera_ids=tuple(sorted(stage_quarantined)),
+        )
+        # Publish only after downstream validation/geometry succeeded.
         self._local_trackers = stage_local
         self._histories = stage_histories
+        self._quarantined_since = stage_quarantined
         return result

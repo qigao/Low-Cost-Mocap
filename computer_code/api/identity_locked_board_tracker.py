@@ -89,6 +89,7 @@ class LockedBoardFrame:
     invalidated_marker_ids: tuple[int, ...]
     measured_marker_ids: tuple[int, ...]
     hardware_provenance_verified: bool = False
+    quarantined_camera_ids: tuple[int, ...] = ()
 
 
 class IdentityLockedBoardTracker:
