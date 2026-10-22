@@ -52,3 +52,34 @@ jobs:
 
       - name: Run API unit tests
         run: python -m unittest discover -s tests -v
+
+  observer-ui:
+    name: Read-only observer UI build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: computer_code
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: computer_code/yarn.lock
+
+      - name: Install locked frontend dependencies
+        run: |
+          corepack enable
+          yarn install --frozen-lockfile --non-interactive --ignore-scripts
+
+      - name: Build both existing UI and isolated read-only PoseStream page
+        run: yarn build
+
+      - name: Verify read-only viewer build output
+        run: test -f dist/pose-monitor.html
