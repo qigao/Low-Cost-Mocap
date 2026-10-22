@@ -311,8 +311,8 @@ class CaptureBundleManifestTests(unittest.TestCase):
         script = (
             "import sys; "
             "from capture_bundle_manifest import validate_capture_bundle_directory; "
-            "try:\\n validate_capture_bundle_directory(sys.argv[1])\\n"
-            "except ValueError as exc:\\n print(str(exc)); sys.exit(0)\\n"
+            "try:\n validate_capture_bundle_directory(sys.argv[1])\n"
+            "except ValueError as exc:\n print(str(exc)); sys.exit(0)\n"
             "sys.exit(1)"
         )
         env = os.environ.copy()
