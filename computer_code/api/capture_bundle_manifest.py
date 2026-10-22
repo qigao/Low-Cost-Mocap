@@ -37,7 +37,7 @@ _REQUIRED_ROLES = (
     "controller_config",
     "calibration_config",
 )
-_OPTIONAL_ROLES = {"supplemental"}
+_OPTIONAL_ROLES = {"supplemental", "offline_replay_input"}
 _TIMESTAMP_SEMANTICS = {
     "sensor_exposure", "hardware_trigger", "driver_dequeue",
     "host_monotonic", "unknown",
