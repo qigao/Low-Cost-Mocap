@@ -39,11 +39,37 @@ class TriggerReplayTests(unittest.TestCase):
         self.assertEqual(report.reference_gaps, 1)
         self.assertEqual(report.maximum_declared_skew_ns, 6)
         self.assertEqual(
+            dict(report.admitted_exposure_skew_ns_percentiles),
+            {"p50": 6, "p95": 6, "p99": 6, "max": 6},
+        )
+        self.assertEqual(
             report.rejection_reasons["independent_reference_trigger_mismatch"], 1
         )
         self.assertEqual(report.rejection_reasons["reference_not_monotonic"], 1)
         self.assertEqual(report.rejection_reasons["reference_trigger_gap"], 1)
         self.assertFalse(report.hardware_provenance_verified)
+
+    def test_admitted_exposure_skew_percentiles_use_nearest_rank(self):
+        recordings = []
+        skews = (1, 2, 3, 4, 5)
+        for trigger, skew in enumerate(skews, start=100):
+            base_timestamp = 1_000_000 + (trigger - 100) * 1_000
+            frames = (
+                FrameStamp(2, trigger, base_timestamp, "rig-clock"),
+                FrameStamp(5, trigger, base_timestamp + skew, "rig-clock"),
+            )
+            recordings.append(RecordedFrameBatch(trigger, frames))
+
+        report = replay_trigger_batches(
+            recordings, expected_camera_ids=[2, 5],
+            max_exposure_skew_ns=10,
+        )
+        self.assertEqual(report.admitted_batches, 5)
+        self.assertEqual(report.maximum_declared_skew_ns, 5)
+        self.assertEqual(
+            dict(report.admitted_exposure_skew_ns_percentiles),
+            {"p50": 3, "p95": 5, "p99": 5, "max": 5},
+        )
 
     def test_invalid_reference_camera_configuration_fails_before_replay(self):
         recording = (RecordedFrameBatch(10, self.frames(10)),)
