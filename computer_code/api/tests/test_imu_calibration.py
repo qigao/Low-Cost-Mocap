@@ -46,6 +46,16 @@ def calibration(**overrides):
         "accel_bias_m_s2": (0.0, 0.0, 0.81),
         "gyro_noise_density_rad_s_sqrt_hz": (0.001, 0.001, 0.002),
         "accel_noise_density_m_s2_sqrt_hz": (0.01, 0.01, 0.02),
+        "gyro_correction_matrix": (
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        ),
+        "accel_correction_matrix": (
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        ),
         "gyro_bias_random_walk_rad_s_per_sqrt_s": (0.0001, 0.0001, 0.0002),
         "accel_bias_random_walk_m_s2_per_sqrt_s": (0.001, 0.001, 0.002),
         "calibration_method": "bench-six-position-v1",
