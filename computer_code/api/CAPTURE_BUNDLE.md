@@ -93,10 +93,12 @@ in 1 MiB chunks; raw video/frame data is never loaded wholesale into memory.
   are checked with `fstat()`, and are streamed from that same descriptor.
   The manifest is read from the same anchored root descriptor with a strict
   byte cap. Platforms lacking the required no-follow/dirfd primitives fail
-  closed. This protects path resolution against symlink substitution between
-  pathname checks and reads; it does not protect against a privileged actor
-  modifying file contents in place during hashing, and the bundle directory
-  should not be writable by an untrusted concurrent process.
+  closed. Streamed reads compare descriptor metadata before and after the
+  read and reject common in-place mutations (device, inode, mode, size,
+  modification time or change time). This is a change-detection guard, not an
+  immutable snapshot or defense against a privileged actor manipulating the
+  filesystem; the bundle directory should not be writable by an untrusted
+  concurrent process.
 - `pattern_sha256` is the declared semantic/canonical pattern-registry
   fingerprint, which may differ from the hash of a pretty-printed source file.
   `pattern_config_artifact_sha256` binds the exact raw pattern-config bytes.
