@@ -268,8 +268,11 @@ startButton.addEventListener('click', () => {
   })
   socket = client
   client.on('connect', () => {
-    // Reconnect never reuses past measured positions.
-    clearCurrent('Awaiting a fresh AssetDescription')
+    // The server may send AssetDescription *inside its connect handler*
+    // before this client receives its 'connect' notification. Preserve
+    // such a freshly admitted asset. A prior disconnect already cleared
+    // all previous-session poses and model state.
+    if (session === null) clearCurrent('Awaiting a fresh AssetDescription')
     connectionState(true, 'Authorized viewer connected.')
     stopPoll()
     pollTimer = window.setInterval(() => {
