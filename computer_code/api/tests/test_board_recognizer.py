@@ -63,6 +63,8 @@ class BoardPatternRegistryTests(unittest.TestCase):
             for i, first in enumerate(codes) for second in codes[i + 1:]
         ]
         self.assertGreaterEqual(min(distances), 8)
+        self.assertEqual(registry.codebook.minimum_hamming_distance, 8)
+        self.assertEqual(registry.codebook.guaranteed_erasure_budget, 5)
         for code in codes:
             self.assertEqual(sum(code), 8)
             self.assertEqual(code[-1], 1)
