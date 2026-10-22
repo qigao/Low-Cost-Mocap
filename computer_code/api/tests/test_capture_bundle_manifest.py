@@ -216,6 +216,26 @@ class CaptureBundleManifestTests(unittest.TestCase):
         report = validate_capture_bundle(case_collision, self.root)
         self.assertEqual(report["artifact_checks"][1]["status"], "duplicate_path")
 
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlink test requires OS support")
+    def test_root_symlink_and_symlinked_ancestor_are_rejected(self):
+        root_link = Path(self.temp.name) / "bundle-link"
+        root_link.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "without following links"):
+            validate_capture_bundle_directory(root_link)
+        with self.assertRaisesRegex(ValueError, "without following links"):
+            validate_capture_bundle(self.manifest, root_link)
+
+        parent_link = Path(self.temp.name) / "parent-link"
+        parent_link.symlink_to(Path(self.temp.name), target_is_directory=True)
+        aliased_root = parent_link / self.root.name
+        with self.assertRaisesRegex(ValueError, "without following links"):
+            validate_capture_bundle_directory(aliased_root)
+
+    def test_root_parent_traversal_is_rejected_before_open(self):
+        unsafe_root = self.root.parent / ".." / self.root.name
+        with self.assertRaisesRegex(ValueError, "parent traversal"):
+            validate_capture_bundle_directory(unsafe_root)
+
     def test_open_root_descriptor_does_not_follow_replaced_root_path(self):
         artifact = self.manifest["artifacts"][0]
         relative = artifact["path"]
