@@ -472,7 +472,12 @@ class CaptureBundleManifestTests(unittest.TestCase):
     def test_directory_manifest_fails_closed_without_o_nofollow(self):
         manifest_path = self.root / MANIFEST_NAME
         manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
-        with patch("capture_bundle_manifest.os", new=object()):
+        with patch(
+            "capture_bundle_manifest._require_dirfd_primitives",
+            side_effect=ValueError(
+                "secure bundle validation requires O_NOFOLLOW, O_DIRECTORY and O_NONBLOCK"
+            ),
+        ):
             with self.assertRaisesRegex(ValueError, "requires O_NOFOLLOW"):
                 validate_capture_bundle_directory(self.root)
 
