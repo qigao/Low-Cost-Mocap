@@ -54,6 +54,7 @@ def legacy_control_peer_allowed(remote_addr: str | None, enabled: str | None = N
         return False
 
 NUM_DRONES = 2
+MAX_SAFE_COUNTER = (2**53) - 1
 PID_PARAMETER_COUNT = 17
 TRIM_PARAMETER_COUNT = 4
 MAX_ABS_PID_PARAMETER = 1_000.0
@@ -95,8 +96,8 @@ def validate_arm_payload(data: object) -> tuple[list[bool], int, int]:
     if not isinstance(armed, list) or len(armed) != NUM_DRONES or any(type(v) is not bool for v in armed):
         raise ValueError(f"droneArmed must contain exactly {NUM_DRONES} booleans")
     count = data["count"]
-    if type(count) is not int or count < 0:
-        raise ValueError("count must be a nonnegative integer")
+    if type(count) is not int or not 0 <= count <= MAX_SAFE_COUNTER:
+        raise ValueError("count must be a nonnegative safe integer")
     current_index = _drone_index(data["currentDroneIndex"])
     return list(armed), count, current_index
 
@@ -152,7 +153,7 @@ class ArmCounterRegistry:
     def accept(self, client_id: object, count: object) -> bool:
         if not isinstance(client_id, str) or not client_id:
             return False
-        if type(count) is not int or count < 0:
+        if type(count) is not int or not 0 <= count <= MAX_SAFE_COUNTER:
             return False
         with self._lock:
             previous = self._last_by_client.get(client_id)
