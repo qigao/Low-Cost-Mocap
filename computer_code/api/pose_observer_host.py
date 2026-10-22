@@ -220,17 +220,16 @@ class PoseObserverHost:
                 }
 
     def publish_frame(self, frame: LockedBoardFrame) -> int:
-        """Accept one validated source frame and bounded-flush subscribers.
+        """Validate and enqueue one frame; never push to transport here.
 
-        This is the ONLY ingress for pose source data, invoked by a local
-        trusted application owner. There is no Socket.IO client event for
-        publishing, enabling cameras, sending setpoints or arming drones.
+        The subscriber must request a bounded flush via pose:poll. This
+        keeps backpressure in the explicitly bounded broker instead of
+        transferring an unbounded backlog to the Socket.IO transport queue.
+        This is the ONLY ingress for pose data. No client can publish a
+        pose, enable cameras, send setpoints or arm drones.
         """
         with self._lock:
-            frame_id = self.publisher.publish(frame)
-            for sid in tuple(self._last_poll_ns):
-                self._flush(sid)
-            return frame_id
+            return self.publisher.publish(frame)
 
     def restart_source_session(self) -> None:
         """Host-only restart after a verified camera source reset."""

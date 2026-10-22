@@ -131,6 +131,7 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         self.assertEqual(received[0][1]["payload"]["kind"], "asset_description")
         started_ns = time.monotonic_ns()
         self.host.publish_frame(self.invalid_frame(10))
+        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         self.assertTrue(frame_seen.wait(5), "pose frame was not delivered via HTTP polling")
         self.assertEqual(len(received), 2)
         elapsed = received[1][0] - started_ns

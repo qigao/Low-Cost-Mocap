@@ -119,6 +119,7 @@ class PoseObserverHostTests(unittest.TestCase):
         independent.consume(first[0])
         self.assertEqual(independent.pattern_sha256, self.registry.config_sha256)
         self.assertEqual(self.host.publish_frame(self.frame(101)), 101)
+        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         second = self.messages(client)
         self.assertEqual(len(second), 1)
         measured = independent.consume(second[0])
@@ -127,6 +128,7 @@ class PoseObserverHostTests(unittest.TestCase):
         self.assertIsNotNone(measured["rigid_bodies"][0]["position_world_from_body"])
         self.assertFalse(measured["hardware_provenance_verified"])
         self.host.publish_frame(self.frame(102, measured=False))
+        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         third = self.messages(client)
         self.assertEqual(third[0]["payload"]["frame_id"], 102)
         missing = independent.consume(third[0])
@@ -146,6 +148,8 @@ class PoseObserverHostTests(unittest.TestCase):
         self.messages(a)
         self.messages(b)
         self.host.publish_frame(self.frame(111))
+        a.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
+        b.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         self.assertEqual(len(self.messages(a)), 1)
         self.assertEqual(len(self.messages(b)), 1)
         a.disconnect(namespace=POSE_OBSERVER_NAMESPACE)
@@ -160,6 +164,7 @@ class PoseObserverHostTests(unittest.TestCase):
         # has subscribed again. Only a genuinely new source frame can arrive.
         self.assertEqual(self.messages(reopened), [])
         self.host.publish_frame(self.frame(112))
+        reopened.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         packet = self.messages(reopened)
         self.assertEqual(len(packet), 1)
         self.assertEqual(packet[0]["payload"]["frame_id"], 112)
@@ -215,6 +220,7 @@ class PoseObserverHostTests(unittest.TestCase):
         independent = PoseStreamConsumer()
         independent.consume(first[0])
         self.host.publish_frame(self.frame(100))
+        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         independent.consume(self.messages(client)[0])
         self.host.restart_source_session()
         restarted = self.messages(client)
@@ -223,6 +229,7 @@ class PoseObserverHostTests(unittest.TestCase):
         self.assertGreater(restarted[0]["session_id"], first[0]["session_id"])
         independent.consume(restarted[0])
         self.host.publish_frame(self.frame(2, calibration="b"*64))
+        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         new_frame = self.messages(client)
         self.assertEqual(new_frame[0]["payload"]["frame_id"], 2)
         independent.consume(new_frame[0])
@@ -298,6 +305,7 @@ class PoseObserverHostTests(unittest.TestCase):
         self.assertEqual(self.host.subscriber_count, 1)
         self.assertEqual(len(self.messages(client)), 1)
         self.host.publish_frame(self.frame(1))
+        client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         self.assertEqual(
             [m["payload"]["frame_id"] for m in self.messages(client)],
             [1],
