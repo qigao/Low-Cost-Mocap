@@ -150,9 +150,11 @@ class OpticalIMUAttitudeFusion:
         if not isinstance(s,AttitudePropagationState): raise ValueError("expected attitude propagation state")
         if s.imu_id!=self.imu or s.clock_domain!=self.clock: raise ValueError("IMU identity/clock mismatch")
         if s.calibration_revision!=self.calrev or s.calibration_sha256!=self.calsha: raise ValueError("IMU calibration mismatch")
+        if not self.history and (s.status!="INITIALIZED" or s.integrated_interval_ns!=0): raise ValueError("first IMU state must establish an initialization baseline")
         if self.history and (s.sequence_number<=self.history[-1].sequence_number or s.sensor_timestamp_ns<=self.history[-1].sensor_timestamp_ns): raise ValueError("IMU state is duplicate or out of order")
         if self.history:
             prev=self.history[-1]
+            if s.status!="IMU_PROPAGATED": raise ValueError("subsequent IMU state must be propagated")
             if s.sensor_timestamp_ns-prev.sensor_timestamp_ns != s.integrated_interval_ns:
                 raise ValueError("IMU propagation history has a skipped or inconsistent interval")
             delta=_mul(_inv(prev.orientation_world_from_body_xyzw),s.orientation_world_from_body_xyzw)
@@ -188,7 +190,7 @@ class OpticalIMUAttitudeFusion:
             err=_log(_mul(_inv(back),m.quaternion_world_from_body_xyzw)); angle=math.sqrt(sum(x*x for x in err))
             if angle>self.innovation: raise ValueError("optical attitude innovation exceeds limit")
             uncertainty=(self.mapping.observed_max_residual_ns+bracket/2)/1e9
-            r_eff=self.r+(max(self.noise)*uncertainty)**2
+            r_eff=self.r+(self.max_alignment_rate*uncertainty)**2
             gain=p_at/(p_at+r_eff)
             q_at_fused=_q(_mul(back,_exp(tuple(gain*x for x in err))))
             p_at=(1-gain)*p_at
