@@ -303,6 +303,25 @@ class CaptureBundleManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "without following links"):
             validate_capture_bundle_directory(self.root)
 
+    def test_directory_manifest_growth_during_read_hits_byte_cap(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_bytes(b" " * 1_000_000)
+        real_read = os.read
+        read_count = 0
+
+        def append_after_first_read(descriptor, count):
+            nonlocal read_count
+            chunk = real_read(descriptor, count)
+            read_count += 1
+            if read_count == 1:
+                with manifest_path.open("ab") as stream:
+                    stream.write(b"x")
+            return chunk
+
+        with patch("capture_bundle_manifest.os.read", side_effect=append_after_first_read):
+            with self.assertRaisesRegex(ValueError, "byte cap"):
+                validate_capture_bundle_directory(self.root)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO test requires POSIX")
     def test_directory_manifest_fifo_fails_without_blocking(self):
         manifest_path = self.root / MANIFEST_NAME
