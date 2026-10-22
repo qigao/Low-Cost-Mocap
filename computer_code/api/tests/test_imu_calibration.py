@@ -107,6 +107,58 @@ class IMUCalibrationContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite real"):
             calibration(accel_bias_m_s2=(0.0, float("inf"), 0.0))
 
+    def test_correction_matrices_apply_after_bias_and_before_body_rotation(self):
+        value = calibration(
+            gyro_correction_matrix=(
+                (2.0, 0.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.5),
+            ),
+            accel_correction_matrix=(
+                (1.0, 0.0, 0.0),
+                (0.0, 2.0, 0.0),
+                (0.0, 0.0, 0.5),
+            ),
+        )
+        corrected = correct_imu_sample(sample(), value)
+        self.assertEqual(corrected.gyro_body_rad_s, (1.8, 1.8, 1.35))
+        self.assertAlmostEqual(corrected.specific_force_body_m_s2[1], 0.0)
+        self.assertAlmostEqual(corrected.specific_force_body_m_s2[2], 4.5)
+
+    def test_calibration_json_object_roundtrips_and_rejects_unknown_fields(self):
+        value = calibration()
+        decoded = IMUCalibration.from_dict(value.to_dict())
+        self.assertEqual(decoded, value)
+        self.assertEqual(decoded.calibration_sha256, value.calibration_sha256)
+        raw = value.to_dict()
+        raw["unexpected"] = 1
+        with self.assertRaisesRegex(ValueError, "unknown IMU calibration fields"):
+            IMUCalibration.from_dict(raw)
+        raw = value.to_dict()
+        raw["schema_version"] = True
+        with self.assertRaisesRegex(ValueError, "schema_version"):
+            IMUCalibration.from_dict(raw)
+
+    def test_correction_matrices_must_be_finite_and_well_conditioned(self):
+        invalid_matrices = (
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 0.0)),
+            ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 0.0001)),
+            ((1.0, 0.0, 0.0), (0.0, float("nan"), 0.0), (0.0, 0.0, 1.0)),
+        )
+        for matrix in invalid_matrices:
+            with self.subTest(matrix=matrix):
+                with self.assertRaises(ValueError):
+                    calibration(gyro_correction_matrix=matrix)
+
+    def test_digest_changes_when_calibration_values_change(self):
+        baseline = calibration()
+        changed = calibration(gyro_correction_matrix=(
+            (1.01, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        ))
+        self.assertNotEqual(baseline.calibration_sha256, changed.calibration_sha256)
+
     def test_calibration_digest_mismatch_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "does not match"):
             calibration(calibration_sha256="0" * 64)
