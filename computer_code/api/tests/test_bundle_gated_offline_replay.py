@@ -45,6 +45,24 @@ class BundleGatedOfflineReplayTests(unittest.TestCase):
                     ],
                 }],
             },
+            "temporal": {
+                "codebook": {
+                    "10": [0, 0, 0, 0, 1, 1, 1, 1],
+                    "11": [0, 0, 1, 1, 0, 0, 1, 1],
+                    "12": [0, 1, 0, 1, 0, 1, 0, 1],
+                    "13": [0, 1, 1, 0, 1, 0, 0, 1],
+                },
+                "max_bit_errors": 1,
+                "min_valid_samples": 6,
+                "trials": [{
+                    "reference_marker_id": 13,
+                    "trigger_epoch": 500,
+                    "samples": [
+                        {"trigger_id": 500 + i, "illuminated": bit}
+                        for i, bit in enumerate([0, 1, 1, 0, 1, 0, 0, 1])
+                    ],
+                }],
+            },
         }
         if replay_raw is None:
             replay_raw = json.dumps(
@@ -67,7 +85,7 @@ class BundleGatedOfflineReplayTests(unittest.TestCase):
                 "media_type": "application/json" if relative.endswith(".json") else "application/octet-stream",
             })
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "bundle_id": "combined-replay-fixture",
             "capture": {
                 "started_at_utc": "2026-10-22T01:00:00Z",
@@ -108,6 +126,8 @@ class BundleGatedOfflineReplayTests(unittest.TestCase):
                 "max_marker_id_switches": 0,
                 "min_labeled_frames": 100,
                 "min_labeled_tracks": 4,
+                "min_temporal_trials": 1,
+                "max_wrong_accept_one_sided_upper_95": 0.95,
             },
             "artifacts": artifacts,
         }
@@ -131,6 +151,34 @@ class BundleGatedOfflineReplayTests(unittest.TestCase):
         )
         self.assertFalse(report["declarations_not_verified"]["hardware_provenance_verified"])
         self.assertFalse(report["offline_replay_report"]["hardware_provenance_verified"])
+        self.assertEqual(
+            report["statistical_gate"]["status"],
+            "conditional_pass_assuming_independent_trials",
+        )
+        self.assertEqual(report["statistical_gate"]["temporal_trial_count"], 1)
+        self.assertFalse(report["statistical_gate"]["trial_independence_verified"])
+
+    def test_predeclared_statistical_gate_fails_closed_on_count_or_bound(self):
+        self.manifest["acceptance_limits"]["min_temporal_trials"] = 2
+        self.manifest["acceptance_limits"]["max_wrong_accept_one_sided_upper_95"] = 0.5
+        self.write_manifest()
+        report = run_bundle_gated_offline_replay(self.root)
+        self.assertEqual(report["offline_replay_status"], "completed_software_replay")
+        gate = report["statistical_gate"]
+        self.assertEqual(gate["status"], "conditional_fail")
+        self.assertFalse(gate["trial_count_meets_minimum"])
+        self.assertFalse(gate["bound_within_limit"])
+        self.assertFalse(gate["trial_independence_verified"])
+
+    def test_v1_bundle_reports_that_statistical_limits_were_not_predeclared(self):
+        self.manifest["schema_version"] = 1
+        self.manifest["acceptance_limits"].pop("min_temporal_trials")
+        self.manifest["acceptance_limits"].pop("max_wrong_accept_one_sided_upper_95")
+        self.write_manifest()
+        report = run_bundle_gated_offline_replay(self.root)
+        self.assertEqual(report["offline_replay_status"], "completed_software_replay")
+        self.assertEqual(report["statistical_gate"]["status"], "not_predeclared")
+        self.assertFalse(report["statistical_gate"]["trial_independence_verified"])
 
     def test_tampered_artifact_skips_replay_entirely(self):
         artifact = next(x for x in self.manifest["artifacts"] if x["role"] == "raw_camera_frames")
