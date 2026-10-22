@@ -121,7 +121,7 @@ class LegacyControlSecurityTests(unittest.TestCase):
         for event, validator in checks.items():
             with self.subTest(event=event):
                 start = index_source.index(f'@socketio.on("{event}")')
-                next_handler = index_source.find("\\n@socketio.on(", start + 1)
+                next_handler = index_source.find("\n@socketio.on(", start + 1)
                 handler = index_source[start: next_handler if next_handler >= 0 else len(index_source)]
                 self.assertIn(validator, handler)
                 self.assertLess(handler.index(validator), handler.index("ser.write"))
