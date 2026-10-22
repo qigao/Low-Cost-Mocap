@@ -127,6 +127,8 @@ class IMUCalibration:
     accel_bias_m_s2: tuple[float, float, float]
     gyro_noise_density_rad_s_sqrt_hz: tuple[float, float, float]
     accel_noise_density_m_s2_sqrt_hz: tuple[float, float, float]
+    gyro_bias_random_walk_rad_s_per_sqrt_s: tuple[float, float, float]
+    accel_bias_random_walk_m_s2_per_sqrt_s: tuple[float, float, float]
     calibration_method: str
     gyro_correction_matrix: tuple[tuple[float, float, float], ...] = _IDENTITY3
     accel_correction_matrix: tuple[tuple[float, float, float], ...] = _IDENTITY3
@@ -147,6 +149,8 @@ class IMUCalibration:
         object.__setattr__(self, "accel_bias_m_s2", _vector3(self.accel_bias_m_s2, "accel_bias_m_s2"))
         object.__setattr__(self, "gyro_noise_density_rad_s_sqrt_hz", _vector3(self.gyro_noise_density_rad_s_sqrt_hz, "gyro_noise_density_rad_s_sqrt_hz", nonnegative=True))
         object.__setattr__(self, "accel_noise_density_m_s2_sqrt_hz", _vector3(self.accel_noise_density_m_s2_sqrt_hz, "accel_noise_density_m_s2_sqrt_hz", nonnegative=True))
+        object.__setattr__(self, "gyro_bias_random_walk_rad_s_per_sqrt_s", _vector3(self.gyro_bias_random_walk_rad_s_per_sqrt_s, "gyro_bias_random_walk_rad_s_per_sqrt_s", nonnegative=True))
+        object.__setattr__(self, "accel_bias_random_walk_m_s2_per_sqrt_s", _vector3(self.accel_bias_random_walk_m_s2_per_sqrt_s, "accel_bias_random_walk_m_s2_per_sqrt_s", nonnegative=True))
         if type(self.valid_from_timestamp_ns) is not int or not 0 <= self.valid_from_timestamp_ns <= (1 << 63) - 1:
             raise ValueError("valid_from_timestamp_ns must be a nonnegative signed-64-bit integer")
         if self.valid_until_timestamp_ns is not None:
@@ -178,6 +182,8 @@ class IMUCalibration:
             "accel_bias_m_s2": self.accel_bias_m_s2,
             "gyro_noise_density_rad_s_sqrt_hz": self.gyro_noise_density_rad_s_sqrt_hz,
             "accel_noise_density_m_s2_sqrt_hz": self.accel_noise_density_m_s2_sqrt_hz,
+            "gyro_bias_random_walk_rad_s_per_sqrt_s": self.gyro_bias_random_walk_rad_s_per_sqrt_s,
+            "accel_bias_random_walk_m_s2_per_sqrt_s": self.accel_bias_random_walk_m_s2_per_sqrt_s,
             "calibration_method": self.calibration_method,
             "gyro_correction_matrix": self.gyro_correction_matrix,
             "accel_correction_matrix": self.accel_correction_matrix,
@@ -200,8 +206,10 @@ class IMUCalibration:
             "rotation_body_from_imu", "translation_body_from_imu_m",
             "gyro_bias_rad_s", "accel_bias_m_s2",
             "gyro_noise_density_rad_s_sqrt_hz",
-            "accel_noise_density_m_s2_sqrt_hz", "calibration_method",
-            "valid_from_timestamp_ns", "valid_until_timestamp_ns",
+            "accel_noise_density_m_s2_sqrt_hz",
+            "gyro_bias_random_walk_rad_s_per_sqrt_s",
+            "accel_bias_random_walk_m_s2_per_sqrt_s",
+            "calibration_method", "valid_from_timestamp_ns", "valid_until_timestamp_ns",
             "calibration_sha256",
         }
         optional = {"gyro_correction_matrix", "accel_correction_matrix"}
@@ -223,6 +231,8 @@ class IMUCalibration:
             accel_bias_m_s2=raw["accel_bias_m_s2"],
             gyro_noise_density_rad_s_sqrt_hz=raw["gyro_noise_density_rad_s_sqrt_hz"],
             accel_noise_density_m_s2_sqrt_hz=raw["accel_noise_density_m_s2_sqrt_hz"],
+            gyro_bias_random_walk_rad_s_per_sqrt_s=raw["gyro_bias_random_walk_rad_s_per_sqrt_s"],
+            accel_bias_random_walk_m_s2_per_sqrt_s=raw["accel_bias_random_walk_m_s2_per_sqrt_s"],
             calibration_method=raw["calibration_method"],
             gyro_correction_matrix=raw.get("gyro_correction_matrix", _IDENTITY3),
             accel_correction_matrix=raw.get("accel_correction_matrix", _IDENTITY3),
