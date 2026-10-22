@@ -110,6 +110,8 @@ class IMUCalibrationContractTests(unittest.TestCase):
     def test_calibration_digest_mismatch_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "does not match"):
             calibration(calibration_sha256="0" * 64)
+        with self.assertRaisesRegex(ValueError, "must be a string"):
+            calibration(calibration_sha256=None)
 
     def test_sample_device_clock_revision_and_validity_are_enforced(self):
         value = calibration()
