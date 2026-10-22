@@ -136,10 +136,15 @@ The orchestrator refuses to run replay when any bundle artifact fails. It
 bounds the replay-input read to 64 MiB by default, rejects duplicate JSON
 keys/nonfinite constants/unknown replay root fields, rechecks the replay
 input bytes, and revalidates the full bundle after replay to detect changes
-during evaluation. Trigger replay reports p50/p95/p99/max exposure skew over
-admitted batches using the nearest-rank percentile rule; rejected batches are
-counted separately and do not enter that distribution. These are statistics
-over declared timestamps, not verification of physical exposure provenance. Exit 0 means bundle integrity and the software replay
+during evaluation. Trigger replay reports two p50/p95/p99/max exposure-skew distributions
+using the nearest-rank percentile rule. The admitted distribution includes only
+batches accepted by all trigger gates. A separate comparable-timestamp
+distribution includes structurally comparable batches even when rejected for
+excessive skew, a reference-trigger mismatch, or sequence/gap rules; malformed
+batches with missing/duplicate cameras, mixed trigger IDs or mixed clock
+domains are not included. This prevents rejected high-skew batches from
+disappearing from diagnostics. Both distributions summarize declared timestamps,
+not verified physical exposure provenance. Exit 0 means bundle integrity and the software replay
 both completed; it still does **not** mean the physical rig passed acceptance.
 The standalone `offline_acceptance_cli.py` applies the same strict JSON
 rules when invoked directly: duplicate keys, unknown fields at every schema

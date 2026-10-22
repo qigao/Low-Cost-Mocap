@@ -40,6 +40,8 @@ class TriggerReplayReport:
     reference_gaps: int
     maximum_declared_skew_ns: int | None
     admitted_exposure_skew_ns_percentiles: Mapping[str, int]
+    comparable_exposure_skew_batch_count: int
+    comparable_exposure_skew_ns_percentiles: Mapping[str, int]
     rejection_reasons: Mapping[str, int]
     hardware_provenance_verified: bool = False
 
@@ -59,6 +61,41 @@ def _nearest_rank_skew_percentiles(values: Sequence[int]) -> dict[str, int]:
         "p99": rank(0.99),
         "max": ordered[-1],
     }
+
+
+def _comparable_declared_skew_ns(
+    frames: object, expected_camera_ids: Sequence[int]
+) -> int | None:
+    """Measure skew when per-camera timestamps are structurally comparable.
+
+    This diagnostic deliberately does not apply the skew threshold or require
+    the independent reference trigger to match. It still requires exactly one
+    valid frame per expected camera, one internal trigger ID and one clock
+    domain. It summarizes declarations, not verified physical exposure times.
+    """
+    if not isinstance(frames, Sequence) or len(frames) != len(expected_camera_ids):
+        return None
+    if not frames or any(not isinstance(frame, FrameStamp) for frame in frames):
+        return None
+    try:
+        camera_ids = tuple(_nonnegative_int(frame.camera_id, "camera_id") for frame in frames)
+        trigger_ids = tuple(_nonnegative_int(frame.trigger_id, "trigger_id") for frame in frames)
+        timestamps = tuple(
+            _nonnegative_int(frame.exposure_timestamp_ns, "exposure_timestamp_ns")
+            for frame in frames
+        )
+    except (TypeError, ValueError):
+        return None
+    if len(set(camera_ids)) != len(camera_ids) or set(camera_ids) != set(expected_camera_ids):
+        return None
+    if len(set(trigger_ids)) != 1:
+        return None
+    domains = tuple(frame.clock_domain for frame in frames)
+    if any(not isinstance(domain, str) or not domain.strip() for domain in domains):
+        return None
+    if len(set(domains)) != 1:
+        return None
+    return max(timestamps) - min(timestamps)
 
 
 def replay_trigger_batches(
@@ -87,10 +124,16 @@ def replay_trigger_batches(
     gaps = 0
     maximum = None
     admitted_skews: list[int] = []
+    comparable_skews: list[int] = []
     previous = None
     for record in recordings:
         if not isinstance(record, RecordedFrameBatch):
             raise ValueError("recordings must contain RecordedFrameBatch entries")
+        comparable_skew = _comparable_declared_skew_ns(
+            record.camera_frames, expected
+        )
+        if comparable_skew is not None:
+            comparable_skews.append(comparable_skew)
         reference = _nonnegative_int(record.reference_trigger_id, "reference_trigger_id")
         if previous is not None and reference <= previous:
             rejected["reference_not_monotonic"] += 1
@@ -126,6 +169,10 @@ def replay_trigger_batches(
         maximum_declared_skew_ns=maximum,
         admitted_exposure_skew_ns_percentiles=MappingProxyType(
             _nearest_rank_skew_percentiles(admitted_skews)
+        ),
+        comparable_exposure_skew_batch_count=len(comparable_skews),
+        comparable_exposure_skew_ns_percentiles=MappingProxyType(
+            _nearest_rank_skew_percentiles(comparable_skews)
         ),
         rejection_reasons=MappingProxyType(dict(sorted(rejected.items()))),
         hardware_provenance_verified=False,
