@@ -106,6 +106,6 @@ camera driver reports true sensor-exposure time, or the physical calibration
 is metrically correct. Extract/convert the independently reviewed records
 into the existing versioned input expected by `offline_acceptance_cli.py`,
 then review that software replay report separately. Keep hardware
-qualification [HW-05](../../../../issues/6) and the real exposure, optical,
+qualification [HW-05](https://github.com/qigao/Low-Cost-Mocap/issues/6) and the real exposure, optical,
 calibration and end-to-end safety gates open until physical measurements
 and independent evidence have been reviewed.

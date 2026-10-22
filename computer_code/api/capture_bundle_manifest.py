@@ -246,7 +246,11 @@ def _validate_structure(
         fps = device["nominal_fps"]
         if isinstance(fps, bool) or not isinstance(fps, (int, float)):
             raise ValueError("device nominal_fps must be finite and positive")
-        if not math.isfinite(float(fps)) or not 0 < float(fps) <= 10000:
+        try:
+            fps_value = float(fps)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError("device nominal_fps must be finite and positive") from exc
+        if not math.isfinite(fps_value) or not 0 < fps_value <= 10000:
             raise ValueError("device nominal_fps must be finite and positive")
     if len(set(device_ids)) != len(device_ids) or set(device_ids) != set(ids):
         raise ValueError("software.devices camera IDs must exactly match capture.camera_ids")
@@ -280,7 +284,11 @@ def _validate_structure(
     rms = acceptance["max_reprojection_rms_px"]
     if isinstance(rms, bool) or not isinstance(rms, (int, float)):
         raise ValueError("max_reprojection_rms_px must be finite and positive")
-    if not math.isfinite(float(rms)) or not 0 < float(rms) <= 10000:
+    try:
+        rms_value = float(rms)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("max_reprojection_rms_px must be finite and positive") from exc
+    if not math.isfinite(rms_value) or not 0 < rms_value <= 10000:
         raise ValueError("max_reprojection_rms_px must be finite and positive")
     _integer(acceptance["max_marker_id_switches"], "max_marker_id_switches", maximum=1_000_000)
     _integer(acceptance["min_labeled_frames"], "min_labeled_frames", minimum=1, maximum=10_000_000)
@@ -484,6 +492,8 @@ def validate_capture_bundle(
                 actual_size, actual_hash = _hash_regular_file(
                     artifact_path, max_bytes=max_one
                 )
+                if total_actual_bytes + actual_size > max_all:
+                    raise ValueError("actual artifacts exceed total byte cap")
                 total_actual_bytes += actual_size
                 entry["actual_size_bytes"] = actual_size
                 entry["actual_sha256"] = actual_hash

@@ -205,6 +205,11 @@ class CaptureBundleManifestTests(unittest.TestCase):
         self.assertFalse(report["bundle_integrity_valid"])
         self.assertEqual(report["artifact_checks"][1]["status"], "duplicate_path")
 
+        case_collision = deepcopy(self.manifest)
+        case_collision["artifacts"][1]["path"] = case_collision["artifacts"][0]["path"].upper()
+        report = validate_capture_bundle(case_collision, self.root)
+        self.assertEqual(report["artifact_checks"][1]["status"], "duplicate_path")
+
     def test_missing_required_role_and_unlinked_revision_do_not_pass(self):
         missing = deepcopy(self.manifest)
         missing["artifacts"] = [
@@ -244,6 +249,12 @@ class CaptureBundleManifestTests(unittest.TestCase):
         bad_semantics = deepcopy(self.manifest)
         bad_semantics["capture"]["timestamp_semantics"] = []
         variants.append((bad_semantics, "timestamp_semantics"))
+        huge_rate = deepcopy(self.manifest)
+        huge_rate["software"]["devices"][0]["nominal_fps"] = 10**1000
+        variants.append((huge_rate, "nominal_fps"))
+        huge_rms = deepcopy(self.manifest)
+        huge_rms["acceptance_limits"]["max_reprojection_rms_px"] = 10**1000
+        variants.append((huge_rms, "max_reprojection_rms_px"))
         digest = deepcopy(self.manifest)
         digest["artifacts"][0]["sha256"] = "A" * 64
         variants.append((digest, "lowercase hexadecimal SHA-256"))
