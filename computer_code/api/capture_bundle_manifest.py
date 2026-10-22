@@ -691,67 +691,37 @@ def validate_capture_bundle_directory(
     max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
     max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
 ) -> dict[str, Any]:
-    """Load a bounded manifest from the bundle root and validate its artifacts."""
-    root = Path(bundle_root)
-    if root.is_symlink():
+    """Read the manifest and validate every artifact under one anchored root FD."""
+    root_input = Path(bundle_root)
+    if root_input.is_symlink():
         raise ValueError("bundle root must not itself be a symlink")
     if manifest_name != MANIFEST_NAME:
         raise ValueError("manifest name must be capture-bundle.json")
     try:
-        # Canonicalize once before reading the manifest and validating its
-        # artifacts, so an ancestor symlink alias cannot select different
-        # roots for those two phases.
-        root = root.resolve(strict=True)
+        root = root_input.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise ValueError("bundle root must exist and resolve safely") from exc
     if not root.is_dir():
         raise ValueError("bundle root must be a directory")
-    manifest_path = root / manifest_name
-    # Open once, then validate and read through the same descriptor. A
-    # separate is_symlink/stat/read sequence is vulnerable to path replacement
-    # between checks. Fail closed where O_NOFOLLOW is unavailable rather than
-    # silently claiming race-resistant symlink protection.
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise ValueError("manifest validation requires platform O_NOFOLLOW support")
-    flags = os.O_RDONLY | os.O_NOFOLLOW
-    # Prevent a FIFO/device path from blocking before fstat() can reject it.
-    if hasattr(os, "O_NONBLOCK"):
-        flags |= os.O_NONBLOCK
-    if hasattr(os, "O_CLOEXEC"):
-        flags |= os.O_CLOEXEC
+
+    root_fd = _open_directory_path_no_follow(root)
     try:
-        descriptor = os.open(manifest_path, flags)
-    except OSError as exc:
-        raise ValueError("manifest file cannot be opened without following links") from exc
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("manifest must be a regular file")
-        if metadata.st_size > MAX_MANIFEST_BYTES:
-            raise ValueError("manifest exceeds byte cap")
-        chunks = []
-        total = 0
-        while True:
-            chunk = os.read(
-                descriptor,
-                min(CHUNK_BYTES, MAX_MANIFEST_BYTES + 1 - total),
-            )
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_MANIFEST_BYTES:
-                raise ValueError("manifest exceeds byte cap")
-            chunks.append(chunk)
-        raw = b"".join(chunks)
-    except OSError as exc:
-        raise ValueError("manifest file cannot be read safely") from exc
+        raw = _read_regular_file_at(
+            root_fd,
+            MANIFEST_NAME,
+            max_bytes=MAX_MANIFEST_BYTES,
+            cap_error="manifest exceeds byte cap",
+        )
+        manifest = load_manifest_bytes(raw)
+        report = _validate_capture_bundle_at(
+            manifest,
+            root,
+            root_fd,
+            max_artifacts=max_artifacts,
+            max_artifact_bytes=max_artifact_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+        report["manifest_file_sha256"] = hashlib.sha256(raw).hexdigest()
+        return report
     finally:
-        os.close(descriptor)
-    manifest = load_manifest_bytes(raw)
-    report = validate_capture_bundle(
-        manifest, root, max_artifacts=max_artifacts,
-        max_artifact_bytes=max_artifact_bytes,
-        max_total_bytes=max_total_bytes,
-    )
-    report["manifest_file_sha256"] = hashlib.sha256(raw).hexdigest()
-    return report
+        os.close(root_fd)
