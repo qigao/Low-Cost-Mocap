@@ -166,6 +166,27 @@ class BundleGatedOfflineReplayTests(unittest.TestCase):
         self.assertEqual(report["offline_replay_status"], "invalid_replay_input")
         self.assertIn("replay byte cap", report["failures"][0])
 
+    def test_bundle_mutation_during_replay_invalidates_combined_report(self):
+        raw_artifact = next(
+            x for x in self.manifest["artifacts"]
+            if x["role"] == "raw_camera_frames"
+        )
+        path = self.root / raw_artifact["path"]
+        original = path.read_bytes()
+        from offline_acceptance_cli import evaluate_document as real_evaluate
+
+        def mutate_then_evaluate(document):
+            path.write_bytes(b"mutated during replay")
+            return real_evaluate(document)
+
+        with patch("bundle_gated_offline_replay.evaluate_document", side_effect=mutate_then_evaluate):
+            report = run_bundle_gated_offline_replay(self.root)
+        self.assertFalse(report["bundle_integrity_valid"])
+        self.assertEqual(report["offline_replay_status"], "bundle_changed_during_replay")
+        self.assertTrue(any("changed while replay" in x for x in report["failures"]))
+        self.assertFalse(report["declarations_not_verified"]["hardware_provenance_verified"])
+        path.write_bytes(original)
+
     def test_missing_replay_role_reports_no_replay_without_claiming_success(self):
         self.manifest = self.build_bundle(include_replay=False)
         self.write_manifest()

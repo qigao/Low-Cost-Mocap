@@ -100,6 +100,34 @@ in 1 MiB chunks; raw video/frame data is never loaded wholesale into memory.
   `timestamp_semantics_verified=false`, and
   `physical_metric_scale_verified=false`.
 
+## Gate offline replay on the exact bundle
+
+To run the existing trigger/temporal statistics evaluator only after all
+bundle files pass integrity checks, add exactly one artifact with role
+`offline_replay_input`. Its bytes must be the versioned JSON document
+accepted by `offline_acceptance_cli.py`; it should be generated from
+independently reviewed labels and trigger records, not from the decoder under
+test.
+
+Run:
+
+```sh
+python bundle_gated_offline_replay.py /path/to/capture-bundle > combined-report.json
+```
+
+The orchestrator refuses to run replay when any bundle artifact fails. It
+bounds the replay-input read to 64 MiB by default, rejects duplicate JSON
+keys/nonfinite constants/unknown replay root fields, rechecks the replay
+input bytes, and revalidates the full bundle after replay to detect changes
+during evaluation. Exit 0 means bundle integrity and the software replay
+both completed; it still does **not** mean the physical rig passed acceptance.
+The combined report includes both reports and the replay-input SHA-256.
+
+```sh
+python bundle_gated_offline_replay.py /path/to/capture-bundle \
+  --max-replay-input-bytes 67108864
+```
+
 ## Next: offline acceptance
 
 A valid bundle report means **only** that the listed bytes match the manifest.

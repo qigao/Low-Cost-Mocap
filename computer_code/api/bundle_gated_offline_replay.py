@@ -186,6 +186,27 @@ def run_bundle_gated_offline_replay(
         ):
             raise ValueError("offline replay input needs schema_version 1 and trigger or temporal section")
         replay_report = evaluate_document(replay_document)
+        # Recheck the complete bundle after replay to catch any mutation of
+        # sibling evidence files while the replay input was being evaluated.
+        final_bundle = validate_capture_bundle_directory(
+            root_input,
+            max_artifacts=max_artifacts,
+            max_artifact_bytes=max_artifact_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+        if (
+            not final_bundle["bundle_integrity_valid"]
+            or final_bundle.get("manifest_file_sha256")
+            != bundle_report.get("manifest_file_sha256")
+            or final_bundle.get("manifest_sha256")
+            != bundle_report.get("manifest_sha256")
+        ):
+            report["bundle_integrity_valid"] = False
+            report["bundle_report"] = final_bundle
+            report["offline_replay_status"] = "bundle_changed_during_replay"
+            report["failures"].extend(final_bundle.get("failures", []))
+            report["failures"].append("bundle integrity changed while replay was running")
+            return report
     except (OSError, ValueError, TypeError, KeyError, UnicodeDecodeError) as exc:
         report["offline_replay_status"] = "invalid_replay_input"
         report["failures"].append(str(exc))
