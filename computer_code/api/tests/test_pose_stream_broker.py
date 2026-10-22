@@ -12,7 +12,7 @@ from board_recognizer import BoardOutcome, BoardPose
 from identity_locked_board_tracker import BoardFrameStatus, LockedBoardFrame
 from pose_stream import pose_frame_to_dict
 from pose_stream_broker import (
-    BoundedPoseStreamPublisher, PoseStreamConsumer,
+    BoundedPoseStreamPublisher, PoseStreamConsumer, flush_to_socketio,
 )
 
 
@@ -160,6 +160,47 @@ class BoundedPoseStreamTests(unittest.TestCase):
         ])
         self.assertIsNone(self.publisher.peek_next("viewerA"))
 
+    def test_socketio_callback_adapter_uses_targeted_room_without_io_imports(self):
+        self.publisher.subscribe("viewerA")
+        self.publisher.publish(self.frame(1))
+        called = []
+        def fake_socketio_emit(event, message, *, to):
+            called.append((event, message["sequence"], to))
+            return None
+
+        self.assertEqual(
+            flush_to_socketio(
+                self.publisher, "viewerA", fake_socketio_emit,
+                max_messages=4,
+            ), 2,
+        )
+        self.assertEqual(called, [
+            ("mocap:pose-stream", 0, "viewerA"),
+            ("mocap:pose-stream", 1, "viewerA"),
+        ])
+        self.assertIsNone(self.publisher.peek_next("viewerA"))
+
+    def test_full_asset_envelope_byte_bound_and_consumer_non_json_fail_closed(self):
+        from pose_stream_broker import _envelope
+        from pose_stream import describe_board_assets
+        asset = describe_board_assets(self.registry)
+        sample = _envelope(asset, session_id=1, sequence=0)
+        import json
+        size = len(json.dumps(
+            sample, sort_keys=True, separators=(",", ":")
+        ).encode("utf8"))
+        with self.assertRaisesRegex(ValueError, "asset description exceeds"):
+            BoundedPoseStreamPublisher(
+                self.registry, max_message_bytes=size - 1
+            )
+        self.publisher.subscribe("viewerA")
+        consumer = PoseStreamConsumer()
+        candidate = self.publisher.peek_next("viewerA")
+        candidate["payload"]["bad_set"] = {1, 2}
+        with self.assertRaisesRegex(ValueError, "non-JSON"):
+            consumer.consume(candidate)
+        self.assertIsNone(consumer.session_id)
+
     def test_reconnect_resubscribe_needs_explicit_fresh_asset(self):
         self.publisher.subscribe("viewerA")
         consumer = PoseStreamConsumer()
@@ -250,7 +291,7 @@ class AdversarialConsumerTests(BoundedPoseStreamTests):
 
     def test_rejects_unknown_boards_wrong_quaternion_and_stale_pose_atomically(self):
         asset, packet = self._packets()
-        for variant in ("unknown", "unit", "stale", "duplicate", "raw"):
+        for variant in ("unknown", "unit", "stale", "duplicate", "raw", "mount", "minimum"):
             consumer = PoseStreamConsumer()
             consumer.consume(asset)
             invalid = deepcopy(packet)
@@ -265,6 +306,10 @@ class AdversarialConsumerTests(BoundedPoseStreamTests):
                 body["visible_marker_ids"] = [100, 100]
             elif variant == "raw":
                 invalid["payload"]["hardware_provenance_verified"] = True
+            elif variant == "mount":
+                body["position_world_from_body"][0] += 0.7
+            elif variant == "minimum":
+                body["visible_marker_ids"] = [100, 101]
             with self.subTest(variant=variant), self.assertRaises(ValueError):
                 consumer.consume(invalid)
             self.assertEqual(consumer.last_sequence, 0)
