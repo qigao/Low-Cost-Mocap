@@ -122,7 +122,10 @@ class OpticalIMUAttitudeFusion:
         if s.calibration_revision!=self.calrev or s.calibration_sha256!=self.calsha: raise ValueError("IMU calibration mismatch")
         if self.history and (s.sequence_number<=self.history[-1].sequence_number or s.sensor_timestamp_ns<=self.history[-1].sensor_timestamp_ns): raise ValueError("IMU state is duplicate or out of order")
         if self.history:
-            prev=self.history[-1]; delta=_mul(_inv(prev.orientation_world_from_body_xyzw),s.orientation_world_from_body_xyzw)
+            prev=self.history[-1]
+            if s.sensor_timestamp_ns-prev.sensor_timestamp_ns != s.integrated_interval_ns:
+                raise ValueError("IMU propagation history has a skipped or inconsistent interval")
+            delta=_mul(_inv(prev.orientation_world_from_body_xyzw),s.orientation_world_from_body_xyzw)
             if self.q is not None:
                 self.q=_q(_mul(self.q,delta)); self.p+=max(self.noise)**2*((s.sensor_timestamp_ns-prev.sensor_timestamp_ns)/1e9)
         self.history.append(s)
