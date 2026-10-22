@@ -22,6 +22,7 @@ from scipy.spatial.transform import Rotation
 from board_patterns import BoardPatternRegistry
 from identity_locked_board_tracker import LockedBoardFrame
 from pose_stream import describe_board_assets, pose_frame_to_dict
+from fused_attitude_stream import validate_fused_attitude_payload
 from temporal_pattern import _nonnegative_int
 
 
@@ -476,6 +477,12 @@ class PoseStreamConsumer:
         self.boards: dict[str, set[int]] = {}
         self.min_visible: dict[str, int] = {}
         self.body_mounts: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        self.last_fused_timestamp_ns: int | None = None
+        self.fused_imu_id: str | None = None
+        self.fused_clock_domain: str | None = None
+        self.fused_mapping_sha256: str | None = None
+        self.fused_imu_calibration_sha256: str | None = None
+        self.fused_optical_calibration_sha256: str | None = None
 
     def _check_frame(self, payload: dict[str, Any]) -> None:
         if (
@@ -669,13 +676,57 @@ class PoseStreamConsumer:
             self.last_exposure_ns = None
             self.calibration_sha256 = None
             self.clock_domain = None
+            self.last_fused_timestamp_ns = None
+            self.fused_imu_id = None
+            self.fused_clock_domain = None
+            self.fused_mapping_sha256 = None
+            self.fused_imu_calibration_sha256 = None
+            self.fused_optical_calibration_sha256 = None
             self.last_sequence = sequence
             return deepcopy(payload)
 
         if self.last_sequence is not None and sequence <= self.last_sequence:
             raise ValueError("repeated or stale PoseStream sequence")
-        if kind != "pose_frame" or self.pattern_sha256 is None:
-            raise ValueError("mid-session asset changes require new session")
+        if self.pattern_sha256 is None:
+            raise ValueError("stream has no active asset description")
+        if kind == "fused_attitude_state":
+            expected_optical_calibration = (
+                self.calibration_sha256
+                if self.calibration_sha256 is not None
+                else self.fused_optical_calibration_sha256
+            )
+            checked = validate_fused_attitude_payload(
+                payload,
+                known_body_ids=set(self.boards),
+                expected_pattern_sha256=self.pattern_sha256,
+                expected_optical_calibration_sha256=expected_optical_calibration,
+                previous_timestamp_ns=self.last_fused_timestamp_ns,
+            )
+            # Revisions and timestamps commit only after the full payload passes.
+            if self.fused_imu_id is not None and checked["imu_id"] != self.fused_imu_id:
+                raise ValueError("fused attitude IMU identity changed in session")
+            if self.fused_clock_domain is not None and checked["clock_domain"] != self.fused_clock_domain:
+                raise ValueError("fused attitude clock domain changed in session")
+            if self.fused_mapping_sha256 is not None and checked["clock_mapping_sha256"] != self.fused_mapping_sha256:
+                raise ValueError("fused attitude clock mapping changed in session")
+            if self.fused_imu_calibration_sha256 is not None and checked["imu_calibration_sha256"] != self.fused_imu_calibration_sha256:
+                raise ValueError("fused attitude IMU calibration changed in session")
+            if self.fused_optical_calibration_sha256 is not None and checked["optical_calibration_sha256"] != self.fused_optical_calibration_sha256:
+                raise ValueError("fused attitude optical calibration changed in session")
+            if self.calibration_sha256 is not None and checked["optical_calibration_sha256"] != self.calibration_sha256:
+                raise ValueError("fused attitude calibration disagrees with optical PoseStream")
+            self.last_fused_timestamp_ns = checked["timestamp_ns"]
+            self.fused_imu_id = checked["imu_id"]
+            self.fused_clock_domain = checked["clock_domain"]
+            self.fused_mapping_sha256 = checked["clock_mapping_sha256"]
+            self.fused_imu_calibration_sha256 = checked["imu_calibration_sha256"]
+            self.fused_optical_calibration_sha256 = checked["optical_calibration_sha256"]
+            if self.calibration_sha256 is None:
+                self.calibration_sha256 = checked["optical_calibration_sha256"]
+            self.last_sequence = sequence
+            return deepcopy(checked)
+        if kind != "pose_frame":
+            raise ValueError("unsupported mid-session payload kind")
         # A frame is validated fully before source clock/triggers advance.
         self._check_frame(payload)
         self.last_sequence = sequence
