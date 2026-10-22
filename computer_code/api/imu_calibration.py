@@ -158,11 +158,10 @@ class IMUCalibration:
         digest = sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
         ).hexdigest()
+        if not isinstance(self.calibration_sha256, str):
+            raise ValueError("calibration_sha256 must be a string")
         if self.calibration_sha256:
-            if (
-                not isinstance(self.calibration_sha256, str)
-                or self.calibration_sha256 != digest
-            ):
+            if self.calibration_sha256 != digest:
                 raise ValueError("calibration_sha256 does not match calibration contents")
         else:
             object.__setattr__(self, "calibration_sha256", digest)
