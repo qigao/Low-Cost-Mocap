@@ -153,10 +153,10 @@ def pose_frame_to_dict(
         if last_time is not None and age_ns != exposure_ns - last_time:
             raise ValueError("measurement time age is inconsistent")
 
-        seen = tuple(_nonnegative_int(x, "marker_id") for x in record.visible_marker_ids)
+        seen = tuple(_nonnegative_int(x, "marker_id") for x in result.visible_marker_ids)
         excluded = tuple(
             _nonnegative_int(x, "excluded marker_id")
-            for x in record.excluded_marker_ids
+            for x in result.excluded_marker_ids
         )
         owned = set(registry.boards[board_id].marker_xyz_m)
         if (
