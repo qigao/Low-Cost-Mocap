@@ -420,6 +420,7 @@ class OrientationSeriesMetrics:
 @dataclass(frozen=True)
 class OpticalVsFusedOrientationReport:
     reference_sha256: str
+    input_sha256: str
     clock_domain: str
     match_tolerance_ns: int
     optical_only: OrientationSeriesMetrics
@@ -593,8 +594,10 @@ def compare_optical_only_vs_fused(
     paired_fused_rmse = (
         math.sqrt(sum(b*b for _, b in paired) / len(paired)) if paired else None
     )
+    input_sha = sha256(source_json.encode("utf-8")).hexdigest()
     report_core = {
         "reference_sha256": references[0].reference_sha256,
+        "input_sha256": input_sha,
         "clock_domain": clock_domain,
         "match_tolerance_ns": max_match_delta_ns,
         "optical_only": asdict(optical_metrics),
@@ -613,6 +616,7 @@ def compare_optical_only_vs_fused(
         raise ValueError("A/B report output byte capacity exceeded")
     return OpticalVsFusedOrientationReport(
         reference_sha256=references[0].reference_sha256,
+        input_sha256=input_sha,
         clock_domain=clock_domain,
         match_tolerance_ns=max_match_delta_ns,
         optical_only=optical_metrics,
