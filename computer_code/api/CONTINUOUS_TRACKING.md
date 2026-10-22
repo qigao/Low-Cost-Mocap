@@ -89,6 +89,14 @@ for board_id, status in next_frame.boards.items():
 - A lock expires after `max_identity_age_triggers` unless its same local
   track is revalidated against a new code cycle. Expired/contradictory
   identities are not re-associated automatically with another LED ID.
+- The `SynchronizedLocalLightPipeline` detects ambiguous/overlapping 2D
+  assignments, retires the affected camera's old local IDs and immediately
+  revokes their global locks. It then quarantines that camera across
+  triggers, withholding provisional pixels until a complete fresh code
+  cycle re-confirms identity. A later well-separated contour alone does
+  **not** re-enable that camera. `PoseFrame.quarantined_camera_ids` exposes
+  the state, and a lack of sufficient non-quarantined views produces INVALID
+  rather than a held historical pose.
 - Reconstructed markers are partitioned by board *before* triangulation.
   A bad marker on board B does not discard board A's current valid
   measurement. Each board still passes its own rigid-layout fit.

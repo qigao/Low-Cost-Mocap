@@ -307,6 +307,34 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             for x in restored.boards.values()
         ))
 
+    def test_two_quarantined_cameras_withhold_pose_until_sufficient_views(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        unsafe = dict(detections)
+        for camera in (2, 5):
+            unsafe[camera] = list(unsafe[camera]) + [unsafe[camera][0]]
+        first = self.pipeline.process(frames, images, unsafe)
+        self.assertEqual(first.quarantined_camera_ids, (2, 5))
+        self.assertEqual(len(first.active_locks), 8)
+        for body in first.boards.values():
+            self.assertEqual(body.evidence_kind, "INVALID")
+            self.assertIsNone(body.outcome.pose)
+            self.assertEqual(body.state, "DEGRADED")
+        wire = pose_frame_to_dict(first, self.registry)
+        self.assertEqual(wire["quarantined_camera_ids"], [2, 5])
+        for body in wire["rigid_bodies"]:
+            self.assertIsNone(body["position_world_from_body"])
+            self.assertIsNone(body["quality"])
+            self.assertGreater(body["measurement_age_ns"], 0)
+
+        next_frame = self.process(1017)
+        self.assertEqual(next_frame.quarantined_camera_ids, (2, 5))
+        self.assertTrue(all(
+            body.evidence_kind == "INVALID"
+            and body.outcome.pose is None
+            for body in next_frame.boards.values()
+        ))
+
     def test_fatal_input_error_still_rolls_back_all_camera_states(self):
         self.bootstrap()
         frames, images, detections = self.frames_and_pixels(1016)
