@@ -1,6 +1,7 @@
 """Bundle-gated offline replay never runs on unverified input bytes."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -186,6 +187,27 @@ class BundleGatedOfflineReplayTests(unittest.TestCase):
         self.assertTrue(any("changed while replay" in x for x in report["failures"]))
         self.assertFalse(report["declarations_not_verified"]["hardware_provenance_verified"])
         path.write_bytes(original)
+
+    @unittest.skipUnless(os.name == "posix", "directory symlink replacement test requires POSIX")
+    def test_bundle_root_replacement_during_replay_invalidates_integrity(self):
+        moved_root = self.root.with_name(self.root.name + "-original")
+        from offline_acceptance_cli import evaluate_document as real_evaluate
+
+        def replace_root_then_evaluate(document):
+            self.root.rename(moved_root)
+            self.root.symlink_to(moved_root, target_is_directory=True)
+            return real_evaluate(document)
+
+        with patch(
+            "bundle_gated_offline_replay.evaluate_document",
+            side_effect=replace_root_then_evaluate,
+        ):
+            report = run_bundle_gated_offline_replay(self.root)
+        self.assertFalse(report["bundle_integrity_valid"])
+        self.assertFalse(report["bundle_report"]["bundle_integrity_valid"])
+        self.assertEqual(report["offline_replay_status"], "bundle_changed_during_replay")
+        self.assertTrue(any("final bundle revalidation failed" in x for x in report["failures"]))
+        self.assertFalse(report["declarations_not_verified"]["hardware_provenance_verified"])
 
     def test_missing_replay_role_reports_no_replay_without_claiming_success(self):
         self.manifest = self.build_bundle(include_replay=False)
