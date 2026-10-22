@@ -193,6 +193,31 @@ class IMUCalibrationContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     correct_imu_sample(item, value)
 
+    def test_corrected_vector_contract_rejects_invalid_public_construction(self):
+        corrected = correct_imu_sample(sample(), calibration())
+        with self.assertRaisesRegex(ValueError, "lowercase SHA-256"):
+            type(corrected)(
+                imu_id=corrected.imu_id,
+                sequence_number=corrected.sequence_number,
+                sensor_timestamp_ns=corrected.sensor_timestamp_ns,
+                clock_domain=corrected.clock_domain,
+                calibration_revision=corrected.calibration_revision,
+                calibration_sha256="bad",
+                gyro_body_rad_s=corrected.gyro_body_rad_s,
+                specific_force_body_m_s2=corrected.specific_force_body_m_s2,
+            )
+        with self.assertRaisesRegex(ValueError, "finite real"):
+            type(corrected)(
+                imu_id=corrected.imu_id,
+                sequence_number=corrected.sequence_number,
+                sensor_timestamp_ns=corrected.sensor_timestamp_ns,
+                clock_domain=corrected.clock_domain,
+                calibration_revision=corrected.calibration_revision,
+                calibration_sha256=corrected.calibration_sha256,
+                gyro_body_rad_s=(0.0, float("nan"), 0.0),
+                specific_force_body_m_s2=corrected.specific_force_body_m_s2,
+            )
+
     def test_validity_interval_must_be_ordered(self):
         with self.assertRaisesRegex(ValueError, "after valid_from"):
             calibration(
