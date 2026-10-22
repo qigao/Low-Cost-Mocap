@@ -196,6 +196,62 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
         self.assertEqual(accepted.trigger_id, 1016)
         self.assertTrue(all(x.state == "TRACKING" for x in accepted.boards.values()))
 
+    def test_crossing_near_tie_fails_without_any_camera_state_advance(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        original = tuple(
+            self.pipeline.active_local_track_ids(camera)
+            for camera in self.cameras
+        )
+        samples_before = self.pipeline.retained_roi_sample_count
+
+        # Board B LEDs 105 and 107 are only about 15 px apart on camera
+        # 2. Two bright detections close to their midpoint produce two
+        # equally plausible local-track assignments without being duplicate
+        # detections. It is unsafe to arbitrarily choose either identity.
+        p105 = np.asarray(self.project(2, 105, 1016))
+        p107 = np.asarray(self.project(2, 107, 1016))
+        middle = 0.5 * (p105 + p107)
+        pairs = list(detections[2])
+        a = min(range(len(pairs)), key=lambda i: np.linalg.norm(
+            np.asarray(pairs[i]) - p105
+        ))
+        b = min(range(len(pairs)), key=lambda i: np.linalg.norm(
+            np.asarray(pairs[i]) - p107
+        ))
+        self.assertNotEqual(a, b)
+        pairs[a] = (float(middle[0]), float(middle[1] + 0.35))
+        pairs[b] = (float(middle[0]), float(middle[1] - 0.35))
+        bad = dict(detections)
+        bad[2] = pairs
+
+        with self.assertRaisesRegex(ValueError, "ambiguous light-track"):
+            self.pipeline.process(frames, images, bad)
+        self.assertEqual(self.identity.last_trigger_id, 1015)
+        self.assertEqual(
+            original,
+            tuple(self.pipeline.active_local_track_ids(cam) for cam in self.cameras),
+        )
+        self.assertEqual(self.pipeline.retained_roi_sample_count, samples_before)
+        good = self.pipeline.process(frames, images, detections)
+        self.assertTrue(all(
+            x.evidence_kind == "MEASURED" for x in good.boards.values()
+        ))
+
+    def test_detector_capacity_failure_does_not_partially_commit(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        bad = dict(detections)
+        # More detections than the bounded number of registered LEDs.
+        bad[5] = list(bad[5]) + [
+            (10.0 + i * 10, 12.0) for i in range(9)
+        ]
+        with self.assertRaisesRegex(ValueError, "capacity"):
+            self.pipeline.process(frames, images, bad)
+        self.assertEqual(self.identity.last_trigger_id, 1015)
+        after = self.pipeline.process(frames, images, detections)
+        self.assertEqual(after.trigger_id, 1016)
+
     def test_newborn_track_does_not_inherit_old_expired_identity(self):
         self.bootstrap()
         old_camera_ids = set(self.pipeline.active_local_track_ids(2))
