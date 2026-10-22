@@ -112,9 +112,9 @@ Do not select an EKF or factor graph by fashion. First specify state, frames, pr
 | A4 | IMU/body extrinsics and noise/bias calibration | Immutable revisioned calibration and reproducible calibration fixture | **Merged software contract** — PR #39 |
 | A5 | Bounded inertial propagation | Static, constant angular rate, bias, sample-gap, saturation and reset tests | **Merged gyro-only attitude primitive** — PR #43; global position/velocity and optical fusion remain unavailable |
 | A6 | Optical/IMU fusion vertical slice | Short optical dropout: orientation propagation, uncertainty growth, optical reacquisition correction; optical-only A/B report | **Software-only attitude fusion primitive added in PR #45**; independent-reference A/B qualification and hardware timing remain open |
-| A7 | Versioned fused state output | New schema does not weaken PoseStream v1; consumers can distinguish measured and predicted state | Planned |
-| A8 | Deterministic capture/replay | Same bundle + same config reproduces state sequence within declared tolerances | Planned |
-| A9 | Benchmark/qualification | Independent reference, position/orientation error, drift, reacquisition jump, latency percentiles and invalid-output rate | Planned |
+| A7 | Versioned fused state output | New schema does not weaken PoseStream v1; consumers can distinguish measured and predicted state | **Merged** — PR #47; additive `fused_attitude_state` validated by independent consumer and journal |
+| A8 | Deterministic capture/replay | Same bundle + same config reproduces state sequence within declared tolerances | **Merged software harness** — PR #49; bounded typed-event replay with config/input/output digests; hardware capture qualification remains open |
+| A9 | Benchmark/qualification | Independent reference, position/orientation error, drift, reacquisition jump, latency percentiles and invalid-output rate | **Partial** — PR #49 provides single-series orientation metrics; PR #50 tracks paired optical-only vs fused comparison; physical reference and latency qualification remain open |
 | A10 | Real hardware adapters | Only after HW-01–HW-05 supply independently verifiable evidence; HW-06 remains separate | Blocked on hardware evidence |
 
 ## 7. Validation matrix
@@ -142,11 +142,13 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `imu_calibration.py` | Immutable IMU-to-body extrinsics, bias/noise/correction calibration and bias-corrected vector transforms |
 | `imu_propagation.py` | Bounded gyro-only attitude propagation; no global position/velocity or optical fusion |
 | `optical_imu_fusion.py` | Bounded optical attitude correction over interpolated gyro history, isotropic uncertainty, explicit TRACKING/DEGRADED/LOST states; no position/velocity |
+| `fused_attitude_stream.py` | Additive strict fused-attitude payload and state serializer; existing optical PoseStream v1 remains unchanged |
+| `fusion_replay.py` | Bounded deterministic typed-event replay, canonical digests and quaternion geodesic reference metrics |
 | `pose_stream.py`, `pose_stream_broker.py`, `pose_stream_recording.py` | Versioned output, bounded distribution and deterministic recording/replay |
 | `capture_bundle_manifest.py`, `bundle_gated_offline_replay.py` | Evidence integrity and gated offline qualification |
 | `index.py`, legacy serial handlers | Legacy app/controller adapter only; not core state estimation |
 
-The IMU sample contract, clock-mapping primitive, calibration contract, bounded gyro-only attitude propagation and software-only optical attitude fusion primitive are present. There is still no hardware-qualified clock/trigger adapter, accelerometer-based inertial position/velocity propagation, full ESKF/factor-graph estimator or independently qualified optical-IMU fusion.
+The IMU sample contract, clock-mapping primitive, calibration contract, bounded gyro-only attitude propagation, software-only optical attitude fusion, versioned fused-attitude output, and deterministic replay/reference-metric primitives are present. The paired optical-only-versus-fused report is tracked in Issue #50. There is still no hardware-qualified clock/trigger adapter, accelerometer-based inertial position/velocity propagation, full ESKF/factor-graph estimator or independently qualified optical-IMU fusion.
 
 ## 9. Hardware gates and scope
 
