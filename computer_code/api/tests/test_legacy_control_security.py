@@ -65,6 +65,7 @@ class LegacyControlSecurityTests(unittest.TestCase):
             {"droneArmed": [0, 1], "count": 0, "currentDroneIndex": 0},
             {"droneArmed": [True], "count": 0, "currentDroneIndex": 0},
             {"droneArmed": [True, False], "count": True, "currentDroneIndex": 0},
+            {"droneArmed": [True, False], "count": 9007199254740992, "currentDroneIndex": 0},
             {"droneArmed": [True, False], "count": 0, "currentDroneIndex": 2},
             {"droneArmed": [True, False], "count": 0, "currentDroneIndex": 0, "extra": 1},
         ]
