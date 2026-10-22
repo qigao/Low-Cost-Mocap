@@ -154,7 +154,6 @@ class TemporalIdentityTests(unittest.TestCase):
         self.assertEqual(decoded.erased_samples, 2)
         self.assertEqual(decoded.guaranteed_erasure_budget, 1)
         self.assertFalse(decoded.within_guaranteed_erasure_budget)
-        self.assertEqual(decoded.erased_samples, 2)
         self.assertEqual(decoded.bit_errors, 1)
         self.assertGreaterEqual(decoded.competing_error_margin, 1)
 
