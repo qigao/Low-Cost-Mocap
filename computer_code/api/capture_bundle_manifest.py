@@ -37,7 +37,7 @@ _REQUIRED_ROLES = (
     "controller_config",
     "calibration_config",
 )
-_OPTIONAL_ROLES = {"supplemental", "offline_replay_input"}
+_OPTIONAL_ROLES = {"supplemental", "offline_replay_input", "fusion_ab_input"}
 _TIMESTAMP_SEMANTICS = {
     "sensor_exposure", "hardware_trigger", "driver_dequeue",
     "host_monotonic", "unknown",
@@ -747,5 +747,62 @@ def validate_capture_bundle_directory(
         )
         report["manifest_file_sha256"] = hashlib.sha256(raw).hexdigest()
         return report
+    finally:
+        os.close(root_fd)
+
+
+
+def validate_capture_bundle_and_read_role(
+    bundle_root: str | Path,
+    *,
+    role: str,
+    max_artifacts: int = DEFAULT_MAX_ARTIFACTS,
+    max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+    max_role_bytes: int = 16_000_000,
+) -> tuple[dict[str, Any], str, dict[str, Any], bytes]:
+    """Validate the full bundle and securely return one role's exact bytes.
+
+    All reads are relative to one anchored bundle-root descriptor. The selected
+    role is read again after bundle validation and its exact bytes are checked
+    against the manifest declaration, preventing a post-validation file swap
+    from silently changing the report input. This proves artifact integrity
+    against the supplied manifest only, not hardware authenticity.
+    """
+    role_name = _text(role, "role", maximum=64)
+    if role_name not in _OPTIONAL_ROLES and role_name not in _REQUIRED_ROLES:
+        raise ValueError("requested role is not a supported capture-bundle role")
+    role_cap = _integer(max_role_bytes, "max_role_bytes", minimum=1, maximum=MAX_MANIFEST_BYTES * 64)
+    root = _absolute_bundle_path_without_resolution(bundle_root)
+    root_fd = _open_directory_path_no_follow(root)
+    try:
+        raw_manifest = _read_regular_file_at(
+            root_fd, MANIFEST_NAME, max_bytes=MAX_MANIFEST_BYTES,
+            cap_error="manifest exceeds byte cap",
+        )
+        manifest = load_manifest_bytes(raw_manifest)
+        report = _validate_capture_bundle_at(
+            manifest, root, root_fd,
+            max_artifacts=max_artifacts,
+            max_artifact_bytes=max_artifact_bytes,
+            max_total_bytes=max_total_bytes,
+        )
+        report["manifest_file_sha256"] = hashlib.sha256(raw_manifest).hexdigest()
+        if not report["bundle_integrity_valid"]:
+            raise ValueError("capture bundle integrity validation failed")
+        selected = [item for item in manifest["artifacts"] if item["role"] == role_name]
+        if len(selected) != 1:
+            raise ValueError(f"capture bundle must contain exactly one {role_name} artifact")
+        artifact = selected[0]
+        if artifact["size_bytes"] > role_cap:
+            raise ValueError("selected role exceeds role byte capacity")
+        raw = _read_regular_file_at(
+            root_fd, artifact["path"], max_bytes=role_cap,
+            cap_error="selected role exceeds role byte capacity",
+        )
+        digest = hashlib.sha256(raw).hexdigest()
+        if len(raw) != artifact["size_bytes"] or digest != artifact["sha256"]:
+            raise ValueError("selected role bytes changed after bundle validation")
+        return report, report["manifest_file_sha256"], dict(artifact), raw
     finally:
         os.close(root_fd)
