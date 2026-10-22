@@ -104,9 +104,12 @@ unbounded asynchronous emits in the Socket.IO transport.
 
 The browser client only displays `MEASURED` for a current source trigger
 with age zero, and never displays an old quaternion or position when the
-body is `INVALID`. It shows declared timestamps, model/calibration revision,
-quarantined camera IDs, dropped packets, current marker count, and rigid
-and reprojection residuals. It does not perform actuator control.
+body is `INVALID`. If no new PoseFrame arrives for 1 second, it hides the
+cached coordinates and marks each row `STALE`; the timeout uses browser
+receive-time only and is **not** a hardware exposure-latency measurement.
+It shows declared timestamps, model/calibration revision, quarantined camera
+IDs, dropped packets, current marker count, and rigid/reprojection residuals.
+It does not perform actuator control.
 
 Source exposure timestamps are declared **nanoseconds** and can exceed
 JavaScript's exact integer precision. A web dashboard is therefore a

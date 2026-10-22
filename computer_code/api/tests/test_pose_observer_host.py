@@ -186,7 +186,7 @@ class PoseObserverHostTests(unittest.TestCase):
         # A slow subscriber must remain bounded; no background worker,
         # hardware source or failed transport assumption is involved.
         for trigger in range(1, 8):
-            self.host.publisher.publish(self.frame(trigger))
+            self.host.publish_frame(self.frame(trigger))
         current_stats = [
             self.host.publisher.subscriber_statistics(key)
             for key in self.host.publisher.subscriber_ids
