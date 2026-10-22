@@ -43,15 +43,23 @@ def configured_origins(value: str | None) -> list[str]:
     return list(dict.fromkeys(origins))
 
 
+def is_loopback_peer(remote_addr: str | None) -> bool:
+    """Return whether a request comes from loopback, including IPv4-mapped IPv6."""
+    if not remote_addr:
+        return False
+    try:
+        address = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped.is_loopback
+    return address.is_loopback
+
+
 def legacy_control_peer_allowed(remote_addr: str | None, enabled: str | None = None) -> bool:
     """Permit legacy serial-control events only with explicit opt-in from loopback."""
     setting = os.environ.get("MOCAP_ENABLE_LEGACY_FLIGHT_CONTROL") if enabled is None else enabled
-    if setting != "1" or not remote_addr:
-        return False
-    try:
-        return ipaddress.ip_address(remote_addr).is_loopback
-    except ValueError:
-        return False
+    return setting == "1" and is_loopback_peer(remote_addr)
 
 NUM_DRONES = 2
 MAX_SAFE_COUNTER = (2**53) - 1

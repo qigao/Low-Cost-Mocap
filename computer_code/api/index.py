@@ -18,15 +18,8 @@ from flask_cors import CORS
 import json
 import os
 
-from legacy_control_security import (
-    ArmCounterRegistry,
-    configured_origins,
-    legacy_control_peer_allowed,
-    validate_arm_payload,
-    validate_pid_payload,
-    validate_setpoint_payload,
-    validate_trim_payload,
-)
+from legacy_control_security import configured_origins, is_loopback_peer
+from legacy_control_events import register_legacy_control_handlers, loopback_only_event
 
 ALLOWED_ORIGINS = configured_origins(os.environ.get("MOCAP_ALLOWED_ORIGINS"))
 
@@ -39,44 +32,26 @@ CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS)
 
 
-def _legacy_control_authorized() -> bool:
-    """Fail closed for serial commands unless explicitly enabled from loopback."""
-    if legacy_control_peer_allowed(request.remote_addr, os.environ.get("MOCAP_ENABLE_LEGACY_FLIGHT_CONTROL")):
-        return True
-    socketio.emit(
-        "legacy-control-rejected",
-        {"reason": "legacy flight control is disabled or the client is not loopback"},
-        to=request.sid,
-    )
-    return False
-
-
-def _validated_control_payload(validator, data):
-    """Return a validated payload or emit a fail-closed rejection."""
-    try:
-        return validator(data)
-    except (ValueError, TypeError, KeyError) as exc:
-        socketio.emit(
-            "legacy-control-rejected",
-            {"reason": str(exc)},
-            to=request.sid,
-        )
-        return None
-
-
-arm_counter_registry = ArmCounterRegistry(max_clients=64)
-
-
-@socketio.on("disconnect")
-def _discard_legacy_control_session():
-    arm_counter_registry.discard(request.sid)
-
 cameras_init = False
 
 num_objects = 2
 
+register_legacy_control_handlers(
+    socketio,
+    serial_port=ser,
+    serial_lock=serialLock,
+    get_camera_state=Cameras.instance,
+    is_camera_initialized=lambda: cameras_init,
+    num_objects=num_objects,
+)
+
 @app.route("/api/camera-stream")
 def camera_stream():
+    # Fetching frames advances the legacy tracking loop, which can emit serial
+    # commands for armed bodies. Keep this side-effecting route loopback-only
+    # until a separately reviewed remote authentication design exists.
+    if not is_loopback_peer(request.remote_addr):
+        return Response("camera stream is loopback-only until remote authentication is implemented", status=403)
     cameras = Cameras.instance()
     cameras.set_socketio(socketio)
     cameras.set_ser(ser)
@@ -158,82 +133,8 @@ def plan_trajectory(start_pos, end_pos, waypoints, max_vel, max_accel, max_jerk,
 
     return setpoints
 
-@socketio.on("arm-drone")
-def arm_drone(data):
-    if not _legacy_control_authorized():
-        return
-    global cameras_init
-    if not cameras_init:
-        return
-    validated = _validated_control_payload(validate_arm_payload, data)
-    if validated is None:
-        return
-    drone_armed, count, _current_drone_index = validated
-    if not arm_counter_registry.accept(request.sid, count):
-        socketio.emit(
-            "legacy-control-rejected",
-            {"reason": "stale or replayed arm command counter"},
-            to=request.sid,
-        )
-        return
-
-    # Validate the complete command before any serial write or shared-state update.
-    serial_messages = [
-        f"{drone_index}{json.dumps({'armed': drone_armed[drone_index]})}".encode("utf-8")
-        for drone_index in range(num_objects)
-    ]
-    if len(serial_messages) != num_objects:
-        return
-    Cameras.instance().drone_armed = list(drone_armed)
-    for message in serial_messages:
-        with serialLock:
-            ser.write(message)
-        time.sleep(0.01)
-
-@socketio.on("set-drone-pid")
-def arm_drone(data):
-    if not _legacy_control_authorized():
-        return
-    validated = _validated_control_payload(validate_pid_payload, data)
-    if validated is None:
-        return
-    drone_index, pid_values = validated
-    serial_data = {"pid": pid_values}
-    message = f"{drone_index}{json.dumps(serial_data, allow_nan=False)}".encode("utf-8")
-    with serialLock:
-        ser.write(message)
-        time.sleep(0.01)
-
-@socketio.on("set-drone-setpoint")
-def arm_drone(data):
-    if not _legacy_control_authorized():
-        return
-    validated = _validated_control_payload(validate_setpoint_payload, data)
-    if validated is None:
-        return
-    drone_index, coordinates = validated
-    serial_data = {"setpoint": coordinates}
-    message = f"{drone_index}{json.dumps(serial_data, allow_nan=False)}".encode("utf-8")
-    with serialLock:
-        ser.write(message)
-        time.sleep(0.01)
-
-@socketio.on("set-drone-trim")
-def arm_drone(data):
-    if not _legacy_control_authorized():
-        return
-    validated = _validated_control_payload(validate_trim_payload, data)
-    if validated is None:
-        return
-    drone_index, trim_values = validated
-    serial_data = {"trim": trim_values}
-    message = f"{drone_index}{json.dumps(serial_data, allow_nan=False)}".encode("utf-8")
-    with serialLock:
-        ser.write(message)
-        time.sleep(0.01)
-
-
 @socketio.on("acquire-floor")
+@loopback_only_event(socketio)
 def acquire_floor(data):
     cameras = Cameras.instance()
     object_points = data["objectPoints"]
@@ -273,6 +174,7 @@ def acquire_floor(data):
 
 
 @socketio.on("set-origin")
+@loopback_only_event(socketio)
 def set_origin(data):
     cameras = Cameras.instance()
     object_point = np.array(data["objectPoint"])
@@ -288,12 +190,14 @@ def set_origin(data):
     socketio.emit("to-world-coords-matrix", {"to_world_coords_matrix": cameras.to_world_coords_matrix.tolist()})
 
 @socketio.on("update-camera-settings")
+@loopback_only_event(socketio)
 def change_camera_settings(data):
     cameras = Cameras.instance()
     
     cameras.edit_settings(data["exposure"], data["gain"])
 
 @socketio.on("capture-points")
+@loopback_only_event(socketio)
 def capture_points(data):
     start_or_stop = data["startOrStop"]
     cameras = Cameras.instance()
@@ -305,6 +209,7 @@ def capture_points(data):
         cameras.stop_capturing_points()
 
 @socketio.on("calculate-camera-pose")
+@loopback_only_event(socketio)
 def calculate_camera_pose(data):
     """Seed all camera extrinsics from pairwise calibrated, local-frame poses.
 
@@ -384,18 +289,8 @@ def calculate_camera_pose(data):
         "camera_poses": camera_pose_to_serializable(camera_poses)
     })
 
-@socketio.on("locate-objects")
-def start_or_stop_locating_objects(data):
-    cameras = Cameras.instance()
-    start_or_stop = data["startOrStop"]
-
-    if (start_or_stop == "start"):
-        cameras.start_locating_objects()
-        return
-    elif (start_or_stop == "stop"):
-        cameras.stop_locating_objects()
-
 @socketio.on("determine-scale")
+@loopback_only_event(socketio)
 def determine_scale(data):
     object_points = data["objectPoints"]
     camera_poses = data["cameraPoses"]
@@ -417,18 +312,6 @@ def determine_scale(data):
     socketio.emit("camera-pose", {"error": None, "camera_poses": camera_poses})
 
 
-@socketio.on("triangulate-points")
-def live_mocap(data):
-    cameras = Cameras.instance()
-    start_or_stop = data["startOrStop"]
-    camera_poses = data["cameraPoses"]
-    cameras.to_world_coords_matrix = data["toWorldCoordsMatrix"]
-
-    if (start_or_stop == "start"):
-        cameras.start_trangulating_points(camera_poses)
-        return
-    elif (start_or_stop == "stop"):
-        cameras.stop_trangulating_points()
 
 
 if __name__ == '__main__':

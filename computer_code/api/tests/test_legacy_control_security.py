@@ -5,6 +5,7 @@ from legacy_control_security import (
     DEFAULT_ALLOWED_ORIGINS,
     configured_origins,
     legacy_control_peer_allowed,
+    is_loopback_peer,
     validate_arm_payload,
     validate_pid_payload,
     validate_setpoint_payload,
@@ -13,6 +14,23 @@ from legacy_control_security import (
 
 
 class LegacyControlSecurityTests(unittest.TestCase):
+    def test_loopback_peer_policy_handles_remote_and_mapped_addresses(self):
+        self.assertTrue(is_loopback_peer("127.0.0.1"))
+        self.assertTrue(is_loopback_peer("::1"))
+        self.assertTrue(is_loopback_peer("::ffff:127.0.0.1"))
+        self.assertFalse(is_loopback_peer("192.168.1.20"))
+        self.assertFalse(is_loopback_peer(None))
+        self.assertFalse(is_loopback_peer("localhost"))
+
+    def test_camera_stream_guards_before_initializing_hardware(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "index.py").read_text(encoding="utf-8")
+        start = source.index('@app.route("/api/camera-stream")')
+        end = source.index('@app.route("/api/trajectory-planning",', start + 1)
+        handler = source[start:end]
+        self.assertIn("is_loopback_peer(request.remote_addr)", handler)
+        self.assertLess(handler.index("is_loopback_peer(request.remote_addr)"), handler.index("Cameras.instance()"))
     def test_control_is_disabled_without_explicit_opt_in(self):
         for address in ("127.0.0.1", "::1", "localhost", "192.168.1.20", None):
             with self.subTest(address=address):
@@ -39,18 +57,37 @@ class LegacyControlSecurityTests(unittest.TestCase):
     def test_legacy_serial_handlers_and_server_defaults_use_guard(self):
         from pathlib import Path
 
-        index_source = (Path(__file__).resolve().parents[1] / "index.py").read_text(encoding="utf-8")
-        for event in ("arm-drone", "set-drone-pid", "set-drone-setpoint", "set-drone-trim"):
+        api_dir = Path(__file__).resolve().parents[1]
+        index_source = (api_dir / "index.py").read_text(encoding="utf-8")
+        event_source = (api_dir / "legacy_control_events.py").read_text(encoding="utf-8")
+        for event in (
+            "arm-drone", "set-drone-pid", "set-drone-setpoint", "set-drone-trim",
+            "locate-objects", "triangulate-points",
+        ):
             with self.subTest(event=event):
-                start = index_source.index(f'@socketio.on("{event}")')
-                next_handler = index_source.find("\n@socketio.on(", start + 1)
-                handler = index_source[start: next_handler if next_handler >= 0 else len(index_source)]
+                start = event_source.index(f'@socketio.on("{event}")')
+                next_handler = event_source.find("\n    @socketio.on(", start + 1)
+                handler = event_source[start: next_handler if next_handler >= 0 else len(event_source)]
                 self.assertIn("_legacy_control_authorized()", handler)
         self.assertIn('os.environ.get("MOCAP_BIND_HOST", "127.0.0.1")', index_source)
         self.assertIn("debug=False, use_reloader=False", index_source)
         self.assertNotIn("cors_allowed_origins='*'", index_source)
-        self.assertIn("arm_counter_registry.accept(request.sid, count)", index_source)
-        self.assertIn('@socketio.on("disconnect")', index_source)
+        self.assertIn("register_legacy_control_handlers(", index_source)
+        self.assertIn("arm_counter_registry.accept(request.sid, count)", event_source)
+        self.assertIn('@socketio.on("disconnect")', event_source)
+        stateful_events = {
+            "acquire-floor": "acquire_floor",
+            "set-origin": "set_origin",
+            "update-camera-settings": "change_camera_settings",
+            "capture-points": "capture_points",
+            "calculate-camera-pose": "calculate_camera_pose",
+            "determine-scale": "determine_scale",
+        }
+        for event, function_name in stateful_events.items():
+            with self.subTest(event=event):
+                start = index_source.index(f'@socketio.on("{event}")')
+                end = index_source.index(f"def {function_name}(", start)
+                self.assertIn("@loopback_only_event(socketio)", index_source[start:end])
 
     def test_arm_payload_requires_exact_boolean_vector_and_metadata(self):
         self.assertEqual(
@@ -137,7 +174,7 @@ class LegacyControlSecurityTests(unittest.TestCase):
     def test_handlers_validate_payload_before_writing_serial(self):
         from pathlib import Path
 
-        index_source = (Path(__file__).resolve().parents[1] / "index.py").read_text(encoding="utf-8")
+        event_source = (Path(__file__).resolve().parents[1] / "legacy_control_events.py").read_text(encoding="utf-8")
         checks = {
             "arm-drone": "validate_arm_payload",
             "set-drone-pid": "validate_pid_payload",
@@ -146,11 +183,11 @@ class LegacyControlSecurityTests(unittest.TestCase):
         }
         for event, validator in checks.items():
             with self.subTest(event=event):
-                start = index_source.index(f'@socketio.on("{event}")')
-                next_handler = index_source.find("\n@socketio.on(", start + 1)
-                handler = index_source[start: next_handler if next_handler >= 0 else len(index_source)]
+                start = event_source.index(f'@socketio.on("{event}")')
+                next_handler = event_source.find("\n    @socketio.on(", start + 1)
+                handler = event_source[start: next_handler if next_handler >= 0 else len(event_source)]
                 self.assertIn(validator, handler)
-                self.assertLess(handler.index(validator), handler.index("ser.write"))
+                self.assertLess(handler.index(validator), handler.index("serial_port.write"))
 
     def test_wildcard_and_non_origin_urls_are_rejected(self):
         for value in (
