@@ -86,14 +86,17 @@ in 1 MiB chunks; raw video/frame data is never loaded wholesale into memory.
 - Missing, tampered, wrong-size, duplicate or unreadable artifacts make
   `bundle_integrity_valid` false. The validator reports these per artifact
   and exits nonzero.
-- The directory CLI opens `capture-bundle.json` with `O_NOFOLLOW` and
-  reads it through the same descriptor after `fstat()` checks and a strict
-  byte cap. It also uses `O_NONBLOCK` where available so FIFO paths fail
-  without blocking. Platforms without `O_NOFOLLOW` support fail closed;
-  this validator is unavailable there until a native no-follow strategy is
-  implemented and tested. Artifact paths are separately checked and hashed;
-  this manifest hardening does not by itself make mutable, attacker-writable
-  bundle directories safe against every concurrent directory-entry change.
+- Both directory and in-memory validation open an anchored bundle-root
+  directory descriptor and walk each artifact path with descriptor-relative
+  `openat`-style calls. Intermediate components require
+  `O_DIRECTORY | O_NOFOLLOW`; leaf files require `O_NOFOLLOW | O_NONBLOCK`,
+  are checked with `fstat()`, and are streamed from that same descriptor.
+  The manifest is read from the same anchored root descriptor with a strict
+  byte cap. Platforms lacking the required no-follow/dirfd primitives fail
+  closed. This protects path resolution against symlink substitution between
+  pathname checks and reads; it does not protect against a privileged actor
+  modifying file contents in place during hashing, and the bundle directory
+  should not be writable by an untrusted concurrent process.
 - `pattern_sha256` is the declared semantic/canonical pattern-registry
   fingerprint, which may differ from the hash of a pretty-printed source file.
   `pattern_config_artifact_sha256` binds the exact raw pattern-config bytes.
