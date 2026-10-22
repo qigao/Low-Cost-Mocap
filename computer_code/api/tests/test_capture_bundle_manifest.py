@@ -254,6 +254,61 @@ class CaptureBundleManifestTests(unittest.TestCase):
         self.assertEqual(entry["status"], "unsafe_or_unreadable")
         self.assertIn("without following links", entry["errors"][0])
 
+    def test_artifact_mutation_during_hash_is_rejected(self):
+        artifact = self.manifest["artifacts"][0]
+        target = self.root / artifact["path"]
+        original = target.read_bytes()
+        mutated = bytes([original[0] ^ 1]) + original[1:]
+        real_read = os.read
+        read_count = 0
+
+        def mutate_after_read(descriptor, count):
+            nonlocal read_count
+            chunk = real_read(descriptor, count)
+            read_count += 1
+            if read_count == 1:
+                target.write_bytes(mutated)
+                metadata = target.stat()
+                os.utime(
+                    target,
+                    ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 2_000_000_000),
+                )
+            return chunk
+
+        with patch("capture_bundle_manifest.os.read", side_effect=mutate_after_read):
+            report = validate_capture_bundle(self.manifest, self.root)
+        entry = next(x for x in report["artifact_checks"] if x["role"] == artifact["role"])
+        self.assertFalse(report["bundle_integrity_valid"])
+        self.assertEqual(entry["status"], "unsafe_or_unreadable")
+        self.assertIn("changed while reading", entry["errors"][0])
+        target.write_bytes(original)
+
+    def test_manifest_mutation_during_descriptor_read_is_rejected(self):
+        manifest_path = self.root / MANIFEST_NAME
+        manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        original = manifest_path.read_bytes()
+        mutated = original[:-1] + (b" " if original[-1:] != b" " else b"x")
+        real_read = os.read
+        read_count = 0
+
+        def mutate_after_read(descriptor, count):
+            nonlocal read_count
+            chunk = real_read(descriptor, count)
+            read_count += 1
+            if read_count == 1:
+                manifest_path.write_bytes(mutated)
+                metadata = manifest_path.stat()
+                os.utime(
+                    manifest_path,
+                    ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 2_000_000_000),
+                )
+            return chunk
+
+        with patch("capture_bundle_manifest.os.read", side_effect=mutate_after_read):
+            with self.assertRaisesRegex(ValueError, "changed while reading"):
+                validate_capture_bundle_directory(self.root)
+        manifest_path.write_bytes(original)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO test requires POSIX")
     def test_artifact_fifo_is_rejected_without_blocking(self):
         target = self.root / self.manifest["artifacts"][0]["path"]
