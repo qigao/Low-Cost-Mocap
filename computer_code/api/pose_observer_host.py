@@ -11,6 +11,7 @@ queue dispatch confirmations, NOT independently acknowledged remote delivery.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from hashlib import sha256
 import hmac
 import threading
 import time
@@ -118,6 +119,18 @@ class PoseObserverHost:
         )
         self._install_handlers()
 
+    @staticmethod
+    def _subscriber_key(sid: str) -> str:
+        """Normalize URL-safe Engine.IO SIDs to the broker's bounded ID syntax.
+
+        A real random Socket.IO SID can begin with '-' or '_', which are
+        valid for transport but not the stricter broker subscriber syntax.
+        Never mutate the *actual* SID used as the Socket.IO room target.
+        """
+        if not isinstance(sid, str) or not sid:
+            raise ValueError("missing Socket.IO SID")
+        return "viewer-" + sha256(sid.encode("utf-8")).hexdigest()[:40]
+
     @property
     def subscriber_count(self) -> int:
         with self._lock:
@@ -125,13 +138,17 @@ class PoseObserverHost:
 
     def _flush(self, sid: str, *, max_messages: int | None = None) -> int:
         limit = self._max_dispatch if max_messages is None else max_messages
+        key = self._subscriber_key(sid)
         def local_emit(event: str, packet: dict, *, to: str):
-            # Intentionally no legacy namespace or flight-control events.
+            # Publisher subscription identity is a *normalized hash*;
+            # wire delivery must still address the original Socket.IO SID.
+            if to != key:
+                raise ValueError("observer publisher/subscriber identity mismatch")
             self.socketio.emit(
-                event, packet, to=to, namespace=POSE_OBSERVER_NAMESPACE
+                event, packet, to=sid, namespace=POSE_OBSERVER_NAMESPACE
             )
         return flush_to_socketio(
-            self.publisher, sid, local_emit,
+            self.publisher, key, local_emit,
             max_messages=limit, event_name=POSE_OBSERVER_EVENT,
         )
 
@@ -155,16 +172,17 @@ class PoseObserverHost:
             if len(token) > 256 or not hmac.compare_digest(token, self._secret):
                 return False
             sid = request.sid
+            key = self._subscriber_key(sid)
             with self._lock:
                 try:
-                    self.publisher.subscribe(sid)
+                    self.publisher.subscribe(key)
                     self._last_poll_ns[sid] = -1
                     # Only static assets at connection time. Dynamic frames
                     # must come from a host-side publish_frame invocation.
                     self._flush(sid, max_messages=1)
                 except (ValueError, RuntimeError):
-                    if sid in self.publisher.subscriber_ids:
-                        self.publisher.unsubscribe(sid)
+                    if key in self.publisher.subscriber_ids:
+                        self.publisher.unsubscribe(key)
                     self._last_poll_ns.pop(sid, None)
                     return False
             return True
@@ -172,16 +190,18 @@ class PoseObserverHost:
         @self.socketio.on("disconnect", namespace=POSE_OBSERVER_NAMESPACE)
         def viewer_disconnected():
             sid = request.sid
+            key = self._subscriber_key(sid)
             with self._lock:
-                if sid in self.publisher.subscriber_ids:
-                    self.publisher.unsubscribe(sid)
+                if key in self.publisher.subscriber_ids:
+                    self.publisher.unsubscribe(key)
                 self._last_poll_ns.pop(sid, None)
 
         @self.socketio.on("pose:poll", namespace=POSE_OBSERVER_NAMESPACE)
         def viewer_poll(_ignored=None):
             sid = request.sid
+            key = self._subscriber_key(sid)
             with self._lock:
-                if sid not in self.publisher.subscriber_ids:
+                if key not in self.publisher.subscriber_ids:
                     return {"ok": False, "error": "not-subscribed"}
                 now = self._clock_ns()
                 if type(now) is not int or now < 0:
@@ -191,7 +211,7 @@ class PoseObserverHost:
                     return {"ok": False, "error": "rate-limited"}
                 self._last_poll_ns[sid] = now
                 sent = self._flush(sid)
-                stats = self.publisher.subscriber_statistics(sid)
+                stats = self.publisher.subscriber_statistics(key)
                 return {
                     "ok": True, "sent": sent,
                     "pending_frames": stats.pending_frames,
@@ -208,7 +228,7 @@ class PoseObserverHost:
         """
         with self._lock:
             frame_id = self.publisher.publish(frame)
-            for sid in self.publisher.subscriber_ids:
+            for sid in tuple(self._last_poll_ns):
                 self._flush(sid)
             return frame_id
 
@@ -216,12 +236,12 @@ class PoseObserverHost:
         """Host-only restart after a verified camera source reset."""
         with self._lock:
             self.publisher.restart_session()
-            for sid in self.publisher.subscriber_ids:
+            for sid in tuple(self._last_poll_ns):
                 self._flush(sid, max_messages=1)
 
     def replace_pattern_registry(self, registry: BoardPatternRegistry) -> None:
         """Host-only pattern update and mandatory asset resend barrier."""
         with self._lock:
             self.publisher.replace_registry(registry)
-            for sid in self.publisher.subscriber_ids:
+            for sid in tuple(self._last_poll_ns):
                 self._flush(sid, max_messages=1)
