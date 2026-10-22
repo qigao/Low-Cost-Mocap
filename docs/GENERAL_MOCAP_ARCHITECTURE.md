@@ -110,7 +110,7 @@ Do not select an EKF or factor graph by fashion. First specify state, frames, pr
 | A2 | IMU sample schema and adapter boundary | Schema validation for IDs, sequence, timestamp, units, saturation and calibration revision | **Merged software contract** — PR #36 |
 | A3 | Clock alignment service | Tests for offset, drift, reset, skew, out-of-order data, stale mapping and unknown clock | **Merged software primitive** — PR #36; hardware clock qualification remains open |
 | A4 | IMU/body extrinsics and noise/bias calibration | Immutable revisioned calibration and reproducible calibration fixture | **Merged software contract** — PR #39 |
-| A5 | Bounded inertial propagation | Static, constant angular rate, bias, sample-gap, saturation and reset tests | Planned |
+| A5 | Bounded inertial propagation | Static, constant angular rate, bias, sample-gap, saturation and reset tests | **Merged gyro-only attitude primitive** — PR #43; global position/velocity and optical fusion remain unavailable |
 | A6 | Optical/IMU fusion vertical slice | Short optical dropout: orientation propagation, uncertainty growth, optical reacquisition correction; optical-only A/B report | Planned |
 | A7 | Versioned fused state output | New schema does not weaken PoseStream v1; consumers can distinguish measured and predicted state | Planned |
 | A8 | Deterministic capture/replay | Same bundle + same config reproduces state sequence within declared tolerances | Planned |
@@ -140,11 +140,12 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `identity_locked_board_tracker.py` | Current-frame identity-locked optical state |
 | `imu_contract.py` | Typed SI-unit IMU samples, stream-order/gap guard and affine clock mapping from declared synchronization anchors |
 | `imu_calibration.py` | Immutable IMU-to-body extrinsics, bias/noise/correction calibration and bias-corrected vector transforms |
+| `imu_propagation.py` | Bounded gyro-only attitude propagation; no global position/velocity or optical fusion |
 | `pose_stream.py`, `pose_stream_broker.py`, `pose_stream_recording.py` | Versioned output, bounded distribution and deterministic recording/replay |
 | `capture_bundle_manifest.py`, `bundle_gated_offline_replay.py` | Evidence integrity and gated offline qualification |
 | `index.py`, legacy serial handlers | Legacy app/controller adapter only; not core state estimation |
 
-The IMU sample contract, clock-mapping primitive and calibration contract are now present. There is still no hardware-qualified clock/trigger adapter, IMU preintegrator, bounded inertial propagation service or optical-IMU fusion estimator.
+The IMU sample contract, clock-mapping primitive, calibration contract and bounded gyro-only attitude propagation primitive are now present. There is still no hardware-qualified clock/trigger adapter, accelerometer-based inertial position/velocity propagation or optical-IMU fusion estimator.
 
 ## 9. Hardware gates and scope
 
