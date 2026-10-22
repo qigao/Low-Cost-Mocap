@@ -37,7 +37,10 @@ _REQUIRED_ROLES = (
     "controller_config",
     "calibration_config",
 )
-_OPTIONAL_ROLES = {"supplemental", "offline_replay_input", "fusion_ab_input"}
+_OPTIONAL_ROLES = {
+    "supplemental", "offline_replay_input", "fusion_ab_input",
+    "reference_orientations", "imu_calibration", "raw_imu_samples",
+}
 _TIMESTAMP_SEMANTICS = {
     "sensor_exposure", "hardware_trigger", "driver_dequeue",
     "host_monotonic", "unknown",
