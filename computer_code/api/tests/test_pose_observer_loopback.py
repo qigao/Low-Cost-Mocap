@@ -110,6 +110,7 @@ class LoopbackObserverTransportTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
         client.connect(
             origin,
+            headers={"Origin": "http://127.0.0.1:5173"},
             auth={"token": SECRET},
             namespaces=[POSE_OBSERVER_NAMESPACE],
             transports=["polling"],
@@ -166,6 +167,25 @@ class LoopbackObserverTransportTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(self.host.subscriber_count, 0)
 
+    def test_wrong_origin_cannot_connect_with_valid_viewer_token(self):
+        session = requests.Session()
+        session.trust_env = False
+        client = socketio.Client(
+            reconnection=False, logger=False, engineio_logger=False,
+            http_session=session,
+        )
+        self.clients.append(client)
+        with self.assertRaises(socketio.exceptions.ConnectionError):
+            client.connect(
+                "http://127.0.0.1:" + str(self.port),
+                headers={"Origin": "https://untrusted.example"},
+                auth={"token": SECRET},
+                namespaces=[POSE_OBSERVER_NAMESPACE],
+                transports=["polling"],
+                wait_timeout=3,
+            )
+        self.assertEqual(self.host.subscriber_count, 0)
+
     def test_wrong_token_cannot_connect_to_real_local_listener(self):
         session = requests.Session()
         session.trust_env = False
@@ -177,6 +197,7 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         with self.assertRaises(socketio.exceptions.ConnectionError):
             client.connect(
                 "http://127.0.0.1:" + str(self.port),
+                headers={"Origin": "http://127.0.0.1:5173"},
                 auth={"token": "bad-token"},
                 namespaces=[POSE_OBSERVER_NAMESPACE],
                 transports=["polling"],
