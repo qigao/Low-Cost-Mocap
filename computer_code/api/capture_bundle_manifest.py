@@ -442,6 +442,32 @@ def _open_regular_file_at(root_fd: int, raw_path: str) -> int:
         raise
 
 
+def _file_state_signature(metadata: os.stat_result) -> tuple[int, ...]:
+    """Metadata used to detect common in-place changes during a streaming read."""
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _assert_file_unchanged(
+    descriptor: int,
+    initial_metadata: os.stat_result,
+    *,
+    label: str,
+) -> None:
+    try:
+        final_metadata = os.fstat(descriptor)
+    except OSError as exc:
+        raise ValueError(f"{label} metadata cannot be rechecked after reading") from exc
+    if _file_state_signature(final_metadata) != _file_state_signature(initial_metadata):
+        raise ValueError(f"{label} changed while reading")
+
+
 def _read_regular_file_at(
     root_fd: int,
     raw_path: str,
@@ -464,6 +490,7 @@ def _read_regular_file_at(
             if total > max_bytes:
                 raise ValueError(cap_error)
             chunks.append(chunk)
+        _assert_file_unchanged(descriptor, metadata, label="file")
         return b"".join(chunks)
     except OSError as exc:
         raise ValueError("file cannot be read safely") from exc
@@ -493,6 +520,7 @@ def _hash_regular_file_at(
             if total > max_bytes:
                 raise ValueError(cap_error)
             digest.update(chunk)
+        _assert_file_unchanged(descriptor, metadata, label="artifact")
         return total, digest.hexdigest()
     except OSError as exc:
         raise ValueError("artifact cannot be read safely") from exc
