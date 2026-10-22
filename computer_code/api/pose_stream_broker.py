@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from board_patterns import BoardPatternRegistry
 from identity_locked_board_tracker import LockedBoardFrame
@@ -314,7 +315,14 @@ class BoundedPoseStreamPublisher:
         return sent
 
 
-def _asset_identity(payload: object) -> tuple[str, dict[str, set[int]]]:
+def _asset_identity(
+    payload: object,
+) -> tuple[
+    str,
+    dict[str, set[int]],
+    dict[str, int],
+    dict[str, tuple[np.ndarray, np.ndarray]],
+]:
     if not isinstance(payload, dict):
         raise ValueError("asset description must be a JSON object")
     if (
@@ -332,6 +340,8 @@ def _asset_identity(payload: object) -> tuple[str, dict[str, set[int]]]:
     if not isinstance(boards, list) or not boards:
         raise ValueError("asset description needs a nonempty board list")
     expected = {}
+    requirements = {}
+    transforms = {}
     global_markers = set()
     for board in boards:
         if not isinstance(board, dict):
@@ -358,8 +368,35 @@ def _asset_identity(payload: object) -> tuple[str, dict[str, set[int]]]:
             _finite_list(entry.get("xyz_m"), 3, "model marker xyz_m")
             global_markers.add(marker)
             local.add(marker)
+        minimum = _bounded_positive(
+            board.get("min_visible_markers"),
+            "min_visible_markers", maximum=128,
+        )
+        if minimum < 3 or minimum > len(local):
+            raise ValueError("asset minimum visible marker count is inconsistent")
+        transform = board.get("body_from_board")
+        if not isinstance(transform, dict):
+            raise ValueError("board body mounting transform is missing")
+        raw_rotation = transform.get("rotation")
+        if not isinstance(raw_rotation, list) or len(raw_rotation) != 3:
+            raise ValueError("board body mounting rotation must be 3x3")
+        R = np.asarray([
+            _finite_list(row, 3, "body mounting rotation")
+            for row in raw_rotation
+        ], dtype=np.float64)
+        t = np.asarray(
+            _finite_list(transform.get("translation_m"), 3, "body mounting translation"),
+            dtype=np.float64,
+        )
+        if (
+            not np.allclose(R.T @ R, np.eye(3), atol=1e-7, rtol=0)
+            or abs(float(np.linalg.det(R)) - 1.0) > 1e-7
+        ):
+            raise ValueError("asset board mounting rotation must be proper")
         expected[name] = local
-    return revision, expected
+        requirements[name] = minimum
+        transforms[name] = (R, t)
+    return revision, expected, requirements, transforms
 
 
 class PoseStreamConsumer:
@@ -381,6 +418,8 @@ class PoseStreamConsumer:
         self.last_exposure_ns: int | None = None
         self.clock_domain: str | None = None
         self.boards: dict[str, set[int]] = {}
+        self.min_visible: dict[str, int] = {}
+        self.body_mounts: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
     def _check_frame(self, payload: dict[str, Any]) -> None:
         if (
@@ -481,6 +520,9 @@ class PoseStreamConsumer:
                     or source_trigger != frame_id or source_time != timestamp
                 ):
                     raise ValueError("MEASURED rigid body is stale/invalid")
+                if len(observed) < self.min_visible[name]:
+                    raise ValueError("MEASURED body lacks enough observed model markers")
+                values = {}
                 for label in pose_columns:
                     xyzq = _finite_list(
                         body.get(label), 4 if "quaternion" in label else 3, label
@@ -488,6 +530,27 @@ class PoseStreamConsumer:
                     if "quaternion" in label:
                         if abs(sum(x*x for x in xyzq) - 1.0) > 1e-6:
                             raise ValueError("non-unit XYZW quaternion")
+                    values[label] = np.asarray(xyzq, dtype=np.float64)
+                R_world_board = Rotation.from_quat(
+                    values["quaternion_world_from_board_xyzw"]
+                ).as_matrix()
+                R_world_body = Rotation.from_quat(
+                    values["quaternion_world_from_body_xyzw"]
+                ).as_matrix()
+                R_body_board, t_body_board = self.body_mounts[name]
+                expected_R = R_world_board @ R_body_board.T
+                expected_t = (
+                    values["position_world_from_board"]
+                    - expected_R @ t_body_board
+                )
+                if (
+                    not np.allclose(R_world_body, expected_R, atol=1e-6, rtol=0)
+                    or not np.allclose(
+                        values["position_world_from_body"],
+                        expected_t, atol=1e-6, rtol=0
+                    )
+                ):
+                    raise ValueError("PoseFrame board/body transform disagrees with asset")
                 quality = body.get("quality")
                 if not isinstance(quality, dict):
                     raise ValueError("MEASURED rigid body needs quality metrics")
@@ -534,10 +597,12 @@ class PoseStreamConsumer:
                 or sequence != 0 or kind != "asset_description"
             ):
                 raise ValueError("new/reconnected stream must start with fresh asset")
-            revision, boards = _asset_identity(payload)
+            revision, boards, minimum, transforms = _asset_identity(payload)
             self.session_id = session
             self.pattern_sha256 = revision
             self.boards = boards
+            self.min_visible = minimum
+            self.body_mounts = transforms
             self.last_frame_id = None
             self.last_exposure_ns = None
             self.calibration_sha256 = None
