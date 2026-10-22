@@ -272,6 +272,25 @@ class CorrectedIMUVectors:
     specific_force_body_m_s2: tuple[float, float, float]
     measurement_reference_point: str = "imu_origin"
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "imu_id", _text(self.imu_id, "imu_id"))
+        object.__setattr__(self, "clock_domain", _text(self.clock_domain, "clock_domain"))
+        object.__setattr__(self, "calibration_revision", _text(self.calibration_revision, "calibration_revision"))
+        if type(self.sequence_number) is not int or not 0 <= self.sequence_number <= (1 << 63) - 1:
+            raise ValueError("sequence_number must be a nonnegative signed-64-bit integer")
+        if type(self.sensor_timestamp_ns) is not int or not 0 <= self.sensor_timestamp_ns <= (1 << 63) - 1:
+            raise ValueError("sensor_timestamp_ns must be a nonnegative signed-64-bit integer")
+        if (
+            not isinstance(self.calibration_sha256, str)
+            or len(self.calibration_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in self.calibration_sha256)
+        ):
+            raise ValueError("calibration_sha256 must be lowercase SHA-256")
+        object.__setattr__(self, "gyro_body_rad_s", _vector3(self.gyro_body_rad_s, "gyro_body_rad_s"))
+        object.__setattr__(self, "specific_force_body_m_s2", _vector3(self.specific_force_body_m_s2, "specific_force_body_m_s2"))
+        if self.measurement_reference_point != "imu_origin":
+            raise ValueError("measurement_reference_point must be imu_origin")
+
 
 def correct_imu_sample(sample: IMUSample, calibration: IMUCalibration) -> CorrectedIMUVectors:
     """Bias-correct and rotate one sample; does not estimate motion or lever-arm terms."""
