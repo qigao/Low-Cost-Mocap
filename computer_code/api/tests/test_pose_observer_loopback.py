@@ -124,29 +124,39 @@ class LoopbackObserverTransportTests(unittest.TestCase):
         self.assertEqual(len(asset_reply["messages"]), 1)
         asset_packet = asset_reply["messages"][0]
         self.assertEqual(asset_packet["payload"]["kind"], "asset_description")
-        started_ns = time.monotonic_ns()
-        self.host.publish_frame(self.invalid_frame(10))
-        time.sleep(0.003)  # obey the explicit 1 ms minimum poll interval
-        frame_reply = client.call(
-            "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, timeout=5
-        )
-        received_ns = time.monotonic_ns()
-        self.assertTrue(frame_reply["ok"])
-        self.assertEqual(len(frame_reply["messages"]), 1)
-        packet = frame_reply["messages"][0]
-        elapsed = received_ns - started_ns
-        self.assertGreaterEqual(elapsed, 0)
-        self.assertLess(elapsed, 5_000_000_000)  # generous CI-only bound
         consumer = PoseStreamConsumer()
         consumer.consume(asset_packet)
-        frame = consumer.consume(packet)
-        self.assertEqual(frame["frame_id"], 10)
-        self.assertFalse(frame["hardware_provenance_verified"])
-        self.assertTrue(all(
-            body["position_world_from_body"] is None
-            and body["evidence_kind"] == "INVALID"
-            for body in frame["rigid_bodies"]
-        ))
+        software_round_trip_ns = []
+        for trigger in range(10, 15):
+            started_ns = time.monotonic_ns()
+            self.host.publish_frame(self.invalid_frame(trigger))
+            time.sleep(0.003)  # obey the explicit 1 ms minimum poll interval
+            frame_reply = client.call(
+                "pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, timeout=5
+            )
+            received_ns = time.monotonic_ns()
+            self.assertTrue(frame_reply["ok"])
+            self.assertEqual(len(frame_reply["messages"]), 1)
+            packet = frame_reply["messages"][0]
+            elapsed = received_ns - started_ns
+            self.assertGreaterEqual(elapsed, 0)
+            self.assertLess(elapsed, 5_000_000_000)  # generous CI-only bound
+            software_round_trip_ns.append(elapsed)
+            frame = consumer.consume(packet)
+            self.assertEqual(frame["frame_id"], trigger)
+            # The hardware-source timestamp is supplied data, not derived
+            # from the software publish/receive clock used for this metric.
+            self.assertEqual(
+                frame["latest_exposure_timestamp_ns"], 3_000_000 + trigger * 1000
+            )
+            self.assertFalse(frame["hardware_provenance_verified"])
+            self.assertTrue(all(
+                body["position_world_from_body"] is None
+                and body["evidence_kind"] == "INVALID"
+                for body in frame["rigid_bodies"]
+            ))
+        self.assertEqual(len(software_round_trip_ns), 5)
+        self.assertLess(max(software_round_trip_ns), 5_000_000_000)
         client.disconnect()
         # Polling transport shutdown is asynchronous with respect to the
         # client method return. Wait for the actual server disconnect handler
