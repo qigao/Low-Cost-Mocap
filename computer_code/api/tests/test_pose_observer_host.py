@@ -234,7 +234,9 @@ class PoseObserverHostTests(unittest.TestCase):
         third = client.emit("pose:poll", {}, namespace=POSE_OBSERVER_NAMESPACE, callback=True)
         status = third[0] if isinstance(third,list) else third
         self.assertTrue(status["ok"])
-        declared = set(self.host.socketio.handlers.get(POSE_OBSERVER_NAMESPACE, {}))
+        # Flask-SocketIO keeps decorator registrations in a list; the
+        # actual namespace->event mapping lives in python-socketio.Server.
+        declared = set(self.host.socketio.server.handlers.get(POSE_OBSERVER_NAMESPACE, {}))
         self.assertEqual(declared, {"connect", "disconnect", "pose:poll"})
         self.assertNotIn("arm-drone", declared)
         self.assertNotIn("set-drone-setpoint", declared)
