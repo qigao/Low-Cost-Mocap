@@ -138,6 +138,13 @@ keys/nonfinite constants/unknown replay root fields, rechecks the replay
 input bytes, and revalidates the full bundle after replay to detect changes
 during evaluation. Exit 0 means bundle integrity and the software replay
 both completed; it still does **not** mean the physical rig passed acceptance.
+The standalone `offline_acceptance_cli.py` applies the same strict JSON
+rules when invoked directly: duplicate keys, unknown fields at every schema
+level, nonfinite constants and recordings larger than 64 MiB are rejected
+before any report is written to stdout. Its input digest is computed from the
+exact bytes read. This is an input-integrity boundary, not a hardware
+provenance check.
+
 The combined report includes both reports and the replay-input SHA-256.
 
 ```sh
