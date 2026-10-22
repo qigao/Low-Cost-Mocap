@@ -137,11 +137,95 @@ board-to-body mounting transform. Quaternion order is **XY Z W**, explicitly
 `[qx, qy, qz, qw]` (not WXYZ), with nonnegative W canonicalization where
 possible. JSON uses finite numeric values only and stable key ordering.
 
+## Bounded provider-neutral PoseStream v1 publisher/consumer
+
+The pure serializer is complemented by three *isolated* software modules:
+
+- `pose_stream_broker.BoundedPoseStreamPublisher` maintains a fixed number of
+  named subscribers, one pending static asset description per connection, and
+  an explicitly bounded FIFO of per-frame JSON snapshots per subscriber.
+  Overflow drops the **oldest PoseFrame only**; an asset description is never
+  silently dropped. Per-subscriber queue stats expose dropped frame counts.
+- `pose_stream_broker.PoseStreamConsumer` independently validates the
+  versioned envelope, asset/board/marker IDs, source time/trigger monotonicity,
+  current MEASURED vs INVALID status, unit XYZW quaternions, calibration
+  revision and board-to-body rigid mounting consistency. Stream sequence gaps
+  are allowed to reflect bounded backpressure, but stale or replayed source
+  frame IDs are rejected.
+- `pose_stream_recording.BoundedPoseStreamJournal` captures a finite,
+  ordered sequence of approved AssetDescription/PoseFrame wire envelopes as
+  canonical JSONL. Each line has its own SHA-256 linked to the previous
+  line. The replay independently rechecks the full stream schema and hash
+  chain, refusing gaps, mutation, duplicate keys, nonfinite JSON values and
+  capacity overflow. This protects *local recording integrity*, not hardware
+  timestamp truth or authenticity.
+
+The publisher/consumer wire envelope has
+`protocol="low_cost_mocap_stream"`, `schema_version=1`, a monotonic
+`session_id`, a **per-subscriber** `sequence` and a `payload` containing
+the existing immutable asset or pose-frame schema. Every subscription
+receives its static assets first, before any dynamic frames. Reconnects
+explicitly reset the client and re-send assets; a pattern change forces
+a new session. A changed camera calibration digest is *rejected* until
+an explicit session restart. A consumer never infers an exposure time
+from transport send time.
+
+### Example: pure publisher/consumer
+
+```python
+from pose_stream_broker import BoundedPoseStreamPublisher, PoseStreamConsumer
+from pose_stream_recording import BoundedPoseStreamJournal
+
+publisher = BoundedPoseStreamPublisher(
+    registry, max_subscribers=8, max_pending_frames=4
+)
+publisher.subscribe("web_viewer")
+client = PoseStreamConsumer()
+recording = BoundedPoseStreamJournal(max_messages=2000)
+
+# Called by the same single-owner software loop that obtains a valid
+# LockedBoardFrame from the current camera-tracking pipeline:
+publisher.publish(current)
+while (packet := publisher.peek_next("web_viewer")) is not None:
+    client.consume(packet)    # Independent schema/freshness validator
+    recording.append(packet)  # Bounded canonical JSONL with hash chain
+    publisher.acknowledge("web_viewer", packet["sequence"])
+
+recording.write_jsonl("session.jsonl")
+loaded = BoundedPoseStreamJournal.read_jsonl("session.jsonl")
+assert loaded.statistics.head_sha256 == recording.statistics.head_sha256
+```
+
+### Optional Socket.IO event adapter (not activated)
+
+```python
+from pose_stream_broker import flush_to_socketio
+
+# A future hosting application may explicitly supply its own Socket.IO emit:
+# flush_to_socketio(publisher, "web_viewer", socketio.emit)
+```
+
+This adapter sends `mocap:pose-stream` events targeted to the named client
+room. It acknowledges the source message only when the injected *local emit
+call* returns successfully; it does **not** assert receipt by a remote
+client. Errors retain queued messages for retry (subject to bounded
+drop-old-frame policy). This branch deliberately does not create Socket.IO
+rooms, server handlers, a background delivery task, or actual UDP/NatNet
+traffic. The hosting application must own authentication, client lifecycle,
+serialization boundaries and congestion policies.
+
+The journal is capped by both message count and byte size, and only records
+immutable JSON strings. It does not persist live camera buffers or device
+state. SHA-256 is not a signature: independently captured timing, calibration
+and marker ground truth are still required.
+
 ## Explicit non-goals and next acceptance
 
-- This is **not** NatNet/UDP transport, an activated Flask Socket.IO event
-  or a new path to drone arming. A future network publisher must preserve
-  this schema and expose a bounded backpressure/drop policy.
+- This is **not** NatNet/UDP wire-compatible transport or an activated
+  Flask Socket.IO event handler, and it never sends drone arming commands.
+  The newly added provider-neutral publisher has bounded backpressure,
+  client checks and an optional *injected* Socket.IO emit callback; actual
+  hosting integration and independently measured delivery latency are not done.
 - Existing `helpers.Cameras._camera_read` discards pseyepy dequeue timing
   and still uses legacy `locate_objects`. It has *not* been switched.
 - Synthetic tests exercise real local-tracker assignment/retirement,
@@ -150,5 +234,6 @@ possible. JSON uses finite numeric values only and stable key ordering.
   hardware sensor-exposure sync, motion blur, optical cross-talk, actual
   confidence bounds, millisecond latency, or flight safety.
 - The remaining real-hardware acceptance stays in [HW-01..HW-06](../../docs/HARDWARE_VALIDATION.md).
-  Software Issue [#10](https://github.com/qigao/Low-Cost-Mocap/issues/10)
-  tracks the standalone integration and conformance work.
+  Identity-tracking software Issue [#10](https://github.com/qigao/Low-Cost-Mocap/issues/10)
+  is completed; the separate publisher/replay work is tracked in
+  [SW #13](https://github.com/qigao/Low-Cost-Mocap/issues/13).
