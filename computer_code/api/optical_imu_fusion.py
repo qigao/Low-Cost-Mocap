@@ -110,6 +110,8 @@ class OpticalIMUFusionState:
     optical_age_ns: int | None
     clock_mapping_sha256: str
     imu_calibration_sha256: str
+    optical_pattern_sha256: str
+    optical_calibration_sha256: str
     global_position_m: None = None
     global_velocity_m_s: None = None
     global_position_observable: bool = False
@@ -128,6 +130,7 @@ class OpticalIMUFusionState:
             if v<0: raise ValueError("variance must be nonnegative")
         if self.global_position_m is not None or self.global_velocity_m_s is not None or self.global_position_observable is not False: raise ValueError("attitude fusion cannot publish global position")
         _h(self.clock_mapping_sha256,"mapping digest"); _h(self.imu_calibration_sha256,"IMU calibration digest")
+        _h(self.optical_pattern_sha256,"optical pattern digest"); _h(self.optical_calibration_sha256,"optical calibration digest")
         for name in ("last_optical_timestamp_ns","last_optical_frame_id","optical_age_ns"):
             value=getattr(self,name)
             if value is not None: _t(value,name)
@@ -162,7 +165,7 @@ class OpticalIMUAttitudeFusion:
         self.history=deque(maxlen=history_capacity); self.q=None; self.p=None; self.last_optical=None; self.last_frame=None; self.expired=False; self.state=None
     def _state(self,ts,status,source):
         age=None if self.last_optical is None else ts-self.last_optical
-        return OpticalIMUFusionState(self.body,self.imu,ts,self.clock,self.q if status!="LOST" else None,self.p if status!="LOST" else None,status,source,self.last_optical,self.last_frame,age,self.mapsha,self.calsha)
+        return OpticalIMUFusionState(self.body,self.imu,ts,self.clock,self.q if status!="LOST" else None,self.p if status!="LOST" else None,status,source,self.last_optical,self.last_frame,age,self.mapsha,self.calsha,self.pattern,self.optcal)
     def ingest_imu(self,s: AttitudePropagationState):
         if not isinstance(s,AttitudePropagationState): raise ValueError("expected attitude propagation state")
         if s.imu_id!=self.imu or s.clock_domain!=self.clock: raise ValueError("IMU identity/clock mismatch")
