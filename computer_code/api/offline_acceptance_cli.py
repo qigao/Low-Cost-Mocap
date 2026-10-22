@@ -29,12 +29,41 @@ from temporal_pattern import (
 )
 
 _CANONICAL_MARKER_ID = re.compile(r"(?:0|[1-9][0-9]*)\Z")
+MAX_RECORDING_BYTES = 64 * 1024 * 1024
 
 
 def _dictionary(value: Any, name: str) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"{name} must be a JSON object")
     return value
+
+
+def _exact_keys(
+    value: dict, *, required: set[str], optional: set[str] = frozenset(), name: str
+) -> None:
+    actual = set(value)
+    missing = required - actual
+    extra = actual - required - optional
+    if missing or extra:
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(sorted(missing)))
+        if extra:
+            details.append("unknown " + ", ".join(sorted(extra)))
+        raise ValueError(f"{name} fields invalid: {'; '.join(details)}")
+
+
+def _reject_duplicate_keys(items: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in items:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant {value}")
 
 
 def _rows(value: Any, name: str) -> list:
@@ -54,6 +83,9 @@ def _record(cls, value: object, name: str):
 def evaluate_document(document: object) -> dict[str, Any]:
     """Parse strict versioned replay records into a JSON-safe summary."""
     root = _dictionary(document, "document")
+    _exact_keys(
+        root, required={"schema_version"}, optional={"trigger", "temporal"}, name="document"
+    )
     if type(root.get("schema_version")) is not int or root["schema_version"] != 1:
         raise ValueError("schema_version must equal integer 1")
     if "trigger" not in root and "temporal" not in root:
@@ -67,6 +99,19 @@ def evaluate_document(document: object) -> dict[str, Any]:
     }
     if "trigger" in root:
         config = _dictionary(root["trigger"], "trigger")
+        _exact_keys(
+            config,
+            required={"expected_camera_ids", "max_exposure_skew_ns", "recordings"},
+            optional={"allow_reference_gaps"},
+            name="trigger",
+        )
+        recordings = _rows(config["recordings"], "recordings")
+        for item in recordings:
+            _exact_keys(
+                _dictionary(item, "recording"),
+                required={"reference_trigger_id", "camera_frames"},
+                name="recording",
+            )
         batches = [
             RecordedFrameBatch(
                 reference_trigger_id=_dictionary(item, "recording")["reference_trigger_id"],
@@ -98,6 +143,12 @@ def evaluate_document(document: object) -> dict[str, Any]:
 
     if "temporal" in root:
         config = _dictionary(root["temporal"], "temporal")
+        _exact_keys(
+            config,
+            required={"codebook", "trials"},
+            optional={"max_bit_errors", "min_valid_samples"},
+            name="temporal",
+        )
         raw_codebook = _dictionary(config["codebook"], "codebook")
         pattern_map = {}
         for raw_id, bits in raw_codebook.items():
@@ -111,6 +162,11 @@ def evaluate_document(document: object) -> dict[str, Any]:
         trials = []
         for item in _rows(config["trials"], "trials"):
             entry = _dictionary(item, "temporal trial")
+            _exact_keys(
+                entry,
+                required={"reference_marker_id", "trigger_epoch", "samples"},
+                name="temporal trial",
+            )
             trials.append(LabeledTemporalTrial(
                 reference_marker_id=entry["reference_marker_id"],
                 trigger_epoch=entry["trigger_epoch"],
@@ -144,12 +200,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("recording", type=Path, help="Version 1 JSON replay document")
     args = parser.parse_args(argv)
     try:
-        content = args.recording.read_bytes()
+        with args.recording.open("rb") as recording_file:
+            content = recording_file.read(MAX_RECORDING_BYTES + 1)
+        if len(content) > MAX_RECORDING_BYTES:
+            raise ValueError(f"recording exceeds {MAX_RECORDING_BYTES} byte limit")
         source = json.loads(
             content,
-            parse_constant=lambda name: (_ for _ in ()).throw(
-                ValueError(f"invalid JSON constant {name}")
-            ),
+            object_pairs_hook=_reject_duplicate_keys,
+            parse_constant=_reject_constant,
         )
         report = evaluate_document(source)
     except (ValueError, TypeError, KeyError, OSError) as exc:
