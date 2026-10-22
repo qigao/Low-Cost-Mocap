@@ -188,6 +188,20 @@ class BundleGatedOfflineReplayTests(unittest.TestCase):
         self.assertFalse(report["declarations_not_verified"]["hardware_provenance_verified"])
         path.write_bytes(original)
 
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlink test requires OS support")
+    def test_root_symlink_is_rejected_before_replay(self):
+        alias = self.root.with_name(self.root.name + "-alias")
+        alias.symlink_to(self.root, target_is_directory=True)
+        with patch(
+            "bundle_gated_offline_replay.evaluate_document",
+            side_effect=AssertionError("replay must not run"),
+        ):
+            report = run_bundle_gated_offline_replay(alias)
+        self.assertFalse(report["bundle_integrity_valid"])
+        self.assertEqual(report["offline_replay_status"], "invalid_bundle_manifest")
+        self.assertIsNone(report["offline_replay_report"])
+        self.assertFalse(report["declarations_not_verified"]["hardware_provenance_verified"])
+
     @unittest.skipUnless(os.name == "posix", "directory symlink replacement test requires POSIX")
     def test_bundle_root_replacement_during_replay_invalidates_integrity(self):
         moved_root = self.root.with_name(self.root.name + "-original")
