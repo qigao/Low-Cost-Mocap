@@ -241,6 +241,27 @@ class PoseObserverHostTests(unittest.TestCase):
         self.assertNotIn("arm-drone", declared)
         self.assertNotIn("set-drone-setpoint", declared)
 
+    def test_urlsafe_transport_sid_maps_to_valid_broker_key_without_room_change(self):
+        # Socket.IO transport SIDs may begin with '-' or '_', even though
+        # our bounded publisher expects a letter/digit in its own ID.
+        for sid in ("_weird-client", "-also-legal", "ABC_012"):
+            key = self.host._subscriber_key(sid)
+            self.assertTrue(key.startswith("viewer-"))
+            self.assertEqual(len(key), 47)
+            self.assertRegex(key, r"^[a-z][a-z0-9-]+$")
+            self.assertEqual(key, self.host._subscriber_key(sid))
+        client = self.connect()
+        self.assertTrue(client.is_connected(namespace=POSE_OBSERVER_NAMESPACE))
+        self.assertEqual(self.host.subscriber_count, 1)
+        self.assertEqual(len(self.messages(client)), 1)
+        self.host.publish_frame(self.frame(1))
+        self.assertEqual(
+            [m["payload"]["frame_id"] for m in self.messages(client)],
+            [1],
+        )
+        client.disconnect(namespace=POSE_OBSERVER_NAMESPACE)
+        self.assertEqual(self.host.subscriber_count, 0)
+
     def test_explicit_origin_validation_and_secret_minimum(self):
         for invalid in (("*",), ("https://evil.test/path",), ("http://*",)):
             with self.subTest(origin=invalid):
