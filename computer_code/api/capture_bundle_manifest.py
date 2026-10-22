@@ -405,6 +405,7 @@ def _open_directory_path_no_follow(path: Path) -> int:
             raise ValueError("bundle root must be a directory")
         return descriptor
     except OSError as exc:
+        os.close(descriptor)
         raise ValueError("bundle root cannot be opened without following links") from exc
     except BaseException:
         os.close(descriptor)
