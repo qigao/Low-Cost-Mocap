@@ -68,9 +68,12 @@ explicit local-development allowlist; override with
 `MOCAP_ALLOWED_ORIGINS` only when needed. Serial flight-control events are
 denied unless `MOCAP_ENABLE_LEGACY_FLIGHT_CONTROL=1` is explicitly set, and
 even then only loopback clients are authorized. Setting `MOCAP_BIND_HOST` to
-a LAN address does **not** authorize remote flight-control commands. Remote
-control requires a separately reviewed authentication design; do not expose
-this legacy controller to untrusted networks. Serial command payloads are also
+a LAN address does **not** authorize remote flight-control commands.
+Stateful camera/calibration events and `/api/camera-stream` are also loopback-only:
+the stream advances frame processing that can emit serial commands for armed
+bodies. CORS is not an authorization boundary. Remote control requires a
+separately reviewed authentication design; do not expose this legacy controller
+to untrusted networks. Serial command payloads are also
 checked for exact vector lengths, valid drone indexes, finite numbers and broad
 sanity caps (17 PID values with magnitude <= 1000, 3 setpoint coordinates with
 magnitude <= 100 m, and 4 integer trim values with magnitude <= 1000). Arm
