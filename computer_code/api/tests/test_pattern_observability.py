@@ -52,21 +52,30 @@ class PatternObservabilityTests(unittest.TestCase):
         self.assertEqual(info["all_boards_observable_phases"], list(range(16)))
         self.assertFalse(info["hardware_visibility_verified"])
 
-    def test_insufficient_spatial_rank_rejects_a_lit_but_collinear_subset(self):
+    def test_registry_rejects_collinear_three_marker_subset_before_phase_analysis(self):
         config = json.loads(CONTINUOUS.read_text(encoding="utf-8"))
-        # Board A LED 103 is OFF at phase 3, leaving 100/101/102 lit.
-        # Make those three positions collinear, while the full model remains
-        # valid thanks to raised LED 103. Codebook validation still succeeds.
+        # The full cloud remains non-collinear thanks to raised LED 103, but
+        # an occlusion could leave only the collinear 100/101/102 triple.
         config["boards"]["board_A"]["markers"]["102"]["xyz_m"] = [0.28, 0, 0]
+        with self.assertRaisesRegex(ValueError, "degenerate 3-marker visible subset"):
+            BoardPatternRegistry.from_mapping(config)
+
+    def test_code_phase_with_too_few_lit_markers_is_not_pose_observable(self):
+        config = json.loads(CONTINUOUS.read_text(encoding="utf-8"))
+        # Remove one of the three otherwise-lit markers at phase 3. The
+        # codebook remains valid, but the board has only two illuminated LEDs.
+        code = config["boards"]["board_A"]["markers"]["100"]["code"]
+        config["boards"]["board_A"]["markers"]["100"]["code"] = (
+            code[:3] + "0" + code[4:]
+        )
         registry = BoardPatternRegistry.from_mapping(config)
         report = analyze_pattern_observability(registry)
         phase3 = report.boards["board_A"].phases[3]
-        self.assertEqual(phase3.illuminated_count, 3)
-        self.assertEqual(phase3.geometric_rank, 1)
+        self.assertEqual(phase3.illuminated_count, 2)
         self.assertFalse(phase3.supports_nominal_rigid_fit)
         self.assertIn(3, report.boards["board_A"].missing_pose_phases)
         self.assertNotIn(3, report.all_boards_observable_phases)
-        with self.assertRaisesRegex(ValueError, "board_A"):
+        with self.assertRaisesRegex(ValueError, "every phase"):
             require_every_phase_observable(registry)
 
     def test_missing_rois_and_real_hardware_remain_independent_gates(self):
