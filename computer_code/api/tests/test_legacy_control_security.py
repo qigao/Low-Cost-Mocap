@@ -75,6 +75,19 @@ class LegacyControlSecurityTests(unittest.TestCase):
         self.assertIn("register_legacy_control_handlers(", index_source)
         self.assertIn("arm_counter_registry.accept(request.sid, count)", event_source)
         self.assertIn('@socketio.on("disconnect")', event_source)
+        stateful_events = {
+            "acquire-floor": "acquire_floor",
+            "set-origin": "set_origin",
+            "update-camera-settings": "change_camera_settings",
+            "capture-points": "capture_points",
+            "calculate-camera-pose": "calculate_camera_pose",
+            "determine-scale": "determine_scale",
+        }
+        for event, function_name in stateful_events.items():
+            with self.subTest(event=event):
+                start = index_source.index(f'@socketio.on("{event}")')
+                end = index_source.index(f"def {function_name}(", start)
+                self.assertIn("@loopback_only_event(socketio)", index_source[start:end])
 
     def test_arm_payload_requires_exact_boolean_vector_and_metadata(self):
         self.assertEqual(
