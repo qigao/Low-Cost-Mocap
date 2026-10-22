@@ -63,6 +63,36 @@ class OpticalAttitudeMeasurement:
         _h(self.pattern_sha256,"pattern digest"); _h(self.calibration_sha256,"calibration digest")
         if self.quality!="MEASURED": raise ValueError("optical measurement must be current MEASURED data")
 
+def optical_measurement_from_pose_frame(frame, *, body_id, expected_pattern_sha256, expected_calibration_sha256):
+    """Extract only a current PoseStream v1 measured pose; reject stale/invalid records."""
+    if not isinstance(frame, dict) or frame.get("protocol") != "low_cost_mocap" or frame.get("schema_version") != 1 or frame.get("kind") != "pose_frame":
+        raise ValueError("unsupported PoseStream frame")
+    if frame.get("hardware_provenance_verified") is not False:
+        raise ValueError("unexpected hardware provenance claim")
+    pattern = _sha(frame.get("pattern_sha256"), "pattern digest")
+    calibration = _sha(frame.get("calibration_sha256"), "optical calibration digest")
+    if pattern != expected_pattern_sha256 or calibration != expected_calibration_sha256:
+        raise ValueError("optical pattern/calibration revision mismatch")
+    frame_id = _time(frame.get("frame_id"), "frame_id")
+    timestamp = _time(frame.get("latest_exposure_timestamp_ns"), "exposure timestamp")
+    clock = _s(frame.get("clock_domain"), "clock domain")
+    bodies = frame.get("rigid_bodies")
+    if not isinstance(bodies, list):
+        raise ValueError("rigid_bodies must be an array")
+    matches = [b for b in bodies if isinstance(b, dict) and b.get("board_id") == body_id]
+    if len(matches) != 1:
+        raise ValueError("frame must contain exactly one requested body")
+    body = matches[0]
+    if (body.get("tracking_status") != "TRACKING" or body.get("evidence_kind") != "MEASURED"
+        or body.get("measurement_trigger_id") != frame_id or body.get("measurement_age_triggers") != 0
+        or body.get("last_measurement_exposure_timestamp_ns") != timestamp or body.get("measurement_age_ns") != 0):
+        raise ValueError("optical pose is stale or not a current measured observation")
+    return OpticalAttitudeMeasurement(
+        body_id, timestamp, clock, body.get("quaternion_world_from_body_xyzw"),
+        frame_id, pattern, calibration,
+    )
+
+
 @dataclass(frozen=True)
 class OpticalIMUFusionState:
     body_id: str
