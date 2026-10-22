@@ -18,7 +18,15 @@ from flask_cors import CORS
 import json
 import os
 
-from legacy_control_security import configured_origins, legacy_control_peer_allowed
+from legacy_control_security import (
+    ArmCounterRegistry,
+    configured_origins,
+    legacy_control_peer_allowed,
+    validate_arm_payload,
+    validate_pid_payload,
+    validate_setpoint_payload,
+    validate_trim_payload,
+)
 
 ALLOWED_ORIGINS = configured_origins(os.environ.get("MOCAP_ALLOWED_ORIGINS"))
 
@@ -41,6 +49,27 @@ def _legacy_control_authorized() -> bool:
         to=request.sid,
     )
     return False
+
+
+def _validated_control_payload(validator, data):
+    """Return a validated payload or emit a fail-closed rejection."""
+    try:
+        return validator(data)
+    except (ValueError, TypeError, KeyError) as exc:
+        socketio.emit(
+            "legacy-control-rejected",
+            {"reason": str(exc)},
+            to=request.sid,
+        )
+        return None
+
+
+arm_counter_registry = ArmCounterRegistry(max_clients=64)
+
+
+@socketio.on("disconnect")
+def _discard_legacy_control_session():
+    arm_counter_registry.discard(request.sid)
 
 cameras_init = False
 
@@ -136,48 +165,71 @@ def arm_drone(data):
     global cameras_init
     if not cameras_init:
         return
-    
-    Cameras.instance().drone_armed = data["droneArmed"]
-    for droneIndex in range(0, num_objects):
-        serial_data = {
-            "armed": data["droneArmed"][droneIndex],
-        }
+    validated = _validated_control_payload(validate_arm_payload, data)
+    if validated is None:
+        return
+    drone_armed, count, _current_drone_index = validated
+    if not arm_counter_registry.accept(request.sid, count):
+        socketio.emit(
+            "legacy-control-rejected",
+            {"reason": "stale or replayed arm command counter"},
+            to=request.sid,
+        )
+        return
+
+    # Validate the complete command before any serial write or shared-state update.
+    serial_messages = [
+        f"{drone_index}{json.dumps({'armed': drone_armed[drone_index]})}".encode("utf-8")
+        for drone_index in range(num_objects)
+    ]
+    if len(serial_messages) != num_objects:
+        return
+    Cameras.instance().drone_armed = list(drone_armed)
+    for message in serial_messages:
         with serialLock:
-            ser.write(f"{str(droneIndex)}{json.dumps(serial_data)}".encode('utf-8'))
-        
+            ser.write(message)
         time.sleep(0.01)
 
 @socketio.on("set-drone-pid")
 def arm_drone(data):
     if not _legacy_control_authorized():
         return
-    serial_data = {
-        "pid": [float(x) for x in data["dronePID"]],
-    }
+    validated = _validated_control_payload(validate_pid_payload, data)
+    if validated is None:
+        return
+    drone_index, pid_values = validated
+    serial_data = {"pid": pid_values}
+    message = f"{drone_index}{json.dumps(serial_data, allow_nan=False)}".encode("utf-8")
     with serialLock:
-        ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
+        ser.write(message)
         time.sleep(0.01)
 
 @socketio.on("set-drone-setpoint")
 def arm_drone(data):
     if not _legacy_control_authorized():
         return
-    serial_data = {
-        "setpoint": [float(x) for x in data["droneSetpoint"]],
-    }
+    validated = _validated_control_payload(validate_setpoint_payload, data)
+    if validated is None:
+        return
+    drone_index, coordinates = validated
+    serial_data = {"setpoint": coordinates}
+    message = f"{drone_index}{json.dumps(serial_data, allow_nan=False)}".encode("utf-8")
     with serialLock:
-        ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
+        ser.write(message)
         time.sleep(0.01)
 
 @socketio.on("set-drone-trim")
 def arm_drone(data):
     if not _legacy_control_authorized():
         return
-    serial_data = {
-        "trim": [int(x) for x in data["droneTrim"]],
-    }
+    validated = _validated_control_payload(validate_trim_payload, data)
+    if validated is None:
+        return
+    drone_index, trim_values = validated
+    serial_data = {"trim": trim_values}
+    message = f"{drone_index}{json.dumps(serial_data, allow_nan=False)}".encode("utf-8")
     with serialLock:
-        ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
+        ser.write(message)
         time.sleep(0.01)
 
 

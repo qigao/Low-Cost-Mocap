@@ -46,6 +46,7 @@ export default function App() {
 
   const [currentDroneIndex, setCurrentDroneIndex] = useState(0)
   const [droneArmed, setDroneArmed] = useState(Array.apply(null, Array(NUM_DRONES)).map(() => (false)))
+  const armCommandCount = useRef(0)
   const [dronePID, setDronePID] = useState(["1", "0", "0", "1.5", "0", "0", "0.3", "0.1", "0.05", "0.2", "0.03", "0.05", "0.3", "0.1", "0.05", "28", "-0.035"])
   const [droneSetpoint, setDroneSetpoint] = useState(Array.apply(null, Array(NUM_DRONES)).map(() => (["0", "0", "0"])))
   const [droneSetpointWithMotion, setDroneSetpointWithMotion] = useState([0, 0, 0])
@@ -87,17 +88,18 @@ export default function App() {
   }, [capturedPointsForPose])
 
   useEffect(() => {
-    let count = 0
-    socket.emit("arm-drone", { droneArmed, count, currentDroneIndex })
-    const pingInterval = setInterval(() => {
-      count += 1
+    const emitArmState = () => {
+      const count = armCommandCount.current
+      armCommandCount.current += 1
       socket.emit("arm-drone", { droneArmed, count, currentDroneIndex })
-    }, 500)
+    }
+    emitArmState()
+    const pingInterval = setInterval(emitArmState, 500)
 
     return () => {
       clearInterval(pingInterval)
     }
-  }, [droneArmed])
+  }, [droneArmed, currentDroneIndex])
 
   useEffect(() => {
     for (let droneIndex = 0; droneIndex < NUM_DRONES; droneIndex++) {
