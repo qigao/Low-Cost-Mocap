@@ -46,6 +46,8 @@ def calibration(**overrides):
         "accel_bias_m_s2": (0.0, 0.0, 0.81),
         "gyro_noise_density_rad_s_sqrt_hz": (0.001, 0.001, 0.002),
         "accel_noise_density_m_s2_sqrt_hz": (0.01, 0.01, 0.02),
+        "gyro_bias_random_walk_rad_s_per_sqrt_s": (0.0001, 0.0001, 0.0002),
+        "accel_bias_random_walk_m_s2_per_sqrt_s": (0.001, 0.001, 0.002),
         "calibration_method": "bench-six-position-v1",
         "valid_from_timestamp_ns": 1_000_000,
         "valid_until_timestamp_ns": 10_000_000,
@@ -138,6 +140,15 @@ class IMUCalibrationContractTests(unittest.TestCase):
         raw["schema_version"] = True
         with self.assertRaisesRegex(ValueError, "schema_version"):
             IMUCalibration.from_dict(raw)
+
+    def test_bias_random_walk_parameters_are_explicit_and_nonnegative(self):
+        value = calibration()
+        self.assertEqual(value.gyro_bias_random_walk_rad_s_per_sqrt_s, (0.0001, 0.0001, 0.0002))
+        self.assertEqual(value.accel_bias_random_walk_m_s2_per_sqrt_s, (0.001, 0.001, 0.002))
+        with self.assertRaisesRegex(ValueError, "nonnegative"):
+            calibration(gyro_bias_random_walk_rad_s_per_sqrt_s=(0.0, -0.1, 0.0))
+        with self.assertRaisesRegex(ValueError, "nonnegative"):
+            calibration(accel_bias_random_walk_m_s2_per_sqrt_s=(0.0, float("nan"), 0.0))
 
     def test_correction_matrices_must_be_finite_and_well_conditioned(self):
         invalid_matrices = (
