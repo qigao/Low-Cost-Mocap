@@ -14,6 +14,8 @@ from unittest.mock import patch
 from capture_bundle_cli import main as cli_main
 from capture_bundle_manifest import (
     MANIFEST_NAME,
+    _hash_regular_file_at,
+    _open_directory_path_no_follow,
     load_manifest_bytes,
     validate_capture_bundle,
     validate_capture_bundle_directory,
@@ -213,6 +215,27 @@ class CaptureBundleManifestTests(unittest.TestCase):
         case_collision["artifacts"][1]["path"] = case_collision["artifacts"][0]["path"].upper()
         report = validate_capture_bundle(case_collision, self.root)
         self.assertEqual(report["artifact_checks"][1]["status"], "duplicate_path")
+
+    def test_open_root_descriptor_does_not_follow_replaced_root_path(self):
+        artifact = self.manifest["artifacts"][0]
+        relative = artifact["path"]
+        expected_hash = artifact["sha256"]
+        root_fd = _open_directory_path_no_follow(self.root.resolve())
+        moved_root = Path(self.temp.name) / "anchored-original-root"
+        try:
+            self.root.rename(moved_root)
+            self.root.mkdir()
+            external = self.root / relative
+            external.parent.mkdir(parents=True)
+            external.write_bytes(b"attacker-controlled-replacement")
+            size, digest = _hash_regular_file_at(
+                root_fd, relative, max_bytes=1024, cap_error="test byte cap"
+            )
+        finally:
+            os.close(root_fd)
+        self.assertEqual(size, artifact["size_bytes"])
+        self.assertEqual(digest, expected_hash)
+        self.assertNotEqual(digest, hashlib.sha256(b"attacker-controlled-replacement").hexdigest())
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlink test requires OS support")
     def test_intermediate_directory_symlink_is_rejected_by_descriptor_walk(self):
