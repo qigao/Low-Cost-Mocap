@@ -86,8 +86,8 @@ def validate_fused_attitude_payload(
     _text(payload["imu_id"], "imu_id")
     _text(payload["clock_domain"], "clock_domain")
     timestamp = _time(payload["timestamp_ns"], "timestamp_ns")
-    if previous_timestamp_ns is not None and timestamp <= _time(previous_timestamp_ns, "previous_timestamp_ns"):
-        raise ValueError("fused attitude timestamp is duplicate or stale")
+    if previous_timestamp_ns is not None and timestamp < _time(previous_timestamp_ns, "previous_timestamp_ns"):
+        raise ValueError("fused attitude timestamp is stale or regressed")
     for name in _DIGEST_FIELDS:
         _digest(payload[name], name)
     if payload["optical_pattern_sha256"] != expected_pattern_sha256:
