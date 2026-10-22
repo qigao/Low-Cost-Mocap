@@ -190,6 +190,8 @@ def replay_fusion_events(
         raise ValueError("fusion replay requires at least one event")
     if len(events) > max_events:
         raise ValueError("fusion replay event capacity exceeded")
+    if type(max_input_bytes) is not int or not 1 <= max_input_bytes <= _MAX_BYTES:
+        raise ValueError("max_input_bytes must be in 1..256000000")
     if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= _MAX_BYTES:
         raise ValueError("max_output_bytes must be in 1..256000000")
     normalized = []
@@ -258,6 +260,10 @@ class OrientationErrorReport:
     median_rad: float
     p95_rad: float
     max_rad: float
+    rmse_deg: float
+    median_deg: float
+    p95_deg: float
+    max_deg: float
     errors_rad: tuple[float, ...]
     hardware_ground_truth_verified: bool = False
 
@@ -284,6 +290,18 @@ def evaluate_orientation_error(
         raise ValueError("references must contain ReferenceOrientation")
     if any(state.clock_domain != clock_domain for state in states):
         raise ValueError("fusion states contain a mixed clock domain")
+    identity = (
+        states[0].body_id, states[0].imu_id, states[0].imu_calibration_sha256,
+        states[0].clock_mapping_sha256, states[0].optical_pattern_sha256,
+        states[0].optical_calibration_sha256,
+    )
+    for state in states[1:]:
+        if (
+            state.body_id, state.imu_id, state.imu_calibration_sha256,
+            state.clock_mapping_sha256, state.optical_pattern_sha256,
+            state.optical_calibration_sha256,
+        ) != identity:
+            raise ValueError("fusion states contain mixed body/IMU/calibration revisions")
     if any(ref.clock_domain != clock_domain for ref in references):
         raise ValueError("reference poses contain a mixed clock domain")
     ref_times = [ref.timestamp_ns for ref in references]
@@ -336,6 +354,10 @@ def evaluate_orientation_error(
         median_rad=(ordered[(len(ordered)-1)//2] + ordered[len(ordered)//2]) / 2.0,
         p95_rad=ordered[p95_index],
         max_rad=max(ordered),
+        rmse_deg=math.degrees(rmse),
+        median_deg=math.degrees((ordered[(len(ordered)-1)//2] + ordered[len(ordered)//2]) / 2.0),
+        p95_deg=math.degrees(ordered[p95_index]),
+        max_deg=math.degrees(max(ordered)),
         errors_rad=tuple(errors),
         hardware_ground_truth_verified=False,
     )
