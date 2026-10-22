@@ -1,8 +1,8 @@
 # Algorithm-first: trigger synchronization and temporal marker IDs
 
-This Draft PR provides **software contracts and synthetic conformance**, NOT
-proof that the physical capture rig meets exposure sync or identification
-requirements.
+The merged algorithm-first implementation provides **software contracts
+and synthetic conformance**, NOT proof that the physical capture rig meets
+exposure-synchronization or marker-identification requirements.
 
 ## Current source boundary
 
