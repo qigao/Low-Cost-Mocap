@@ -42,6 +42,11 @@ class TriggerReplayTests(unittest.TestCase):
             dict(report.admitted_exposure_skew_ns_percentiles),
             {"p50": 6, "p95": 6, "p99": 6, "max": 6},
         )
+        self.assertEqual(report.comparable_exposure_skew_batch_count, 6)
+        self.assertEqual(
+            dict(report.comparable_exposure_skew_ns_percentiles),
+            {"p50": 6, "p95": 100, "p99": 100, "max": 100},
+        )
         self.assertEqual(
             report.rejection_reasons["independent_reference_trigger_mismatch"], 1
         )
