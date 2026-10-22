@@ -4,7 +4,6 @@ import './pose-monitor.css'
 // This standalone entry deliberately DOES NOT import App.tsx, which emits
 // arm-drone and set-drone-setpoint events from its React lifecycle.
 const NS = '/pose-observe'
-const STREAM_EVENT = 'mocap:pose-stream'
 type Obj = Record<string, unknown>
 type Model = { board_id: string, type: string }
 
@@ -268,22 +267,20 @@ startButton.addEventListener('click', () => {
   })
   socket = client
   client.on('connect', () => {
-    // The server may send AssetDescription *inside its connect handler*
-    // before this client receives its 'connect' notification. Preserve
-    // such a freshly admitted asset. A prior disconnect already cleared
-    // all previous-session poses and model state.
-    if (session === null) clearCurrent('Awaiting a fresh AssetDescription')
+    // All assets and frames arrive in bounded poll acknowledgements.
+    // Reconnect always starts with cleared display state and fresh assets.
+    clearCurrent('Awaiting a fresh AssetDescription')
     connectionState(true, 'Authorized viewer connected.')
     stopPoll()
     pollTimer = window.setInterval(() => {
       client.emit('pose:poll', {}, (reply: unknown) => {
-        if (!isObject(reply) || reply.ok !== true) return
+        if (!isObject(reply) || reply.ok !== true || !Array.isArray(reply.messages)) return
+        for (const packet of reply.messages) acceptEnvelope(packet)
         if (isNonnegativeInt(reply.dropped_frames)) dropped = reply.dropped_frames
         dropsElement.textContent = String(dropped) + ' / ' + String(gaps)
       })
     }, 250)
   })
-  client.on(STREAM_EVENT, acceptEnvelope)
   client.on('connect_error', () => {
     clearCurrent('Authentication or local transport failed')
     connectionState(false, 'Local observer connection failed or token rejected.')
