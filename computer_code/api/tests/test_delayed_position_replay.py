@@ -7,7 +7,11 @@ from delayed_position_replay import BoundedDelayedPositionReplay
 from imu_calibration import CorrectedIMUVectors, IMUCalibration
 from localization_contract import LocalizationQuality
 from localization_imu_fusion import LocalizationIMUAttitudeState
-from position_measurement import MetricPositionMeasurement, PositionMeasurementSource
+from position_measurement import (
+    MetricPositionMeasurement,
+    PositionMeasurementSource,
+    PositionSourceContract,
+)
 from translational_eskf import ConditionedTranslationalESKF
 from translational_propagation import GravityModel, TranslationalSeed
 
@@ -143,6 +147,15 @@ def rtk_measurement(timestamp, sequence, *, position=(1.0, 2.0, 3.0), stddev=(0.
     )
 
 
+def rtk_source_contract():
+    return PositionSourceContract(
+        source=PositionMeasurementSource.RTK,
+        source_revision_sha256=RTK_SOURCE_SHA,
+        measurement_calibration_sha256=RTK_CAL_SHA,
+        clock_mapping_sha256=RTK_CLOCK_SHA,
+    )
+
+
 def filter_kwargs(**changes):
     values = dict(
         max_sample_gap_ns=20_000_000,
@@ -161,7 +174,11 @@ def new_filter(**changes):
     calibration = imu_calibration()
     return (
         ConditionedTranslationalESKF(
-            seed(), calibration, gravity(), **filter_kwargs(**changes)
+            seed(),
+            calibration,
+            gravity(),
+            **filter_kwargs(**changes),
+            position_source_contracts=(rtk_source_contract(),),
         ),
         calibration,
     )
@@ -272,6 +289,7 @@ class DelayedPositionReplayTests(unittest.TestCase):
             **filter_kwargs(**kwargs),
             max_history_frames=32,
             max_history_ns=200_000_000,
+            position_source_contracts=(rtk_source_contract(),),
         )
         return owner, calibration
 
@@ -456,6 +474,73 @@ class DelayedPositionReplayTests(unittest.TestCase):
                 localization_measurement(T0 + 20_000_000, 12),
                 max_position_nis=100.0,
             )
+
+    def test_rtk_source_calibration_and_clock_revisions_are_pinned(self):
+        owner, calibration = self.build_wrapper()
+        self.ingest_frames(owner, calibration, 5)
+        timestamp = T0 + 20_000_000
+        before = owner.state
+        bad_measurements = (
+            (
+                replace(
+                    rtk_measurement(timestamp, 1),
+                    source_revision_sha256="9" * 64,
+                ),
+                "source revision mismatch",
+            ),
+            (
+                replace(
+                    rtk_measurement(timestamp, 1),
+                    measurement_calibration_sha256="8" * 64,
+                ),
+                "position calibration mismatch",
+            ),
+            (
+                replace(
+                    rtk_measurement(timestamp, 1),
+                    clock_mapping_sha256="7" * 64,
+                ),
+                "clock mapping mismatch",
+            ),
+        )
+        for measurement, message in bad_measurements:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                ValueError, message
+            ):
+                owner.ingest_position_measurement(
+                    measurement, max_position_nis=100.0
+                )
+            self.assertEqual(owner.state, before)
+
+        accepted = owner.ingest_position_measurement(
+            rtk_measurement(timestamp, 1),
+            max_position_nis=100.0,
+        )
+        self.assertEqual(
+            accepted.last_position_measurement_source,
+            PositionMeasurementSource.RTK.value,
+        )
+
+    def test_rtk_updates_require_an_explicit_source_contract(self):
+        calibration = imu_calibration()
+        owner = BoundedDelayedPositionReplay(
+            seed(),
+            calibration,
+            gravity(),
+            **filter_kwargs(),
+            max_history_frames=32,
+            max_history_ns=200_000_000,
+        )
+        self.ingest_frames(owner, calibration, 5)
+        before = owner.state
+        with self.assertRaisesRegex(
+            ValueError, "RTK position source contract is not configured"
+        ):
+            owner.ingest_position_measurement(
+                rtk_measurement(T0 + 20_000_000, 1),
+                max_position_nis=100.0,
+            )
+        self.assertEqual(owner.state, before)
 
     def test_position_timestamp_must_match_retained_imu_frame_exactly(self):
         owner, calibration = self.build_wrapper()
