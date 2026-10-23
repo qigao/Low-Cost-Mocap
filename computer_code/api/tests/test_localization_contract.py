@@ -21,9 +21,10 @@ def pose(**changes):
         map_frame_id="local-map-7",
         timestamp_ns=8_000_000,
         clock_domain="capture-ptp-A",
-        position_xyz_m=(1.0, 2.0, 3.0),
+        position_xyz=(1.0, 2.0, 3.0),
+        position_unit="meters",
         orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
-        position_stddev_m=(0.02, 0.02, 0.04),
+        position_stddev=(0.02, 0.02, 0.04),
         orientation_stddev_rad=(0.01, 0.01, 0.02),
         map_revision_sha256=H,
         calibration_sha256="b" * 64,
@@ -60,6 +61,12 @@ class MapPoseObservationTests(unittest.TestCase):
         for topology in (LocalizationTopology.INSIDE_OUT, LocalizationTopology.OUTSIDE_IN):
             result = pose(source=PoseSource.FIDUCIAL_LOCALIZATION, topology=topology)
             self.assertEqual(result.topology, topology)
+
+    def test_slam_local_map_units_are_not_mislabeled_as_meters(self):
+        result = pose(position_unit="map_units", position_xyz=(120.0, -3.0, 7.0))
+        self.assertEqual(result.position_unit, "map_units")
+        with self.assertRaisesRegex(ValueError, "position_unit must be"):
+            pose(position_unit="centimeters")
 
     def test_degraded_pose_is_explicit_and_relocalization_is_reported(self):
         result = pose(quality=LocalizationQuality.DEGRADED, relocalized=True)
