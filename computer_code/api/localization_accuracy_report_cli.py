@@ -36,6 +36,19 @@ def _canonical(value: object) -> str:
         raise ValueError("report must be finite canonical JSON") from exc
 
 
+def _collapse_timeline(states):
+    """Keep the last post-update state at each estimator timestamp."""
+    collapsed = []
+    for state in states:
+        if collapsed and state.timestamp_ns < collapsed[-1].timestamp_ns:
+            raise ValueError("replay output timestamps must be nondecreasing")
+        if collapsed and state.timestamp_ns == collapsed[-1].timestamp_ns:
+            collapsed[-1] = state
+        else:
+            collapsed.append(state)
+    return tuple(collapsed)
+
+
 def evaluate_document(document: object, *, max_output_bytes: int = DEFAULT_MAX_BYTES) -> dict:
     if not isinstance(document, dict):
         raise ValueError("document must be a JSON object")
@@ -69,8 +82,9 @@ def evaluate_document(document: object, *, max_output_bytes: int = DEFAULT_MAX_B
         raise ValueError("max_match_delta_ns must be a nonnegative integer")
 
     replay = replay_localization_events(config, events)
+    timeline = _collapse_timeline(replay.states)
     metrics = evaluate_localization_accuracy(
-        replay.states,
+        timeline,
         references,
         max_match_delta_ns=max_delta,
         latency_samples=latency_samples,
@@ -78,6 +92,8 @@ def evaluate_document(document: object, *, max_output_bytes: int = DEFAULT_MAX_B
     report = {
         "schema_version": SCHEMA_VERSION,
         "qualification": "software_replay_and_reference_metrics_only",
+        "timeline_state_count": len(timeline),
+        "replay_event_state_count": len(replay.states),
         "replay": {
             "config_sha256": replay.config_sha256,
             "input_sha256": replay.input_sha256,
