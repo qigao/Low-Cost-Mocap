@@ -1,11 +1,15 @@
+import json
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 from localization_accuracy_report import (
     PositionReference,
     ProcessingLatencySample,
     evaluate_localization_accuracy,
 )
+from localization_accuracy_report_cli import load_document_bytes
+from localization_replay import LocalizationReplayEvent, replay_localization_events
+from test_localization_replay import replay_fixture
 from test_outdoor_localization_replay import build_replay
 
 
@@ -123,6 +127,68 @@ class LocalizationAccuracyReportTests(unittest.TestCase):
         )
         self.assertNotEqual(first["input_sha256"], third["input_sha256"])
         self.assertNotEqual(first["report_sha256"], third["report_sha256"])
+
+    def test_replay_accuracy_cli_binds_event_trace_reference_and_latency(self):
+        config, imu_events, tag_update, rtk_update = replay_fixture()
+        events = tuple(imu_events + [
+            LocalizationReplayEvent(
+                event_index=len(imu_events), kind="position",
+                measurement=rtk_update, max_position_nis=100.0,
+            ),
+            LocalizationReplayEvent(
+                event_index=len(imu_events) + 1, kind="position",
+                measurement=tag_update, max_position_nis=100.0,
+            ),
+        ])
+        replay = replay_localization_events(config, events)
+        timeline = []
+        for state in replay.states:
+            if timeline and state.timestamp_ns == timeline[-1].timestamp_ns:
+                timeline[-1] = state
+            else:
+                timeline.append(state)
+        references = tuple(
+            PositionReference(
+                timestamp_ns=state.timestamp_ns,
+                clock_domain=state.clock_domain,
+                position_world_from_body_m=state.position_world_from_body_m,
+                dataset_sha256=DATASET_SHA,
+            )
+            for state in timeline
+            if state.position_world_from_body_m is not None
+        )
+        latency = (
+            ProcessingLatencySample("frame-1", "host-monotonic", 100, 140),
+            ProcessingLatencySample("frame-2", "host-monotonic", 200, 260),
+        )
+        document = {
+            "schema_version": 1,
+            "config": asdict(config),
+            "events": [event.to_dict() for event in events],
+            "references": [asdict(reference) for reference in references],
+            "max_match_delta_ns": 0,
+            "latency_samples": [asdict(sample) for sample in latency],
+        }
+        report = load_document_bytes(
+            json.dumps(document, sort_keys=True, allow_nan=False).encode("utf-8")
+        )
+        self.assertEqual(report["replay"]["input_sha256"], replay.input_sha256)
+        self.assertEqual(report["replay"]["output_sha256"], replay.output_sha256)
+        self.assertEqual(report["timeline_state_count"], len(timeline))
+        self.assertEqual(report["accuracy"]["matched_count"], len(references))
+        self.assertEqual(report["accuracy"]["latency"]["p50_ns"], 40)
+        self.assertFalse(report["hardware_ground_truth_verified"])
+        self.assertFalse(report["reference_independence_verified"])
+
+    def test_accuracy_cli_rejects_duplicate_keys_and_unknown_root_fields(self):
+        with self.assertRaisesRegex(ValueError, "duplicate JSON object key"):
+            load_document_bytes(
+                b'{"schema_version":1,"schema_version":1,"config":{},"events":[],"references":[],"max_match_delta_ns":0}'
+            )
+        with self.assertRaisesRegex(ValueError, "document fields"):
+            load_document_bytes(
+                b'{"schema_version":1,"config":{},"events":[],"references":[],"max_match_delta_ns":0,"trust_me":true}'
+            )
 
     def test_rejects_mixed_reference_datasets_clocks_and_reversed_latency(self):
         states, references, latency = sample_report_inputs()
