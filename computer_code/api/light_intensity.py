@@ -205,6 +205,48 @@ def quantize_roi_track(
 
 
 @dataclass(frozen=True)
+class DarkROIQualification:
+    """Auditable external evidence that one predicted-only track is a known OFF marker.
+
+    The record is bound to one camera-local Track, one trigger, one marker ID,
+    the active pattern revision and an external verifier/evidence digest. The
+    digest is a provenance reference, not a cryptographic signature: callers
+    must trust the verifier integration itself.
+    """
+    camera_id: int
+    local_track_id: int
+    trigger_id: int
+    marker_id: int
+    expected_xy: tuple[float, float]
+    pattern_sha256: str
+    verifier_id: str
+    reference_evidence_sha256: str
+
+    def __post_init__(self) -> None:
+        for name in ("camera_id", "local_track_id", "trigger_id", "marker_id"):
+            object.__setattr__(self, name, _nonnegative_int(getattr(self, name), name))
+        if not isinstance(self.expected_xy, (tuple, list)) or len(self.expected_xy) != 2:
+            raise ValueError("dark ROI expected_xy must contain exactly two coordinates")
+        expected = tuple(
+            _finite_real(value, f"dark ROI expected_xy[{index}]")
+            for index, value in enumerate(self.expected_xy)
+        )
+        object.__setattr__(self, "expected_xy", expected)
+        for name in ("pattern_sha256", "reference_evidence_sha256"):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+        verifier = self.verifier_id
+        if not isinstance(verifier, str) or not verifier.strip() or len(verifier) > 128:
+            raise ValueError("verifier_id must be a nonempty string of at most 128 characters")
+        object.__setattr__(self, "verifier_id", verifier.strip())
+
+
+@dataclass(frozen=True)
 class StampedTrackROI:
     """One camera-local light track sample tied to its originating frame."""
     frame_stamp: FrameStamp
