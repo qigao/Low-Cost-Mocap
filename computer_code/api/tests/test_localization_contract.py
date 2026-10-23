@@ -22,6 +22,7 @@ def pose(**changes):
         tracked_frame_id="body-camera",
         map_frame_id="local-map-7",
         timestamp_ns=8_000_000,
+        source_sequence_number=77,
         clock_domain="capture-ptp-A",
         position_xyz=(1.0, 2.0, 3.0),
         position_unit="meters",
@@ -136,6 +137,7 @@ class MapPoseObservationTests(unittest.TestCase):
     def test_rejects_bad_time_frames_hashes_and_inlier_count(self):
         cases = (
             ({"timestamp_ns": True}, "timestamp_ns"),
+            ({"source_sequence_number": True}, "source_sequence_number"),
             ({"clock_domain": " "}, "clock_domain"),
             ({"tracked_frame_id": ""}, "tracked_frame_id"),
             ({"map_revision_sha256": "Z" * 64}, "lowercase SHA-256"),
