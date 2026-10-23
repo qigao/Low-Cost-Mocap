@@ -199,8 +199,10 @@ class CameraSyncDaemon:
             try:
                 for profile in self._profiles:
                     adapter = self._adapters[profile.camera_id]
-                    info = adapter.open()
+                    # Mark the resource before the call so partial-open failures
+                    # still trigger best-effort close during rollback.
                     self._opened.add(profile.camera_id)
+                    info = adapter.open()
                     if not isinstance(info, CameraDeviceInfo):
                         raise ValueError("camera adapter returned invalid device info")
                     if info.device_serial != profile.device_serial:
@@ -214,18 +216,18 @@ class CameraSyncDaemon:
                     if not info.supports_external_trigger:
                         raise ValueError(f"camera {profile.camera_id} lacks external-trigger support")
                     adapter.configure(profile)
-                self._trigger.open()
                 self._trigger_open = True
+                self._trigger.open()
                 for profile in self._profiles:
                     adapter = self._adapters[profile.camera_id]
-                    adapter.arm()
                     self._armed.add(profile.camera_id)
+                    adapter.arm()
                 for profile in self._profiles:
                     adapter = self._adapters[profile.camera_id]
-                    adapter.start_acquisition()
                     self._started.add(profile.camera_id)
-                self._trigger.arm()
+                    adapter.start_acquisition()
                 self._trigger_armed = True
+                self._trigger.arm()
                 self._state = CameraSyncState.CAPTURING
             except Exception as exc:
                 cleanup_errors = self._cleanup()
