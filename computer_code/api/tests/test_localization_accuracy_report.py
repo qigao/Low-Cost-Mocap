@@ -181,7 +181,7 @@ class LocalizationAccuracyReportTests(unittest.TestCase):
         self.assertFalse(report["reference_independence_verified"])
 
     def test_accuracy_cli_rejects_duplicate_keys_and_unknown_root_fields(self):
-        with self.assertRaisesRegex(ValueError, "duplicate JSON object key"):
+        with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
             load_document_bytes(
                 b'{"schema_version":1,"schema_version":1,"config":{},"events":[],"references":[],"max_match_delta_ns":0}'
             )
