@@ -4,6 +4,9 @@ import json
 import unittest
 from dataclasses import replace
 
+import numpy as np
+from scipy.spatial.transform import Rotation
+
 from fiducial_multitag_pose import solve_multi_tag_camera_pose
 from fiducial_pose import solve_single_tag_pose
 from localization_contract import LocalizationQuality
@@ -59,8 +62,8 @@ class IntegratedLocalizationFaultMatrixTests(unittest.TestCase):
         # The map digest is internally consistent, so this is a bias experiment,
         # not a stale-revision rejection test.
         biased_map = make_map(global_offset=(0.01, 0.0, 0.0))
-        camera_position = __import__("numpy").asarray((0.3, 0.25, 1.4))
-        rotation_map_from_camera = __import__("scipy").spatial.transform.Rotation.from_euler(
+        camera_position = np.asarray((0.3, 0.25, 1.4))
+        rotation_map_from_camera = Rotation.from_euler(
             "x", 180.0, degrees=True
         ).as_matrix()
         calibration = camera_calibration()
