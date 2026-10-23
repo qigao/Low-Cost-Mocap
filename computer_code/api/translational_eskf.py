@@ -3,14 +3,15 @@
 Nominal/error state:
     x = [position_world(3), velocity_world(3), residual_accel_bias_body(3)]
 
-Attitude is supplied by the existing provider-neutral fused-attitude state and
-is not estimated here. The estimator maintains the full 9x9 covariance so a
-current-time absolute position update can legitimately correct position,
-velocity and residual accelerometer bias through propagated cross-covariance.
+Attitude is supplied by the provider-neutral fused-attitude state and is not
+estimated here. The full 9x9 covariance lets absolute position updates correct
+position, velocity and residual accelerometer bias through cross-covariance.
+Every position source is pinned to an explicit source/calibration/clock contract;
+RTK is rejected unless its contract is configured for this estimator session.
 
 This remains short of a full INS/ESKF because attitude error and gyro bias are
-outside this covariance, delayed measurements are rejected, and nonzero IMU
-lever-arm acceleration is not yet modeled.
+outside this covariance, between-frame delayed measurements are not interpolated,
+and nonzero IMU lever-arm acceleration is not yet modeled.
 """
 from __future__ import annotations
 
