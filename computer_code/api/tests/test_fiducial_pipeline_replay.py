@@ -5,6 +5,12 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from fiducial_contract import FiducialObservation, FiducialTagMap, TagAnchor
+from delayed_position_replay import BoundedDelayedPositionReplay
+from imu_calibration import CorrectedIMUVectors, IMUCalibration
+from imu_contract import ClockAnchor, fit_clock_mapping
+from localization_imu_fusion import LocalizationIMUAttitudeState
+from position_measurement import position_measurement_from_localization
+from translational_propagation import GravityModel, translational_seed_from_localization
 from fiducial_localization import (
     CameraBodyExtrinsic,
     FiducialUncertaintyModel,
@@ -68,7 +74,7 @@ def tag_corners(size=SIZE_M):
     return np.asarray(((-h, h, 0.0), (h, h, 0.0), (h, -h, 0.0), (-h, -h, 0.0)))
 
 
-def render_observation(anchor, active_map, camera_position, rotation_map_from_camera, *, noise_px=0.0, tag_id_override=None):
+def render_observation(anchor, active_map, camera_position, rotation_map_from_camera, *, timestamp_ns=T0, noise_px=0.0, tag_id_override=None):
     rotation_map_from_tag = Rotation.from_quat(anchor.orientation_map_from_tag_xyzw).as_matrix()
     translation_map_from_tag = np.asarray(anchor.position_xyz_m, dtype=float)
     rotation_camera_from_tag = rotation_map_from_camera.T @ rotation_map_from_tag
@@ -90,9 +96,9 @@ def render_observation(anchor, active_map, camera_position, rotation_map_from_ca
         tag_id=anchor.tag_id if tag_id_override is None else tag_id_override,
         camera_id=CAMERA_ID,
         camera_serial=CAMERA_SERIAL,
-        frame_id=900,
-        trigger_id=42,
-        exposure_timestamp_ns=T0,
+        frame_id=900 + (timestamp_ns - T0) // 10_000_000,
+        trigger_id=42 + (timestamp_ns - T0) // 10_000_000,
+        exposure_timestamp_ns=timestamp_ns,
         clock_domain="capture-ptp-A",
         image_corners_px=tuple(tuple(float(v) for v in p) for p in corners),
         corrected_bit_errors=0,
@@ -102,16 +108,17 @@ def render_observation(anchor, active_map, camera_position, rotation_map_from_ca
     )
 
 
-def localize_frame(active_map, *, noise_px=0.0, map_override=None, wrong_id=None):
+def localize_frame(active_map, *, timestamp_ns=T0, camera_position=(0.3, 0.25, 1.4), noise_px=0.0, map_override=None, wrong_id=None):
     # Camera looks down onto a planar tag field. The body pose is known only to
     # this synthetic generator; the localization algorithm receives image corners.
-    camera_position = np.asarray((0.3, 0.25, 1.4))
+    camera_position = np.asarray(camera_position, dtype=float)
     rotation_map_from_camera = Rotation.from_euler("x", 180.0, degrees=True).as_matrix()
     calibration = camera_calibration()
     observations = []
     for anchor in active_map.tags[:3]:
         observation = render_observation(
             anchor, active_map, camera_position, rotation_map_from_camera,
+            timestamp_ns=timestamp_ns,
             noise_px=noise_px,
             tag_id_override=wrong_id if wrong_id is not None and anchor.tag_id == 3 else None,
         )
@@ -178,6 +185,117 @@ class FiducialPipelineReplayTests(unittest.TestCase):
         moved_map = make_map(moved_tag_id=2, moved_by=(0.1, 0.0, 0.0))
         with self.assertRaisesRegex(ValueError, "map revision"):
             localize_frame(active_map, map_override=moved_map)
+
+    def test_image_to_body_pose_to_delayed_position_replay(self):
+        active_map = make_map()
+        _, initial_pose = localize_frame(active_map)
+        camera_mapping = fit_clock_mapping(
+            [
+                ClockAnchor(T0, T0 + 1_000, event_id="camera-sync-1"),
+                ClockAnchor(T0 + 1_000_000_000, T0 + 1_000_001_000, event_id="camera-sync-2"),
+                ClockAnchor(T0 + 2_000_000_000, T0 + 2_000_001_000, event_id="camera-sync-3"),
+            ],
+            source_clock_domain="capture-ptp-A",
+            target_clock_domain="imu-clock",
+            max_drift_ppm=10,
+            max_residual_ns=10,
+            max_extrapolation_ns=100_000_000,
+            min_anchor_span_ns=100_000_000,
+        )
+        seed = translational_seed_from_localization(
+            initial_pose,
+            camera_mapping,
+            imu_id="imu-1",
+            expected_imu_clock_domain="imu-clock",
+            initial_velocity_world_m_s=(0.0, 0.0, 0.0),
+            velocity_stddev_m_s=(0.1, 0.1, 0.1),
+            residual_accel_bias_body_m_s2=(0.0, 0.0, 0.0),
+            residual_accel_bias_stddev_m_s2=(0.02, 0.02, 0.02),
+        )
+        imu_cal = IMUCalibration(
+            imu_id="imu-1",
+            revision="imu-cal-v1",
+            imu_clock_domain="imu-clock",
+            rotation_body_from_imu=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            translation_body_from_imu_m=(0.0, 0.0, 0.0),
+            gyro_bias_rad_s=(0.0, 0.0, 0.0),
+            accel_bias_m_s2=(0.0, 0.0, 0.0),
+            gyro_noise_density_rad_s_sqrt_hz=(0.01, 0.01, 0.01),
+            accel_noise_density_m_s2_sqrt_hz=(0.02, 0.02, 0.02),
+            gyro_bias_random_walk_rad_s_per_sqrt_s=(0.001, 0.001, 0.001),
+            accel_bias_random_walk_m_s2_per_sqrt_s=(0.002, 0.002, 0.002),
+            calibration_method="synthetic-pipeline-test",
+        )
+        owner = BoundedDelayedPositionReplay(
+            seed,
+            imu_cal,
+            GravityModel(
+                frame_id="site-map",
+                gravity_world_m_s2=(0.0, 0.0, -9.80665),
+                model_id="site-gravity-v1",
+            ),
+            max_history_frames=32,
+            max_history_ns=200_000_000,
+        )
+        seed_timestamp = camera_mapping.map_timestamp(T0)
+
+        def attitude_at(timestamp_ns, *, tracking=False, sequence=900):
+            return LocalizationIMUAttitudeState(
+                body_id="rigid-body",
+                map_frame_id="site-map",
+                imu_id="imu-1",
+                timestamp_ns=timestamp_ns,
+                clock_domain="imu-clock",
+                quaternion_world_from_body_xyzw=initial_pose.orientation_xyzw,
+                attitude_variance_rad2=max(initial_pose.orientation_stddev_rad) ** 2,
+                status="TRACKING" if tracking else "DEGRADED",
+                source="LOCALIZATION_CORRECTED" if tracking else "IMU_PROPAGATED",
+                last_localization_timestamp_ns=seed_timestamp,
+                last_source_sequence_number=sequence,
+                localization_age_ns=timestamp_ns - seed_timestamp,
+                clock_mapping_sha256=camera_mapping.mapping_sha256,
+                imu_calibration_sha256=imu_cal.calibration_sha256,
+                localization_source_revision_sha256=initial_pose.map_revision_sha256,
+                localization_calibration_sha256=initial_pose.calibration_sha256,
+            )
+
+        for sequence in range(6):
+            raw_timestamp = T0 + sequence * 10_000_000
+            timestamp = camera_mapping.map_timestamp(raw_timestamp)
+            sample = CorrectedIMUVectors(
+                imu_id="imu-1",
+                sequence_number=sequence,
+                sensor_timestamp_ns=timestamp,
+                clock_domain="imu-clock",
+                calibration_revision=imu_cal.revision,
+                calibration_sha256=imu_cal.calibration_sha256,
+                gyro_body_rad_s=(0.0, 0.0, 0.0),
+                specific_force_body_m_s2=(0.0, 0.0, 9.80665),
+            )
+            owner.ingest_imu(
+                sample,
+                attitude_at(timestamp, tracking=(sequence == 0)),
+            )
+
+        # Build a real synthetic image observation at an epoch between IMU
+        # frames; only the image corners reach the PnP/consensus pipeline.
+        _, delayed_pose = localize_frame(
+            active_map,
+            timestamp_ns=T0 + 25_000_000,
+            camera_position=(0.31, 0.25, 1.4),
+            noise_px=0.1,
+        )
+        update = position_measurement_from_localization(
+            delayed_pose,
+            camera_mapping,
+            expected_target_clock_domain="imu-clock",
+        )
+        self.assertEqual(update.timestamp_ns, camera_mapping.map_timestamp(T0 + 25_000_000))
+        final_state = owner.ingest_position_measurement(update, max_position_nis=100.0)
+        self.assertEqual(final_state.timestamp_ns, camera_mapping.map_timestamp(T0 + 50_000_000))
+        self.assertEqual(final_state.last_position_update_timestamp_ns, update.timestamp_ns)
+        self.assertEqual(final_state.last_position_measurement_source, "LOCALIZATION")
+        self.assertIsNotNone(final_state.position_world_from_body_m)
 
     def test_anchor_perturbation_changes_map_revision(self):
         nominal = make_map()
