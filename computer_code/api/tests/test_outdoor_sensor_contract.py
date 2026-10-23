@@ -119,6 +119,19 @@ class CameraSyncContractTests(unittest.TestCase):
                 max_exposure_skew_ns=1000,
             )
 
+    def test_external_trigger_can_require_ptp_clock_alignment(self):
+        profile = CameraSyncProfile(
+            camera_id=2, device_serial="CAM-02", transport="gige_vision",
+            shutter_type="global", trigger_mode="external_line",
+            timestamp_semantics="exposure_midpoint", clock_domain="capture-ptp-A",
+            max_exposure_skew_ns=100_000, require_ptp_lock=True,
+        )
+        with self.assertRaisesRegex(ValueError, "PTP clock is not locked"):
+            validate_camera_frame(
+                replace(self.frames[0], ptp_locked=False),
+                profile, expected_trigger_id=42,
+            )
+
     def test_profile_rejects_free_run_when_hardware_trigger_is_required(self):
         with self.assertRaisesRegex(ValueError, "free_run"):
             CameraSyncProfile(

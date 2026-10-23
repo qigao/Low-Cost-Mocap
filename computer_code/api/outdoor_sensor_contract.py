@@ -65,8 +65,9 @@ class CameraSyncProfile:
             raise ValueError("trigger/PTP requirements must be booleans")
         if self.require_hardware_trigger and self.trigger_mode == "free_run":
             raise ValueError("free_run cannot satisfy required hardware trigger association")
-        if self.require_ptp_lock and self.trigger_mode != "ptp_scheduled":
-            raise ValueError("require_ptp_lock requires ptp_scheduled mode")
+        # Clock synchronization is independent of how the exposure is triggered.
+        # External-line triggering may still need PTP-locked clocks to compare
+        # per-camera exposure timestamps in a common time domain.
 
 
 @dataclass(frozen=True)

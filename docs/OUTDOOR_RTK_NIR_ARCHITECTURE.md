@@ -54,6 +54,19 @@ The existing pattern report now exposes per-marker duty cycle, global LED load p
 
 ## 4. Wired camera synchronization daemon
 
+The provider-neutral lifecycle orchestrator is implemented in
+`computer_code/api/camera_sync_daemon.py`. Hardware vendors supply a
+`CameraAdapter` for each physical camera and a `TriggerController` for the
+shared external trigger line. The orchestrator verifies device serial,
+shutter/timestamp semantics and clock-domain metadata before arming; it emits
+only complete, validated batches. Any timeout, trigger mismatch, packet loss
+or skew violation moves the session to `FAULT`, performs best-effort cleanup,
+and requires explicit reset/re-arm. It does not implement a vendor SDK or
+spawn its own process; `run_forever` is intended to run in the service thread
+managed by the deployment supervisor.
+
+## 4. Wired camera synchronization daemon
+
 Keep device SDK calls outside the tracking estimator. The daemon should own the camera lifecycle:
 
 `DISCOVER \rightarrow CONFIGURE \rightarrow VERIFY_CLOCK \rightarrow ARM
@@ -70,9 +83,9 @@ For each physical camera, record:
 
 ### Trigger strategy
 
-**Preferred:** distribute one physical hardware trigger to all cameras and the LED controller, with frame/trigger counters and sensor-exposure timestamps recorded by the camera adapter.
+**Preferred:** distribute one physical hardware trigger to all cameras and the LED controller, with frame/trigger counters and sensor-exposure timestamps recorded by the camera adapter. If timestamps come from separate camera clocks, require PTP lock or a validated clock-mapping/common-clock mechanism before comparing timestamps; the physical trigger and clock alignment solve different problems.
 
-**Alternative where supported:** PTP-scheduled hardware actions with measured clock state and a validated relationship between the scheduled action and sensor exposure.
+**Alternative where supported:** PTP-scheduled hardware actions with measured clock state and a validated relationship between the scheduled action and sensor exposure. PTP may also align timestamp clocks while a separate external trigger drives the exposure.
 
 PTP lock means clocks are synchronized; it does not by itself prove that sensor exposures began simultaneously. A GigE packet arrival timestamp is not an exposure timestamp. GNSS 1PPS can discipline a timing generator, but a qualified divider/trigger device must generate the actual camera-rate pulses. Do not create frame IDs by counting Python polls or packets received.
 
