@@ -39,6 +39,8 @@ The new provider-neutral module is `computer_code/api/fiducial_contract.py`.
 - `FiducialObservation`: family/ID, camera serial, frame/trigger IDs, sensor-exposure timestamp and clock domain, ordered image corners, corrected code-bit count, corner RMS, camera-calibration digest, and tag-map digest.
 - `validate_fiducial_observation`: fail-closed checks for frame/time/camera identity, active map and calibration revisions, known tag, code errors and corner quality.
 
+Detector backends are isolated behind `computer_code/api/fiducial_detector_adapter.py`. A backend receives an opaque image payload and may return only tag family/ID, ordered image corners, corrected-bit count and corner quality. Camera identity, frame/trigger IDs, exposure timestamp/clock domain, calibration digest and active map digest come from a host-owned `DetectorFrameContext` and are injected only during normalization. Backend exceptions are not silently retried with a different detector, and duplicate tag identities or families outside the active profile fail the frame.
+
 Outdoor anchor maps require surveyed tag poses. Indoor maps may use surveyed or calibrated tag poses. A hash establishes revision identity, not that a survey or timestamp is physically trustworthy. The camera adapter must source timestamps from documented exposure metadata, not packet arrival time.
 
 ## Estimation and fusion
