@@ -246,8 +246,27 @@ class TranslationalESKFSnapshot:
             raise ValueError("last_attitude must be LocalizationIMUAttitudeState or None")
         if self.state is not None and not isinstance(self.state, TranslationalErrorState):
             raise ValueError("state must be TranslationalErrorState or None")
+        if (
+            (self.last_sample is None)
+            != (self.last_attitude is None)
+            or (self.last_sample is None) != (self.state is None)
+        ):
+            raise ValueError(
+                "snapshot sample, attitude and state must be absent or present together"
+            )
+        if self.state is not None:
+            if (
+                self.last_sample.sensor_timestamp_ns != self.state.timestamp_ns
+                or self.last_attitude.timestamp_ns != self.state.timestamp_ns
+                or self.last_sample.sequence_number != self.state.imu_sequence_number
+            ):
+                raise ValueError("snapshot sample/attitude/state timestamp or sequence mismatch")
         if type(self.expired) is not bool:
             raise ValueError("expired must be boolean")
+        if self.state is not None and self.expired != (self.state.status == "LOST"):
+            raise ValueError("snapshot expired flag must agree with LOST state")
+        if self.state is None and self.expired:
+            raise ValueError("initial snapshot cannot be expired")
         _i64(
             self.last_position_update_timestamp_ns,
             "last_position_update_timestamp_ns",
