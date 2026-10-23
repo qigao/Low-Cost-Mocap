@@ -372,12 +372,36 @@ class FiducialPipelineReplayTests(unittest.TestCase):
             rtk_sample, rtk_mapping, rtk_cal, rtk_attitude
         )
         self.assertEqual(rtk_update.timestamp_ns, update.timestamp_ns)
-        owner.ingest_position_measurement(rtk_update, max_position_nis=100.0)
-        final_state = owner.ingest_position_measurement(update, max_position_nis=100.0)
+        events.append(LocalizationReplayEvent(
+            event_index=len(events), kind="position",
+            measurement=rtk_update, max_position_nis=100.0,
+        ))
+        events.append(LocalizationReplayEvent(
+            event_index=len(events), kind="position",
+            measurement=update, max_position_nis=100.0,
+        ))
+        events = tuple(events)
+        replay = replay_localization_events(config, events)
+        final_state = replay.states[-1]
         self.assertEqual(final_state.timestamp_ns, camera_mapping.map_timestamp(T0 + 50_000_000))
         self.assertEqual(final_state.last_position_update_timestamp_ns, update.timestamp_ns)
         self.assertEqual(final_state.last_position_measurement_source, "RTK")
         self.assertIsNotNone(final_state.position_world_from_body_m)
+
+        # The image-derived Tag + RTK trace must also survive the strict JSON
+        # loader with the same canonical digests as in-memory replay.
+        document = {
+            "schema_version": 1,
+            "config": asdict(config),
+            "events": [event.to_dict() for event in events],
+        }
+        report = load_replay_document(
+            json.dumps(document, sort_keys=True, allow_nan=False).encode("utf-8")
+        )
+        self.assertEqual(report["config_sha256"], replay.config_sha256)
+        self.assertEqual(report["input_sha256"], replay.input_sha256)
+        self.assertEqual(report["output_sha256"], replay.output_sha256)
+        self.assertFalse(report["hardware_provenance_verified"])
 
     def test_anchor_perturbation_changes_map_revision(self):
         nominal = make_map()
