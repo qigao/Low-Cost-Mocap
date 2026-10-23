@@ -64,7 +64,7 @@ def _build(cls, raw, nested=None, enums=None):
         if name in derived_fields:
             continue
         if name in nested:
-            values[name] = nested[name](value)
+            values[name] = None if value is None else nested[name](value)
         elif name in enums:
             try:
                 values[name] = enums[name](value)
