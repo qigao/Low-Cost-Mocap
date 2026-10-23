@@ -48,8 +48,10 @@ def _build(cls, raw, nested=None, enums=None):
     if not isinstance(raw, dict):
         raise ValueError(f"{cls.__name__} must be a JSON object")
     nested, enums = nested or {}, enums or {}
-    allowed = {f.name for f in fields(cls) if f.init}
-    unknown = set(raw) - allowed
+    all_fields = {f.name for f in fields(cls)}
+    init_fields = {f.name for f in fields(cls) if f.init}
+    derived_fields = all_fields - init_fields
+    unknown = set(raw) - all_fields
     if unknown:
         raise ValueError(f"{cls.__name__} has unknown fields: {sorted(unknown)}")
     required = {f.name for f in fields(cls)
@@ -59,6 +61,8 @@ def _build(cls, raw, nested=None, enums=None):
         raise ValueError(f"{cls.__name__} is missing fields: {sorted(missing)}")
     values = {}
     for name, value in raw.items():
+        if name in derived_fields:
+            continue
         if name in nested:
             values[name] = nested[name](value)
         elif name in enums:
@@ -68,7 +72,11 @@ def _build(cls, raw, nested=None, enums=None):
                 raise ValueError(f"unsupported {cls.__name__}.{name}") from exc
         else:
             values[name] = _freeze(value)
-    return cls(**values)
+    instance = cls(**values)
+    for name in derived_fields & set(raw):
+        if raw[name] != getattr(instance, name):
+            raise ValueError(f"{cls.__name__}.{name} does not match the derived value")
+    return instance
 
 
 def _contract(raw):
