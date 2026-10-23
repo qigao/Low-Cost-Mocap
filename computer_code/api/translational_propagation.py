@@ -27,6 +27,7 @@ from imu_calibration import CorrectedIMUVectors, IMUCalibration
 from imu_contract import ClockMapping
 from localization_contract import LocalizationQuality, MapPoseObservation
 from localization_imu_fusion import LocalizationIMUAttitudeState
+from position_measurement import MetricPositionMeasurement, PositionMeasurementSource
 
 
 _MAX_I64 = (1 << 63) - 1
@@ -254,6 +255,10 @@ class TranslationalPropagationState:
     source: str
     last_position_update_timestamp_ns: int
     position_age_ns: int
+    last_position_measurement_source: str
+    last_position_source_sequence_number: int
+    last_position_source_revision_sha256: str
+    last_position_calibration_sha256: str
     localization_source_revision_sha256: str
     localization_calibration_sha256: str
     imu_calibration_sha256: str
@@ -268,12 +273,18 @@ class TranslationalPropagationState:
             "imu_sequence_number",
             "last_position_update_timestamp_ns",
             "position_age_ns",
+            "last_position_source_sequence_number",
         ):
             _i64(getattr(self, name), name)
         if self.last_position_update_timestamp_ns > self.timestamp_ns:
             raise ValueError("last position update cannot be newer than state timestamp")
         if self.position_age_ns != self.timestamp_ns - self.last_position_update_timestamp_ns:
             raise ValueError("position_age_ns is inconsistent with timestamps")
+        if self.last_position_measurement_source not in {
+            PositionMeasurementSource.LOCALIZATION.value,
+            PositionMeasurementSource.RTK.value,
+        }:
+            raise ValueError("invalid last_position_measurement_source")
         object.__setattr__(
             self,
             "residual_accel_bias_body_m_s2",
@@ -293,7 +304,7 @@ class TranslationalPropagationState:
         )
         if self.status not in {"TRACKING", "DEGRADED", "LOST"}:
             raise ValueError("invalid translational propagation status")
-        if self.source not in {"POSITION_SEEDED", "IMU_PROPAGATED", "LOST"}:
+        if self.source not in {"POSITION_SEEDED", "POSITION_CORRECTED", "IMU_PROPAGATED", "LOST"}:
             raise ValueError("invalid translational propagation source")
         if self.status == "LOST":
             if (
@@ -333,6 +344,8 @@ class TranslationalPropagationState:
                 _vec3(self.velocity_variance_m2_s2, "velocity_variance_m2_s2", nonnegative=True),
             )
         for name in (
+            "last_position_source_revision_sha256",
+            "last_position_calibration_sha256",
             "localization_source_revision_sha256",
             "localization_calibration_sha256",
             "imu_calibration_sha256",
@@ -408,6 +421,13 @@ class BoundedIMUTranslationPropagator:
         self._last_attitude: LocalizationIMUAttitudeState | None = None
         self._state: TranslationalPropagationState | None = None
         self._expired = False
+        self._last_position_update_timestamp_ns = seed.timestamp_ns
+        self._last_position_sequences = {
+            PositionMeasurementSource.LOCALIZATION: seed.source_sequence_number
+        }
+        self._last_position_measurement_source = PositionMeasurementSource.LOCALIZATION
+        self._last_position_source_revision_sha256 = seed.localization_source_revision_sha256
+        self._last_position_calibration_sha256 = seed.localization_calibration_sha256
 
     @property
     def state(self) -> TranslationalPropagationState | None:
@@ -501,7 +521,7 @@ class BoundedIMUTranslationPropagator:
         status: str,
         source: str,
     ) -> TranslationalPropagationState:
-        age = timestamp_ns - self.seed.timestamp_ns
+        age = timestamp_ns - self._last_position_update_timestamp_ns
         visible = status != "LOST"
         state = TranslationalPropagationState(
             body_id=self.seed.body_id,
@@ -528,8 +548,14 @@ class BoundedIMUTranslationPropagator:
             ),
             status=status,
             source=source,
-            last_position_update_timestamp_ns=self.seed.timestamp_ns,
+            last_position_update_timestamp_ns=self._last_position_update_timestamp_ns,
             position_age_ns=age,
+            last_position_measurement_source=self._last_position_measurement_source.value,
+            last_position_source_sequence_number=self._last_position_sequences[
+                self._last_position_measurement_source
+            ],
+            last_position_source_revision_sha256=self._last_position_source_revision_sha256,
+            last_position_calibration_sha256=self._last_position_calibration_sha256,
             localization_source_revision_sha256=self.seed.localization_source_revision_sha256,
             localization_calibration_sha256=self.seed.localization_calibration_sha256,
             imu_calibration_sha256=self.calibration.calibration_sha256,
@@ -538,6 +564,119 @@ class BoundedIMUTranslationPropagator:
         )
         self._state = state
         return state
+
+    def ingest_position_measurement(
+        self,
+        measurement: MetricPositionMeasurement,
+        *,
+        max_position_nis: float = 16.0,
+    ) -> TranslationalPropagationState:
+        """Correct the current position only with a diagonal uncertainty update.
+
+        This first update deliberately leaves velocity and residual accel bias
+        unchanged because the propagation state does not yet carry their
+        cross-covariance with position. An out-of-sequence measurement is
+        rejected rather than rewinding the filter.
+        """
+        if self._expired:
+            raise ValueError(
+                "translation propagation expired; explicit full-state reseed required"
+            )
+        if not isinstance(measurement, MetricPositionMeasurement):
+            raise ValueError("measurement must be MetricPositionMeasurement")
+        if self._state is None or self._state.status == "LOST":
+            raise ValueError("position correction requires a current translation state")
+        if measurement.body_id != self.seed.body_id:
+            raise ValueError("position measurement body does not match translation state")
+        if measurement.map_frame_id != self.seed.map_frame_id:
+            raise ValueError("position measurement map frame does not match translation state")
+        if measurement.clock_domain != self.seed.clock_domain:
+            raise ValueError("position measurement clock does not match translation state")
+        if measurement.clock_mapping_sha256 != self.seed.clock_mapping_sha256:
+            raise ValueError("position measurement clock mapping revision mismatch")
+        if measurement.timestamp_ns != self._state.timestamp_ns:
+            raise ValueError(
+                "position measurement must align exactly with current translation timestamp"
+            )
+        if measurement.source is PositionMeasurementSource.LOCALIZATION:
+            if (
+                measurement.source_revision_sha256
+                != self.seed.localization_source_revision_sha256
+            ):
+                raise ValueError("localization position source revision mismatch")
+            if (
+                measurement.measurement_calibration_sha256
+                != self.seed.localization_calibration_sha256
+            ):
+                raise ValueError("localization position calibration mismatch")
+
+        last_sequence = self._last_position_sequences.get(measurement.source)
+        if (
+            last_sequence is not None
+            and measurement.source_sequence_number <= last_sequence
+        ):
+            raise ValueError("position measurement sequence is duplicate or out of order")
+
+        nis_limit = _real(max_position_nis, "max_position_nis", minimum=0.0)
+        if nis_limit <= 0.0:
+            raise ValueError("max_position_nis must be positive")
+
+        measured = np.asarray(
+            measurement.position_world_from_body_m, dtype=np.float64
+        )
+        measurement_var = np.square(
+            np.asarray(measurement.position_stddev_m, dtype=np.float64)
+        )
+        innovation = measured - self._position
+        innovation_var = self._position_var + measurement_var
+        if (
+            not np.isfinite(innovation).all()
+            or not np.isfinite(innovation_var).all()
+            or np.any(innovation_var <= 0.0)
+        ):
+            raise ValueError("position innovation is non-finite or singular")
+        nis = float(np.sum(np.square(innovation) / innovation_var))
+        if not math.isfinite(nis) or nis > nis_limit:
+            raise ValueError("position innovation exceeds configured NIS limit")
+
+        gain = self._position_var / innovation_var
+        candidate_position = self._position + gain * innovation
+        # Diagonal Joseph-equivalent scalar update P*R/(P+R).
+        candidate_position_var = (
+            self._position_var * measurement_var / innovation_var
+        )
+        if not (
+            np.isfinite(candidate_position).all()
+            and np.isfinite(candidate_position_var).all()
+            and np.all(candidate_position_var >= 0.0)
+        ):
+            raise ValueError("position correction produced invalid state")
+
+        # Commit only after the full measurement validates.
+        self._position = candidate_position
+        self._position_var = candidate_position_var
+        self._last_position_update_timestamp_ns = measurement.timestamp_ns
+        self._last_position_sequences[measurement.source] = (
+            measurement.source_sequence_number
+        )
+        self._last_position_measurement_source = measurement.source
+        self._last_position_source_revision_sha256 = (
+            measurement.source_revision_sha256
+        )
+        self._last_position_calibration_sha256 = (
+            measurement.measurement_calibration_sha256
+        )
+        status = (
+            "TRACKING"
+            if measurement.quality is LocalizationQuality.TRACKING
+            else "DEGRADED"
+        )
+        return self._publish(
+            timestamp_ns=self._state.timestamp_ns,
+            sequence_number=self._state.imu_sequence_number,
+            status=status,
+            source="POSITION_CORRECTED",
+        )
 
     def advance(
         self,
@@ -656,7 +795,10 @@ class BoundedIMUTranslationPropagator:
         self._last_sample = sample
         self._last_attitude = attitude
 
-        age = sample.sensor_timestamp_ns - self.seed.timestamp_ns
+        age = (
+            sample.sensor_timestamp_ns
+            - self._last_position_update_timestamp_ns
+        )
         if age > self.max_dead_reckoning:
             self._expired = True
             return self._publish(
