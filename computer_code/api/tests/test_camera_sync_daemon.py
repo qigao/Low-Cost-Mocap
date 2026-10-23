@@ -42,12 +42,13 @@ def envelope(camera_id, serial, counter, trigger, timestamp, payload=None):
 
 
 class FakeCamera:
-    def __init__(self, serial, frames, *, reported_serial=None, supports_trigger=True, fail_arm=False):
+    def __init__(self, serial, frames, *, reported_serial=None, supports_trigger=True, fail_arm=False, fail_close_once=False):
         self.serial = serial
         self.reported_serial = reported_serial or serial
         self.frames = list(frames)
         self.supports_trigger = supports_trigger
         self.fail_arm = fail_arm
+        self.fail_close_once = fail_close_once
         self.opened = False
         self.configured = False
         self.armed = False
@@ -89,6 +90,9 @@ class FakeCamera:
         self.armed = False
 
     def close(self):
+        if self.fail_close_once:
+            self.fail_close_once = False
+            raise RuntimeError("fake close failure")
         self.closed = True
         self.opened = False
 
@@ -180,6 +184,22 @@ class CameraSyncDaemonTests(unittest.TestCase):
         self.assertTrue(all(camera.closed for camera in cameras.values()))
         self.assertTrue(trigger.closed)
         self.assertFalse(trigger.armed)
+
+    def test_reset_fault_retries_resources_whose_close_failed(self):
+        profiles = (profile(2, "CAM-02"), profile(5, "CAM-05"))
+        cameras = {
+            2: FakeCamera("CAM-02", [], fail_close_once=True),
+            5: FakeCamera("CAM-05", [], fail_arm=True),
+        }
+        trigger = FakeTrigger()
+        daemon = CameraSyncDaemon(profiles, cameras, trigger)
+        with self.assertRaisesRegex(CameraSyncFault, "fake arm failure"):
+            daemon.start()
+        self.assertEqual(daemon.state, CameraSyncState.FAULT)
+        self.assertFalse(cameras[2].closed)
+        daemon.reset_fault()
+        self.assertEqual(daemon.state, CameraSyncState.STOPPED)
+        self.assertTrue(all(camera.closed for camera in cameras.values()))
 
     def test_trigger_mismatch_fails_closed_without_emitting_partial_batch(self):
         daemon, cameras, trigger = self.make_daemon(
