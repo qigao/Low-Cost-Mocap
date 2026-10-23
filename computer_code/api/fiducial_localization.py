@@ -366,6 +366,7 @@ def map_body_observation_from_fiducials(
         tracked_frame_id=extrinsic.body_frame_id,
         map_frame_id=tag_map.map_frame_id,
         timestamp_ns=camera_pose.exposure_timestamp_ns,
+        source_sequence_number=camera_pose.frame_id,
         clock_domain=camera_pose.clock_domain,
         position_xyz=tuple(float(value) for value in translation_map_from_body),
         position_unit="meters",
