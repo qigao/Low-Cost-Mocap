@@ -11,11 +11,9 @@ from fiducial_multitag_pose import solve_multi_tag_camera_pose
 from fiducial_pose import solve_single_tag_pose
 from localization_contract import LocalizationQuality
 from outdoor_sensor_contract import RTKSolutionStatus
-from position_measurement import position_measurement_from_localization
 from rtk_coordinates import enu_to_ecef
 from rtk_position_measurement import position_measurement_from_rtk
 from test_fiducial_pipeline_replay import (
-    T0 as IMAGE_T0,
     camera_calibration,
     localize_frame,
     make_map,
