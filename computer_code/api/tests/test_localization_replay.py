@@ -1,11 +1,13 @@
+import json
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 from localization_replay import (
     LocalizationReplayConfig,
     LocalizationReplayEvent,
     replay_localization_events,
 )
+from localization_replay_cli import load_replay_document
 from position_measurement import position_measurement_from_localization
 from rtk_position_measurement import (
     position_measurement_from_rtk,
@@ -107,6 +109,35 @@ class LocalizationReplayTests(unittest.TestCase):
             first.states[-1].last_position_update_timestamp_ns,
             tag_update.timestamp_ns,
         )
+
+    def test_json_file_loader_replays_the_same_typed_trace(self):
+        config, imu_events, tag_update, rtk_update = replay_fixture()
+        events = tuple(imu_events + [
+            LocalizationReplayEvent(6, "position", measurement=rtk_update, max_position_nis=100.0),
+            LocalizationReplayEvent(7, "position", measurement=tag_update, max_position_nis=100.0),
+        ])
+        direct = replay_localization_events(config, events)
+        document = {
+            "schema_version": 1,
+            "config": asdict(config),
+            "events": [event.to_dict() for event in events],
+        }
+        report = load_replay_document(
+            json.dumps(document, sort_keys=True, allow_nan=False).encode("utf-8")
+        )
+        self.assertEqual(report["config_sha256"], direct.config_sha256)
+        self.assertEqual(report["input_sha256"], direct.input_sha256)
+        self.assertEqual(report["output_sha256"], direct.output_sha256)
+        self.assertEqual(report["event_count"], len(events))
+        self.assertFalse(report["hardware_provenance_verified"])
+
+    def test_json_loader_rejects_duplicate_keys_unknown_root_and_nonfinite(self):
+        with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+            load_replay_document(b'{"schema_version":1,"schema_version":1,"config":{},"events":[]}')
+        with self.assertRaisesRegex(ValueError, "only schema_version"):
+            load_replay_document(b'{"schema_version":1,"config":{},"events":[],"hardware_verified":true}')
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            load_replay_document(b'{"schema_version":NaN,"config":{},"events":[]}')
 
     def test_same_epoch_tag_rtk_arrival_order_does_not_change_final_state(self):
         config, imu_events, tag_update, rtk_update = replay_fixture()
