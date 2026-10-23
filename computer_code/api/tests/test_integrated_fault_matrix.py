@@ -4,12 +4,21 @@ import json
 import unittest
 from dataclasses import replace
 
+from fiducial_multitag_pose import solve_multi_tag_camera_pose
+from fiducial_pose import solve_single_tag_pose
 from localization_contract import LocalizationQuality
 from outdoor_sensor_contract import RTKSolutionStatus
 from position_measurement import position_measurement_from_localization
 from rtk_coordinates import enu_to_ecef
 from rtk_position_measurement import position_measurement_from_rtk
-from test_fiducial_pipeline_replay import localize_frame, make_map
+from test_fiducial_pipeline_replay import (
+    T0 as IMAGE_T0,
+    camera_calibration,
+    localize_frame,
+    make_map,
+    render_observation,
+)
+from test_localization_imu_fusion import observation as attitude_observation, setup_pipeline
 from test_outdoor_localization_replay import (
     T0,
     attitude_at,
@@ -44,7 +53,33 @@ class IntegratedLocalizationFaultMatrixTests(unittest.TestCase):
         self.assertNotEqual(active_map.revision_sha256, moved_map.revision_sha256)
         with self.assertRaisesRegex(ValueError, "map revision"):
             localize_frame(active_map, map_override=moved_map)
-        matrix.append(("stale_map_revision_and_anchor_perturbation", "rejected"))
+
+        # Survey-bias experiment: image corners are generated from the true
+        # map, but the solver is supplied a consistently shifted surveyed map.
+        # The map digest is internally consistent, so this is a bias experiment,
+        # not a stale-revision rejection test.
+        biased_map = make_map(global_offset=(0.01, 0.0, 0.0))
+        camera_position = __import__("numpy").asarray((0.3, 0.25, 1.4))
+        rotation_map_from_camera = __import__("scipy").spatial.transform.Rotation.from_euler(
+            "x", 180.0, degrees=True
+        ).as_matrix()
+        calibration = camera_calibration()
+        biased_measurements = []
+        for anchor in active_map.tags[:3]:
+            raw = render_observation(
+                anchor, biased_map, camera_position, rotation_map_from_camera
+            )
+            biased_measurements.append(
+                solve_single_tag_pose(raw, biased_map, calibration, ambiguity_rms_tolerance_px=0.05)
+            )
+        biased_pose = solve_multi_tag_camera_pose(biased_measurements, biased_map)
+        self.assertAlmostEqual(
+            biased_pose.position_map_from_camera_m[0] - 0.3,
+            0.01,
+            delta=0.002,
+        )
+        matrix.append(("stale_map_revision", "rejected"))
+        matrix.append(("global_anchor_survey_bias_10mm", "10mm_global_pose_bias_detected"))
 
         # Verify a declared 5 ppm camera clock drift remains mapped to the
         # estimator clock by its versioned mapping rather than host arrival time.
@@ -150,6 +185,25 @@ class IntegratedLocalizationFaultMatrixTests(unittest.TestCase):
         self.assertIsNotNone(recovered.position_world_from_body_m)
         matrix.append(("prolonged_loss_and_delayed_RTK_recovery", "recovered_at_acquisition_epoch"))
 
+        # Visual/IMU attitude path independently verifies that LOST is sticky
+        # until an explicit localization reseed is authorized.
+        fusion, attitude_states = setup_pipeline(dropout=15_000_000)
+        fusion.ingest_imu(attitude_states[0])
+        fusion.ingest_imu(attitude_states[1])
+        fusion.ingest_localization(attitude_observation(1_010_000_000, 10))
+        fusion.ingest_imu(attitude_states[2])
+        fusion.ingest_imu(attitude_states[3])
+        attitude_lost = fusion.ingest_imu(attitude_states[4])
+        self.assertEqual(attitude_lost.status, "LOST")
+        with self.assertRaisesRegex(ValueError, "explicit reseed"):
+            fusion.ingest_localization(attitude_observation(1_040_000_000, 11))
+        attitude_recovered = fusion.ingest_localization(
+            attitude_observation(1_040_000_000, 11),
+            allow_reseed_after_lost=True,
+        )
+        self.assertEqual(attitude_recovered.status, "TRACKING")
+        matrix.append(("visual_reacquisition_after_LOST", "explicit_reseed_required"))
+
         report = {
             "schema_version": 1,
             "qualification": "synthetic_software_fault_matrix_only",
@@ -163,7 +217,7 @@ class IntegratedLocalizationFaultMatrixTests(unittest.TestCase):
             report, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
         report["report_sha256"] = hashlib.sha256(canonical).hexdigest()
-        self.assertEqual(report["scenario_count"], 8)
+        self.assertEqual(report["scenario_count"], 10)
         self.assertFalse(report["hardware_provenance_verified"])
         self.assertEqual(
             [item["id"] for item in report["scenarios"]],
@@ -171,11 +225,13 @@ class IntegratedLocalizationFaultMatrixTests(unittest.TestCase):
                 "nominal_image_to_pose",
                 "deterministic_corner_noise",
                 "unknown_tag_id",
-                "stale_map_revision_and_anchor_perturbation",
+                "stale_map_revision",
+                "global_anchor_survey_bias_10mm",
                 "clock_offset_and_5ppm_drift",
                 "RTK_FIXED_to_FLOAT",
                 "IMU_gap",
                 "prolonged_loss_and_delayed_RTK_recovery",
+                "visual_reacquisition_after_LOST",
             ],
         )
 
