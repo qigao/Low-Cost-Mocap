@@ -83,9 +83,9 @@ For each physical camera, record:
 
 ### Trigger strategy
 
-**Preferred:** distribute one physical hardware trigger to all cameras and the LED controller, with frame/trigger counters and sensor-exposure timestamps recorded by the camera adapter.
+**Preferred:** distribute one physical hardware trigger to all cameras and the LED controller, with frame/trigger counters and sensor-exposure timestamps recorded by the camera adapter. If timestamps come from separate camera clocks, require PTP lock or a validated clock-mapping/common-clock mechanism before comparing timestamps; the physical trigger and clock alignment solve different problems.
 
-**Alternative where supported:** PTP-scheduled hardware actions with measured clock state and a validated relationship between the scheduled action and sensor exposure.
+**Alternative where supported:** PTP-scheduled hardware actions with measured clock state and a validated relationship between the scheduled action and sensor exposure. PTP may also align timestamp clocks while a separate external trigger drives the exposure.
 
 PTP lock means clocks are synchronized; it does not by itself prove that sensor exposures began simultaneously. A GigE packet arrival timestamp is not an exposure timestamp. GNSS 1PPS can discipline a timing generator, but a qualified divider/trigger device must generate the actual camera-rate pulses. Do not create frame IDs by counting Python polls or packets received.
 
