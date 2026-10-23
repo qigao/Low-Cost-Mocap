@@ -53,7 +53,7 @@ For a moving camera observing fixed tags:
 
 1. Resolve the tag observation against the active map revision.
 2. Estimate camera pose in the map frame from the known tag pose and camera-from-tag measurement.
-3. Convert camera pose to body pose using a calibrated camera-to-body extrinsic.
+3. Convert camera pose to body pose using `computer_code/api/fiducial_localization.py`. `CameraBodyExtrinsic` explicitly defines body-from-camera mounting; `FiducialUncertaintyModel` is a versioned software model that combines declared base solve uncertainty, anchor-map uncertainty and multi-tag pose residuals. The final `MapPoseObservation.calibration_sha256` hashes the camera calibration revision, camera/body extrinsic revision and uncertainty-model revision together. A two-tag or high-residual accepted consensus is reported as DEGRADED rather than silently promoted to TRACKING. Calibrated indoor maps use `calibrated_tag_map` as the explicit metric-scale reference; fully surveyed inlier anchors use `surveyed_tags`.
 4. Fuse timestamp-aligned visual pose with IMU propagation and, outdoors, RTK position after converting WGS-84 coordinates into the configured local ENU frame.
 5. Apply the calibrated GNSS antenna-to-body lever arm using the estimated orientation.
 6. Gate innovations by covariance and source quality. RTK FIXED does not mean perfect; FLOAT/invalid/stale corrections must lower or remove the global-position update. A tag relocalization that conflicts with RTK must be diagnosed, not silently averaged.
