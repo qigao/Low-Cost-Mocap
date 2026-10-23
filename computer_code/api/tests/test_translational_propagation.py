@@ -183,6 +183,8 @@ class TranslationSeedTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "qualified metric"):
             seed(observation=unscaled)
+        with self.assertRaisesRegex(ValueError, "TRACKING localization"):
+            seed(observation=localization_pose(quality=LocalizationQuality.DEGRADED))
         bad_mapping = fit_clock_mapping(
             [
                 ClockAnchor(1_000_000_000, 1_000_001_000, event_id="a"),
