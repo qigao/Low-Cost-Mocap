@@ -30,7 +30,7 @@ def replay_fixture():
     camera_clock = clock_mapping("camera-clock")
     rtk_clock = clock_mapping("rtk-clock")
     calibration = imu_calibration()
-    rtk_cal = rtk_calibration()
+    rtk_cal = replace(rtk_calibration(), map_frame_id="site-map")
     seed = translational_seed_from_localization(
         tag_pose(),
         camera_clock,
