@@ -24,7 +24,8 @@ class ClockAlignedRTKSample:
             raise ValueError("mapped_timestamp_ns must be a nonnegative integer")
         if not isinstance(self.target_clock_domain, str) or not self.target_clock_domain.strip():
             raise ValueError("target_clock_domain must be nonempty")
-        if self.target_clock_domain.strip() == self.sample.clock_domain:
+        target_domain = self.target_clock_domain.strip()
+        if target_domain == self.sample.clock_domain:
             raise ValueError("aligned target clock must differ from source clock")
         if (
             not isinstance(self.clock_mapping_sha256, str)
@@ -34,7 +35,7 @@ class ClockAlignedRTKSample:
             raise ValueError("clock_mapping_sha256 must be lowercase SHA-256")
         if self.hardware_time_alignment_verified is not False:
             raise ValueError("hardware time alignment cannot be asserted by software mapping alone")
-        object.__setattr__(self, "target_clock_domain", self.target_clock_domain.strip())
+        object.__setattr__(self, "target_clock_domain", target_domain)
 
 
 def align_rtk_sample_to_camera_clock(
