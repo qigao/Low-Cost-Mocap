@@ -464,7 +464,7 @@ class DelayedPositionReplayTests(unittest.TestCase):
         self.assertEqual(owner.state, before)
 
     def test_same_timestamp_localization_and_rtk_have_canonical_arrival_independent_order(self):
-        timestamp = T0 + 20_000_000
+        timestamp = T0 + 25_000_000
         localization = localization_measurement(
             timestamp, 11, position=(1.0001, 2.0, 3.0)
         )
@@ -633,6 +633,21 @@ class DelayedPositionReplayTests(unittest.TestCase):
                 attitude(ref_calibration, timestamp),
             )
         assert_state_close(self, actual, reference.state)
+
+    def test_interior_replay_survives_pruning_of_left_endpoint(self):
+        owner, calibration = self.build_wrapper()
+        self.ingest_frames(owner, calibration, 40)
+        self.assertIsNotNone(owner._base_snapshot.last_sample)
+        left_timestamp = owner._base_snapshot.last_sample.sensor_timestamp_ns
+        first_timestamp = owner.retained_timestamp_range_ns[0]
+        self.assertLess(left_timestamp, first_timestamp)
+        timestamp = left_timestamp + (first_timestamp - left_timestamp) // 2
+        accepted = owner.ingest_position_measurement(
+            localization_measurement(timestamp, 11),
+            max_position_nis=100.0,
+        )
+        self.assertEqual(accepted.timestamp_ns, T0 + 390_000_000)
+        self.assertEqual(accepted.last_position_update_timestamp_ns, timestamp)
 
     def test_position_timestamp_inside_retained_interval_is_accepted(self):
         owner, calibration = self.build_wrapper()
