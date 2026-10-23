@@ -54,6 +54,7 @@ class OpticalAttitudeMeasurement:
     pattern_sha256: str
     calibration_sha256: str
     quality: str = "MEASURED"
+    attitude_variance_rad2: float | None = None
     def __post_init__(self):
         object.__setattr__(self,"body_id",_s(self.body_id,"body_id"))
         object.__setattr__(self,"timestamp_ns",_t(self.timestamp_ns,"timestamp"))
@@ -62,6 +63,10 @@ class OpticalAttitudeMeasurement:
         object.__setattr__(self,"frame_id",_t(self.frame_id,"frame_id"))
         _h(self.pattern_sha256,"pattern digest"); _h(self.calibration_sha256,"calibration digest")
         if self.quality!="MEASURED": raise ValueError("optical measurement must be current MEASURED data")
+        if self.attitude_variance_rad2 is not None:
+            variance=_f(self.attitude_variance_rad2,"attitude variance")
+            if variance<=0: raise ValueError("attitude variance must be positive")
+            object.__setattr__(self,"attitude_variance_rad2",variance)
 
 def optical_measurement_from_pose_frame(frame, *, body_id, expected_pattern_sha256, expected_calibration_sha256):
     """Extract only a current PoseStream v1 measured pose; reject stale/invalid records."""
@@ -194,6 +199,7 @@ class OpticalIMUAttitudeFusion:
         if m.pattern_sha256!=self.pattern or m.calibration_sha256!=self.optcal: raise ValueError("optical identity/calibration mismatch")
         if m.clock_domain!=self.mapping.source_clock_domain: raise ValueError("optical clock mapping source mismatch")
         t=self.mapping.map_timestamp(m.timestamp_ns)
+        measurement_variance=self.r if m.attitude_variance_rad2 is None else m.attitude_variance_rad2
         if not self.history: raise ValueError("IMU history not initialized")
         if self.last_optical is not None and (t<=self.last_optical or m.frame_id<=self.last_frame): raise ValueError("optical measurement is duplicate/out of order")
         h=list(self.history); times=[x.sensor_timestamp_ns for x in h]
@@ -205,13 +211,13 @@ class OpticalIMUAttitudeFusion:
         cur=h[-1]; after=_mul(_inv(q_at),cur.orientation_world_from_body_xyzw); dt=(cur.sensor_timestamp_ns-t)/1e9
         if self.q is None:
             if self.expired and not allow_reseed_after_lost: raise ValueError("explicit reseed required after optical dropout expiry")
-            q_at_fused=m.quaternion_world_from_body_xyzw; p_at=self.r
+            q_at_fused=m.quaternion_world_from_body_xyzw; p_at=measurement_variance
         else:
             back=_mul(_inv(after),self.q); p_at=max(1e-12,self.p-max(self.noise)**2*dt)
             err=_log(_mul(_inv(back),m.quaternion_world_from_body_xyzw)); angle=math.sqrt(sum(x*x for x in err))
             if angle>self.innovation: raise ValueError("optical attitude innovation exceeds limit")
             uncertainty=(self.mapping.observed_max_residual_ns+bracket/2)/1e9
-            r_eff=self.r+(self.max_alignment_rate*uncertainty)**2
+            r_eff=measurement_variance+(self.max_alignment_rate*uncertainty)**2
             gain=p_at/(p_at+r_eff)
             q_at_fused=_q(_mul(back,_exp(tuple(gain*x for x in err))))
             p_at=(1-gain)*p_at
