@@ -16,7 +16,7 @@ The initial implementation remains a **moving camera observing fixed environment
 
 The tag-map profiles above are anchor maps, not a requirement to cover every square metre with printed tags. The preferred extension is visual-inertial SLAM with optional sparse fiducial anchors:
 
-SLAM pose observations carry an explicit position unit (`meters` or `map_units`). Do not label an arbitrary-scale monocular map as metres. `MapAlignment` records the local-to-world similarity transform and must declare an independent scale reference before the aligned map is treated as metric.
+SLAM pose observations carry an explicit position unit (`meters` or `map_units`). Do not label an arbitrary-scale monocular map as metres. A pose labelled `meters` must carry `metric_scale_qualified=true` plus a non-`none` independent `scale_reference`; arbitrary-scale poses use `map_units`, `metric_scale_qualified=false` and `scale_reference=none`. `MapAlignment` records the local-to-world similarity transform, but `scale_m_per_source_unit` remains `None` until independently qualified—using `1.0` as an unknown-scale placeholder is forbidden. `LOST` and `INVALID` are pose-free `LocalizationStatus` transitions; they must never carry the last pose forward as if it were a current measurement.
 
 - **Indoor:** visual SLAM/VIO tracks natural visual features and IMU motion between anchors. Standardized Tags at entrances, corridor junctions, repetitive/texture-poor areas and relocalization points constrain map drift and provide repeatable map-frame references. Monocular-only SLAM may have unknown metric scale; stereo, depth, a calibrated baseline or independently surveyed anchors must qualify scale before metric RTK/tag fusion.
 - **Outdoor:** visual-inertial odometry/SLAM supplies local motion and map continuity; RTK supplies global position when its solution and correction age pass quality gates; sparse surveyed Tags at selected waypoints provide local pose/map corrections and checks. Under sunlight, low texture, motion blur, foliage or occlusion, SLAM quality can degrade, so the estimator must propagate uncertainty and report DEGRADED/LOST rather than assume the map remains accurate.
@@ -25,6 +25,12 @@ SLAM pose observations carry an explicit position unit (`meters` or `map_units`)
 - **No tag carpet:** add Tags where they improve observability, map alignment or recovery. Do not infer that sparse Tags can guarantee localization through arbitrary textureless/featureless corridors or long outdoor stretches; the bounded unanchored travel distance must be measured for each sensor and environment.
 
 ## Map and observation contracts
+
+The provider-neutral localization module is `computer_code/api/localization_contract.py`.
+
+- `MapPoseObservation` carries only a current usable TRACKING/DEGRADED pose, explicit topology/frame/time/revisions, uncertainty, and fail-closed metric-scale qualification.
+- `LocalizationStatus` carries pose-free TRACKING/DEGRADED/LOST/INVALID state transitions and an optional last-pose timestamp for diagnostics; it has no position/quaternion fields.
+- `MapAlignment` carries local-to-world similarity alignment. Its numeric scale is absent until an independent scale reference qualifies it.
 
 The new provider-neutral module is `computer_code/api/fiducial_contract.py`.
 
