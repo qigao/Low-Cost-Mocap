@@ -15,6 +15,7 @@ and nonzero IMU lever-arm acceleration is not yet modeled.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 import json
