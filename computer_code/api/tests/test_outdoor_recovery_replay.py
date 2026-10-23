@@ -31,9 +31,9 @@ class OutdoorRecoveryReplayTests(unittest.TestCase):
         # current state has expired. Replay must insert it at acquisition time,
         # not arrival time, and propagate through the retained frames again.
         recovered_epoch = T0 + 95_000_000
-        floating_template = rtk_sample()
+        rtk_template = rtk_sample()
         fixed_delayed = replace(
-            floating_template,
+            rtk_template,
             sequence_number=8,
             solution_timestamp_ns=recovered_epoch,
             status=RTKSolutionStatus.FIXED,
