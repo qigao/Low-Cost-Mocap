@@ -182,3 +182,10 @@ This plan does not switch production camera capture, enable live flight, impleme
 - Hicks et al., *Sensor Fusion for Enhancing Motion Capture: Integrating Optical and Inertial Motion Capture Systems* (2025): https://pmc.ncbi.nlm.nih.gov/articles/PMC12349364/
 - OptiTrack Motive IMU sensor fusion documentation: https://docs.optitrack.com/v3.2/motive/imu-sensor-fusion
 - *Fusion of unsynchronized optical tracker and inertial sensor in EKF*: https://www.dfki.de/fileadmin/user_upload/import/9141_UnsynchronizedVisualInertial.pdf
+
+
+## 8. Outdoor RTK + active-NIR extension
+
+The indoor Outside-In optical pipeline remains the baseline. An outdoor profile may add RTK GNSS as a global-position observation and active NIR as the optical marker channel, with optional IMU propagation. The proposed operating modes, wired camera-sync daemon, sensor timestamp requirements, RTK lever-arm handling, sunlight/optical constraints and hardware acceptance plan are specified in [Outdoor RTK + Active-NIR Architecture](OUTDOOR_RTK_NIR_ARCHITECTURE.md) and tracked by [issue #74](https://github.com/qigao/Low-Cost-Mocap/issues/74).
+
+The provider-neutral contract in `computer_code/api/outdoor_sensor_contract.py` validates camera-frame metadata, synchronized batches and RTK solution status. It does not include a vendor camera SDK or claim that PTP state proves physical exposure alignment. HW-01 remains open until an independent trigger/exposure reference and real hardware recording qualify the adapter. A single RTK antenna is only a position observation; orientation must come from optical geometry, a qualified IMU fusion path or a separately qualified multi-antenna heading solution.

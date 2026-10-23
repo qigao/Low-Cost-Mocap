@@ -5,6 +5,8 @@
 The repository originated as an indoor multi-drone mocap project. Its target architecture is now a reusable Outside-In motion-capture engine: optical measurement, time alignment, state estimation and quality-qualified pose output are core capabilities; drone control is a separate downstream consumer.
 
 - [General optical–IMU architecture and implementation roadmap](docs/GENERAL_MOCAP_ARCHITECTURE.md)
+- [Outdoor RTK + active-NIR architecture and camera-sync daemon contract](docs/OUTDOOR_RTK_NIR_ARCHITECTURE.md)
+- [Outdoor implementation and hardware qualification tracking](https://github.com/qigao/Low-Cost-Mocap/issues/74)
 - [Typed IMU sample and clock mapping contract](computer_code/api/imu_contract.py)
 - [IMU-to-body calibration contract](computer_code/api/imu_calibration.py)
 - [Architecture epic / acceptance tasks](https://github.com/qigao/Low-Cost-Mocap/issues/33)
