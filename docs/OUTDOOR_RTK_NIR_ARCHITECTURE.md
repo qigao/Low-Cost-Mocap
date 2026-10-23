@@ -102,7 +102,7 @@ These contracts do **not** implement a vendor camera SDK or prove hardware timin
 ## 5. RTK-to-optical coordinate integration
 
 1. Preserve GNSS solution status: FIXED, FLOAT, DGNSS, SINGLE or INVALID. Do not collapse these into a generic `valid=true`.
-2. Carry the receiver solution epoch and clock domain separately from host receive time.
+2. Carry the receiver solution epoch and clock domain separately from host receive time. Use `computer_code/api/rtk_clock_alignment.py` to map the RTK solution epoch into the camera/trigger clock only through an explicit affine `ClockMapping` fitted from paired external synchronization anchors. The mapped record preserves the source sample, target domain and mapping SHA-256; it always leaves `hardware_time_alignment_verified=false` because software cannot authenticate the anchor source.
 3. Convert the documented WGS-84 ECEF position to the surveyed ENU/world frame with the helpers in `computer_code/api/rtk_coordinates.py`; ENU axis order is East, North, Up.
 4. Calibrate the lever arm from the rigid-body origin to the GNSS antenna phase center in body coordinates. Given body-to-world rotation `R_enu_from_body`, recover the body origin as `p_body_enu = p_antenna_enu - R_enu_from_body * r_antenna_body`. Position of the antenna is not position of the body origin.
 5. Treat reported horizontal/vertical accuracy, correction age and satellite count as inputs to predeclared gates; a FIXED flag alone is insufficient.
