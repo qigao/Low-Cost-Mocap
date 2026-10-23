@@ -45,7 +45,9 @@ Outdoor anchor maps require surveyed tag poses. Indoor maps may use surveyed or 
 
 ## Estimation and fusion
 
-For a detected tag, estimate camera-from-tag from its known physical size, ordered corners, and calibrated camera intrinsics. Combine multiple visible tags using robust reprojection-error gating. Reject planar-pose ambiguities and poor geometry using multi-frame consistency, viewing angle, tag pixel area, and covariance; never trust one detector's pose without checks.
+For a detected tag, estimate camera-from-tag from its known physical size, ordered corners, and calibrated camera intrinsics. The single-tag solver is `computer_code/api/fiducial_pose.py`: tag coordinates are right-handed (+X right, +Y up, +Z out of the printed front), and detector corners must correspond to decoded top-left, top-right, bottom-right, bottom-left in that frame. The solver supports no-distortion and Brown5 calibration, initializes from a planar homography, refines reprojection error, and evaluates a second deterministic planar-pose seed. It rejects insufficient image area, non-positive depth, back-facing/excessively oblique views, excessive reprojection residual, and competing positive-depth planar solutions whose residual margin is too small. Its result is only `camera_from_tag`; it does not yet claim a map/body pose.
+
+Combine multiple visible tags using robust reprojection-error gating. Reject cross-tag pose ambiguities and poor geometry before producing a map-frame camera pose; never trust one detector's pose without checks.
 
 For a moving camera observing fixed tags:
 
