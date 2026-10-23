@@ -134,13 +134,14 @@ def attitude(calibration, timestamp, *, variance=1e-4, status=None):
     seed_time = 1_000_001_000
     if status is None:
         status = "TRACKING" if timestamp == seed_time else "DEGRADED"
+    lost = status == "LOST"
     return LocalizationIMUAttitudeState(
         body_id="rigid-body",
         imu_id="imu-1",
         timestamp_ns=timestamp,
         clock_domain="imu-clock",
-        quaternion_world_from_body_xyzw=(0.0, 0.0, 0.0, 1.0),
-        attitude_variance_rad2=variance,
+        quaternion_world_from_body_xyzw=None if lost else (0.0, 0.0, 0.0, 1.0),
+        attitude_variance_rad2=None if lost else variance,
         status=status,
         source=(
             "LOCALIZATION_CORRECTED"
