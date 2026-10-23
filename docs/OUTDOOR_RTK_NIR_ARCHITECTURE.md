@@ -104,14 +104,14 @@ These contracts do **not** implement a vendor camera SDK or prove hardware timin
 1. Preserve GNSS solution status: FIXED, FLOAT, DGNSS, SINGLE or INVALID. Do not collapse these into a generic `valid=true`.
 2. Carry the receiver solution epoch and clock domain separately from host receive time.
 3. Convert the documented WGS-84 ECEF position to the surveyed ENU/world frame with the helpers in `computer_code/api/rtk_coordinates.py`; ENU axis order is East, North, Up.
-4. Calibrate the lever arm from the rigid-body origin to the GNSS antenna phase center in body coordinates. Given body-to-world rotation (R_{ENU\leftarrow body}), recover the body origin as (p_{body,ENU}=p_{antenna,ENU}-R_{ENU\leftarrow body}r_{antenna/body}). Position of the antenna is not position of the body origin.
+4. Calibrate the lever arm from the rigid-body origin to the GNSS antenna phase center in body coordinates. Given body-to-world rotation `R_enu_from_body`, recover the body origin as `p_body_enu = p_antenna_enu - R_enu_from_body * r_antenna_body`. Position of the antenna is not position of the body origin.
 5. Treat reported horizontal/vertical accuracy, correction age and satellite count as inputs to predeclared gates; a FIXED flag alone is insufficient.
 6. A single antenna is a position observation, not full body orientation. Orientation comes from optical rigid-body geometry, qualified IMU fusion or a qualified multi-antenna heading baseline.
 7. Keep optical-only, RTK-only and fused results separately reportable for A/B analysis. Reject stale clock mappings and frame mismatches; never silently jump between local optical and global ENU frames.
 
 ## 6. Software acceptance gates
 
-The new unit tests for `outdoor_sensor_contract.py` cover:
+The unit tests for `outdoor_sensor_contract.py` cover:
 
 - rejection of host receive/dequeue time as exposure time;
 - trigger, camera serial, clock-domain and frame-counter mismatch;
@@ -119,6 +119,8 @@ The new unit tests for `outdoor_sensor_contract.py` cover:
 - missing/duplicate camera frames and exposure-skew threshold violations;
 - RTK FIXED acceptance under explicit caller-provided limits and rejection of FLOAT, stale corrections, low satellite count or excessive reported error;
 - non-finite ECEF coordinates.
+
+The new `rtk_coordinates.py` tests cover WGS-84 geodetic-to-ECEF conversion, ECEF/ENU round trips, explicit RTK quality gating before ENU conversion, and body-origin recovery from antenna position using a proper rotation and calibrated lever arm.
 
 These tests qualify only the software contract. They do not establish real camera support, outdoor range, RTK accuracy, or exposure timing.
 
