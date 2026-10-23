@@ -12,6 +12,9 @@ from enum import Enum
 import math
 import threading
 from typing import Callable, Mapping, Protocol, Sequence
+from types import MappingProxyType
+
+from temporal_pattern import FrameStamp
 
 from outdoor_sensor_contract import (
     CameraFrameMetadata,
@@ -60,6 +63,41 @@ class CameraFrameEnvelope:
 class SynchronizedCameraBatch:
     summary: CameraSyncBatch
     frames: tuple[CameraFrameEnvelope, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.summary, CameraSyncBatch):
+            raise ValueError("summary must be CameraSyncBatch")
+        if not isinstance(self.frames, tuple) or not self.frames:
+            raise ValueError("frames must be a nonempty tuple")
+        if any(not isinstance(frame, CameraFrameEnvelope) for frame in self.frames):
+            raise ValueError("frames must contain CameraFrameEnvelope records")
+        camera_ids = tuple(sorted(frame.metadata.camera_id for frame in self.frames))
+        if camera_ids != self.summary.camera_ids:
+            raise ValueError("frame camera IDs do not match synchronized batch summary")
+        if any(frame.metadata.trigger_id != self.summary.trigger_id for frame in self.frames):
+            raise ValueError("frame trigger IDs do not match synchronized batch summary")
+        if any(frame.metadata.clock_domain != self.summary.clock_domain for frame in self.frames):
+            raise ValueError("frame clock domains do not match synchronized batch summary")
+
+    @property
+    def frame_stamps(self) -> tuple[FrameStamp, ...]:
+        """Adapt validated metadata to the existing optical pipeline contract."""
+        return tuple(
+            FrameStamp(
+                camera_id=frame.metadata.camera_id,
+                trigger_id=frame.metadata.trigger_id,
+                exposure_timestamp_ns=frame.metadata.acquisition_timestamp_ns,
+                clock_domain=frame.metadata.clock_domain,
+            )
+            for frame in self.frames
+        )
+
+    @property
+    def images_by_camera(self) -> Mapping[int, object]:
+        """Read-only camera-ID keyed payload mapping for downstream image processing."""
+        return MappingProxyType({
+            frame.metadata.camera_id: frame.payload for frame in self.frames
+        })
 
 
 class CameraSyncState(str, Enum):
