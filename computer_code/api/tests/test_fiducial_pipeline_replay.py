@@ -329,10 +329,49 @@ class FiducialPipelineReplayTests(unittest.TestCase):
             expected_target_clock_domain="imu-clock",
         )
         self.assertEqual(update.timestamp_ns, camera_mapping.map_timestamp(T0 + 25_000_000))
+        rtk_timestamp = T0 + 25_000_000
+        rtk_sample = RTKSample(
+            receiver_id="rtk-1",
+            sequence_number=7,
+            solution_timestamp_ns=rtk_timestamp,
+            clock_domain="rtk-clock",
+            status=RTKSolutionStatus.FIXED,
+            position_ecef_m=enu_to_ecef((0.31, 0.25, 1.4), rtk_origin),
+            horizontal_accuracy_m=0.02,
+            vertical_accuracy_m=0.03,
+            correction_age_ms=100.0,
+            satellites_used=12,
+            datum="WGS84",
+            antenna_reference_point="antenna_phase_center",
+        )
+        mapped_epoch = rtk_mapping.map_timestamp(rtk_timestamp)
+        rtk_attitude = LocalizationIMUAttitudeState(
+            body_id="rigid-body",
+            map_frame_id="site-map",
+            imu_id="imu-1",
+            timestamp_ns=mapped_epoch,
+            clock_domain="imu-clock",
+            quaternion_world_from_body_xyzw=delayed_pose.orientation_xyzw,
+            attitude_variance_rad2=max(delayed_pose.orientation_stddev_rad) ** 2,
+            status="TRACKING",
+            source="LOCALIZATION_CORRECTED",
+            last_localization_timestamp_ns=mapped_epoch,
+            last_source_sequence_number=delayed_pose.source_sequence_number,
+            localization_age_ns=0,
+            clock_mapping_sha256=camera_mapping.mapping_sha256,
+            imu_calibration_sha256=imu_cal.calibration_sha256,
+            localization_source_revision_sha256=delayed_pose.map_revision_sha256,
+            localization_calibration_sha256=delayed_pose.calibration_sha256,
+        )
+        rtk_update = position_measurement_from_rtk(
+            rtk_sample, rtk_mapping, rtk_cal, rtk_attitude
+        )
+        self.assertEqual(rtk_update.timestamp_ns, update.timestamp_ns)
+        owner.ingest_position_measurement(rtk_update, max_position_nis=100.0)
         final_state = owner.ingest_position_measurement(update, max_position_nis=100.0)
         self.assertEqual(final_state.timestamp_ns, camera_mapping.map_timestamp(T0 + 50_000_000))
         self.assertEqual(final_state.last_position_update_timestamp_ns, update.timestamp_ns)
-        self.assertEqual(final_state.last_position_measurement_source, "LOCALIZATION")
+        self.assertEqual(final_state.last_position_measurement_source, "RTK")
         self.assertIsNotNone(final_state.position_world_from_body_m)
 
     def test_anchor_perturbation_changes_map_revision(self):
