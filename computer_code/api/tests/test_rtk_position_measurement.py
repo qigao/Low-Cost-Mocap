@@ -12,6 +12,7 @@ from rtk_coordinates import ENUOrigin, enu_to_ecef
 from rtk_position_measurement import (
     RTKPositionCalibration,
     position_measurement_from_rtk,
+    position_source_contract_from_rtk,
 )
 
 
@@ -111,6 +112,27 @@ class RTKPositionCalibrationTests(unittest.TestCase):
         self.assertNotEqual(first.source_revision_sha256, moved_origin.source_revision_sha256)
         changed_lever = calibration(antenna_lever_arm_body_m=(0.6, -0.2, 0.1))
         self.assertNotEqual(first.calibration_sha256, changed_lever.calibration_sha256)
+
+    def test_source_contract_pins_calibration_and_clock_mapping(self):
+        cal = calibration()
+        clock = mapping()
+        contract = position_source_contract_from_rtk(
+            cal,
+            clock,
+            expected_target_clock_domain="imu-clock",
+        )
+        self.assertEqual(contract.source, PositionMeasurementSource.RTK)
+        self.assertEqual(contract.source_revision_sha256, cal.source_revision_sha256)
+        self.assertEqual(
+            contract.measurement_calibration_sha256, cal.calibration_sha256
+        )
+        self.assertEqual(contract.clock_mapping_sha256, clock.mapping_sha256)
+        with self.assertRaisesRegex(ValueError, "target"):
+            position_source_contract_from_rtk(
+                cal,
+                clock,
+                expected_target_clock_domain="other-clock",
+            )
 
     def test_accuracy_semantics_and_satellite_gate_are_explicit(self):
         with self.assertRaisesRegex(ValueError, "must be positive"):
