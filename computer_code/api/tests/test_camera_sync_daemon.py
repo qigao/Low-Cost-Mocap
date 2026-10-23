@@ -148,12 +148,34 @@ class CameraSyncDaemonTests(unittest.TestCase):
         self.assertEqual(batch.summary.trigger_id, 42)
         self.assertEqual(batch.summary.exposure_skew_ns, 40)
         self.assertEqual([frame.payload for frame in batch.frames], [b"left", b"right"])
+        self.assertEqual(
+            [(stamp.camera_id, stamp.trigger_id, stamp.exposure_timestamp_ns, stamp.clock_domain)
+             for stamp in batch.frame_stamps],
+            [(2, 42, 8_000_000, "rig-clock-A"), (5, 42, 8_000_040, "rig-clock-A")],
+        )
+        self.assertEqual(dict(batch.images_by_camera), {2: b"left", 5: b"right"})
+        with self.assertRaises(TypeError):
+            batch.images_by_camera[2] = b"mutated"
         self.assertEqual(trigger.pulses, [42])
         self.assertEqual(daemon.next_trigger_id, 43)
         daemon.stop()
         self.assertEqual(daemon.state, CameraSyncState.STOPPED)
         self.assertTrue(all(camera.closed for camera in cameras.values()))
         self.assertTrue(trigger.closed)
+
+    def test_synchronized_batch_rejects_mismatched_summary(self):
+        daemon, cameras, trigger = self.make_daemon(
+            [envelope(2, "CAM-02", 1, 42, 8_000_000)],
+            [envelope(5, "CAM-05", 1, 42, 8_000_040)],
+        )
+        daemon.start()
+        batch = daemon.capture_batch()
+        with self.assertRaisesRegex(ValueError, "trigger IDs"):
+            type(batch)(
+                summary=type(batch.summary)(43, (2, 5), "rig-clock-A", 40),
+                frames=batch.frames,
+            )
+        daemon.stop()
 
     def test_wrong_physical_serial_fails_start_and_enters_fault(self):
         daemon, cameras, trigger = self.make_daemon(
