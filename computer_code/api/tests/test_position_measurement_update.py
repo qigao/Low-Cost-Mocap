@@ -383,7 +383,7 @@ class PositionCorrectionTests(unittest.TestCase):
             quality=LocalizationQuality.TRACKING,
             source_revision_sha256="d" * 64,
             measurement_calibration_sha256="e" * 64,
-            clock_mapping_sha256=mapping().mapping_sha256,
+            clock_mapping_sha256="f" * 64,
         )
         corrected = propagator.ingest_position_measurement(rtk)
         self.assertEqual(
@@ -391,6 +391,7 @@ class PositionCorrectionTests(unittest.TestCase):
             PositionMeasurementSource.RTK.value,
         )
         self.assertEqual(corrected.last_position_source_sequence_number, 1)
+        self.assertEqual(corrected.last_position_clock_mapping_sha256, "f" * 64)
 
     def test_correction_after_expiry_requires_full_state_reseed(self):
         propagator, calibration = setup_propagator(max_dead_reckoning_ns=5_000_000)
