@@ -103,8 +103,8 @@ No proximity-only reassignment, inferred trigger phase, stale pose reuse, or sil
 
 1. Validate monotonic acquisition timestamps, units, finite values, saturation, sequence gaps and maximum integration interval.
 2. Apply calibrated sensor bias/scale and `T_body_from_imu`.
-3. Propagate attitude and velocity using bounded gyro/accelerometer integration or preintegration, with explicit bias/noise models.
-4. Reset/reinitialize on clock reset, invalid calibration, saturation or excessive gaps rather than integrating across unknown time.
+3. Propagate attitude and velocity using bounded gyro/accelerometer integration or preintegration, with explicit bias/noise models. The first translational primitive is `translational_propagation.py`: a TRACKING metric localization pose is mapped into the IMU clock, while initial velocity and residual accelerometer bias remain explicit inputs because one position sample cannot observe them. Gravity is an explicit vector bound to the same map frame. Corrected specific force is rotated by a same-timestamp fused attitude and integrated with bounded steps and growing uncertainty.
+4. Reset/reinitialize on clock reset, invalid calibration, saturation or excessive gaps rather than integrating across unknown time. Translational dead reckoning has a separate bounded horizon; after expiry position/velocity are hidden and an explicit position reseed is required. A nonzero IMU-to-body lever arm is rejected in this first primitive because rotational lever-arm acceleration compensation is not yet modeled.
 
 IMU translation drifts when acceleration is integrated twice. It cannot provide indefinitely stable global position without optical/other independent constraints. Optical measurements correct accumulated drift; IMU samples provide high-rate propagation between optical updates. Gravity does not by itself make yaw or global position observable.
 
@@ -161,6 +161,7 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `imu_contract.py` | Typed SI-unit IMU samples, stream-order/gap guard and affine clock mapping from declared synchronization anchors |
 | `imu_calibration.py` | Immutable IMU-to-body extrinsics, bias/noise/correction calibration and bias-corrected vector transforms |
 | `imu_propagation.py` | Bounded gyro-only attitude propagation; no global position/velocity or optical fusion |
+| `translational_propagation.py` | Bounded accelerometer position/velocity dead reckoning from an explicit metric seed, gravity model and fused attitude; residual accel bias state/uncertainty retained; nonzero IMU lever arm rejected until compensation exists |
 | `optical_imu_fusion.py` | Bounded optical attitude correction over interpolated gyro history, isotropic uncertainty, explicit TRACKING/DEGRADED/LOST states; no position/velocity |
 | `fused_attitude_stream.py` | Additive strict fused-attitude payload and state serializer; existing optical PoseStream v1 remains unchanged |
 | `fusion_replay.py` | Bounded deterministic typed-event replay, canonical digests and quaternion geodesic reference metrics |
