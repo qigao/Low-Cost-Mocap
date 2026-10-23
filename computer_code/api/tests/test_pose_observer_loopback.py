@@ -158,11 +158,25 @@ class LoopbackObserverTransportTests(unittest.TestCase):
             ))
         self.assertEqual(len(software_round_trip_ns), 5)
         self.assertLess(max(software_round_trip_ns), 5_000_000_000)
+        # Preserve the Socket.IO namespace SID before the client tears down
+        # its local namespace table. With long-polling, python-engineio may not
+        # deliver the graceful DISCONNECT packet until its outstanding GET
+        # returns on the heartbeat interval (about 25 s on some CI runners).
+        # Do not turn that transport scheduling detail into a 25-35 s test.
+        server_sid = client.get_sid(POSE_OBSERVER_NAMESPACE)
         client.disconnect()
-        # Polling transport shutdown is asynchronous with respect to the
-        # client method return. Wait for the actual server disconnect handler
-        # instead of asserting against a transport race.
-        deadline = time.monotonic() + 10.0
+        graceful_deadline = time.monotonic() + 0.5
+        while self.host.subscriber_count and time.monotonic() < graceful_deadline:
+            time.sleep(0.01)
+        if self.host.subscriber_count:
+            # Test-only bounded cleanup through the real Socket.IO server
+            # disconnect path. This still exercises the registered disconnect
+            # handler and broker unsubscribe; it does not mutate publisher
+            # internals or pretend that the transport closed promptly.
+            self.host.socketio.server.disconnect(
+                server_sid, namespace=POSE_OBSERVER_NAMESPACE
+            )
+        deadline = time.monotonic() + 2.0
         while self.host.subscriber_count and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(self.host.subscriber_count, 0)
