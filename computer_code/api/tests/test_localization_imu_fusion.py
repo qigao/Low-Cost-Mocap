@@ -76,6 +76,7 @@ def setup_pipeline(*, dropout=30_000_000):
     )
     fusion = LocalizationIMUAttitudeFusion(
         body_id="rigid-body",
+        map_frame_id="site-map",
         imu_id="imu-1",
         imu_clock_domain="imu-clock",
         imu_calibration_revision="imu-cal-v1",

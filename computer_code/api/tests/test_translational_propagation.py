@@ -137,6 +137,7 @@ def attitude(calibration, timestamp, *, variance=1e-4, status=None):
     lost = status == "LOST"
     return LocalizationIMUAttitudeState(
         body_id="rigid-body",
+        map_frame_id="site-map",
         imu_id="imu-1",
         timestamp_ns=timestamp,
         clock_domain="imu-clock",
