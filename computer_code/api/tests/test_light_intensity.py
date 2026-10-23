@@ -6,6 +6,7 @@ from light_intensity import (
     sample_light_roi,
     sample_tracked_light_roi,
     BinaryIntensityCalibration,
+    DarkROIQualification,
     quantize_roi_track,
 )
 from temporal_pattern import TemporalCodebook, decode_temporal_marker
@@ -113,6 +114,40 @@ class RawLightEvidenceTests(unittest.TestCase):
             sample_tracked_light_roi(
                 image, missing, predicted_roi_qualified="yes"
             )
+
+    def test_dark_roi_qualification_is_bound_and_strictly_typed(self):
+        valid = DarkROIQualification(
+            camera_id=2,
+            local_track_id=17,
+            trigger_id=42,
+            marker_id=101,
+            expected_xy=(12.5, 30.0),
+            pattern_sha256="a" * 64,
+            verifier_id="imu-projection-v1",
+            reference_evidence_sha256="b" * 64,
+        )
+        self.assertEqual(valid.expected_xy, (12.5, 30.0))
+        self.assertEqual(valid.verifier_id, "imu-projection-v1")
+        for kwargs, message in (
+            ({"camera_id": True}, "camera_id"),
+            ({"expected_xy": (np.nan, 2.0)}, "finite"),
+            ({"pattern_sha256": "A" * 64}, "lowercase SHA-256"),
+            ({"reference_evidence_sha256": "not-a-digest"}, "lowercase SHA-256"),
+            ({"verifier_id": " "}, "verifier_id"),
+        ):
+            values = {
+                "camera_id": 2,
+                "local_track_id": 17,
+                "trigger_id": 42,
+                "marker_id": 101,
+                "expected_xy": (12.5, 30.0),
+                "pattern_sha256": "a" * 64,
+                "verifier_id": "imu-projection-v1",
+                "reference_evidence_sha256": "b" * 64,
+            }
+            values.update(kwargs)
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(ValueError, message):
+                DarkROIQualification(**values)
 
     def test_absence_is_not_converted_into_off_bit(self):
         calibration = BinaryIntensityCalibration(0.0, 120.0)
