@@ -54,6 +54,19 @@ The existing pattern report now exposes per-marker duty cycle, global LED load p
 
 ## 4. Wired camera synchronization daemon
 
+The provider-neutral lifecycle orchestrator is implemented in
+`computer_code/api/camera_sync_daemon.py`. Hardware vendors supply a
+`CameraAdapter` for each physical camera and a `TriggerController` for the
+shared external trigger line. The orchestrator verifies device serial,
+shutter/timestamp semantics and clock-domain metadata before arming; it emits
+only complete, validated batches. Any timeout, trigger mismatch, packet loss
+or skew violation moves the session to `FAULT`, performs best-effort cleanup,
+and requires explicit reset/re-arm. It does not implement a vendor SDK or
+spawn its own process; `run_forever` is intended to run in the service thread
+managed by the deployment supervisor.
+
+## 4. Wired camera synchronization daemon
+
 Keep device SDK calls outside the tracking estimator. The daemon should own the camera lifecycle:
 
 `DISCOVER \rightarrow CONFIGURE \rightarrow VERIFY_CLOCK \rightarrow ARM
