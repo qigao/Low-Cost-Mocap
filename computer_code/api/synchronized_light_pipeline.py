@@ -18,7 +18,7 @@ from identity_locked_board_tracker import (
     IdentityLockedBoardTracker, LockedBoardFrame,
 )
 from light_intensity import (
-    StampedTrackROI, sample_tracked_light_roi,
+    DarkROIQualification, StampedTrackROI, sample_tracked_light_roi,
 )
 from light_tracking import BoundedLightTracker, AmbiguousLightAssociation
 from marker_admission import admit_track_marker_at_frame
@@ -47,6 +47,7 @@ class SynchronizedLocalLightPipeline:
         minimum_detection_separation_px: float = 0.5,
         ambiguity_margin_fraction: float = 0.05,
         min_decode_observations: int = 8,
+        max_dark_roi_prediction_error_px: float = 0.75,
     ) -> None:
         if not isinstance(pose_tracker, IdentityLockedBoardTracker):
             raise ValueError("pose_tracker must be IdentityLockedBoardTracker")
@@ -60,6 +61,14 @@ class SynchronizedLocalLightPipeline:
         min_obs = _nonnegative_int(min_decode_observations, "min_decode_observations")
         if min_obs < 4 or min_obs > registry.period_triggers:
             raise ValueError("min_decode_observations must be 4..code period")
+        if (
+            isinstance(max_dark_roi_prediction_error_px, (bool, np.bool_))
+            or not isinstance(max_dark_roi_prediction_error_px, (int, float, np.integer, np.floating))
+            or not np.isfinite(max_dark_roi_prediction_error_px)
+            or max_dark_roi_prediction_error_px <= 0
+        ):
+            raise ValueError("max_dark_roi_prediction_error_px must be finite and positive")
+        self.max_dark_roi_prediction_error_px = float(max_dark_roi_prediction_error_px)
         self._min_decode_observations = min_obs
         self._local_trackers = {
             camera: BoundedLightTracker(
@@ -101,16 +110,18 @@ class SynchronizedLocalLightPipeline:
         grayscale_by_camera: Mapping[int, object],
         detections_by_camera: Mapping[int, Sequence[object]],
         *,
-        independently_qualified_dark_track_ids: Mapping[
-            int, Sequence[int]
-        ] | None = None,
+        dark_roi_qualifications: Sequence[DarkROIQualification] | None = None,
         controller_config_sha256: str | None = None,
     ) -> LockedBoardFrame:
         """Transactionally ingest one complete, declared trigger batch.
 
-        The qualification map is optional: absent entries are *erasures*, not
-        OFF measurements. An external motion-quality verifier, never the
-        local position predictor alone, must authorize dark predicted ROIs.
+        Dark-ROI qualification records are optional: absent entries are
+        *erasures*, not OFF measurements. Each record must bind an external
+        expected position to the exact camera-local track and current trigger,
+        identify a marker that is OFF in the active pattern revision, and cite
+        verifier/evidence digests. A bounded residual check is applied against
+        the Track prediction; a local predictor alone is not a verifier.
+        Evidence digests provide audit references, not cryptographic trust.
         The controller SHA only checks software configuration equality.
         """
         tracker = self.pose_tracker
@@ -122,21 +133,17 @@ class SynchronizedLocalLightPipeline:
             or set(detections_by_camera) != set(camera_ids)
         ):
             raise ValueError("grayscale and detection maps must cover exactly physical camera IDs")
-        if independently_qualified_dark_track_ids is None:
-            allowed_dark = {}
+        if dark_roi_qualifications is None:
+            qualifications = ()
+        elif (
+            not isinstance(dark_roi_qualifications, Sequence)
+            or isinstance(dark_roi_qualifications, (str, bytes))
+        ):
+            raise ValueError("dark_roi_qualifications must be a sequence of qualification records")
         else:
-            if (
-                not isinstance(independently_qualified_dark_track_ids, Mapping)
-                or not set(independently_qualified_dark_track_ids).issubset(set(camera_ids))
-            ):
-                raise ValueError("dark ROI qualification has unknown camera IDs")
-            allowed_dark = {
-                camera: frozenset(
-                    _nonnegative_int(x, "qualified dark local track ID")
-                    for x in ids
-                )
-                for camera, ids in independently_qualified_dark_track_ids.items()
-            }
+            qualifications = tuple(dark_roi_qualifications)
+            if len(qualifications) > len(camera_ids) * len(tracker.registry.marker_to_board):
+                raise ValueError("dark ROI qualification capacity exceeded")
 
         batch = validate_trigger_batch(
             frames, camera_ids,
@@ -150,6 +157,33 @@ class SynchronizedLocalLightPipeline:
         period = tracker.registry.period_triggers
         phase = (batch.trigger_id - tracker.trigger_epoch) % period
         cycle_index = (batch.trigger_id - tracker.trigger_epoch) // period
+
+        qualifications_by_key: dict[tuple[int, int], DarkROIQualification] = {}
+        qualified_marker_keys: set[tuple[int, int]] = set()
+        for qualification in qualifications:
+            if not isinstance(qualification, DarkROIQualification):
+                raise ValueError("dark ROI qualification has invalid type")
+            camera = qualification.camera_id
+            track_id = qualification.local_track_id
+            marker_id = qualification.marker_id
+            if camera not in camera_ids:
+                raise ValueError("dark ROI qualification has unknown camera ID")
+            if qualification.trigger_id != batch.trigger_id:
+                raise ValueError("dark ROI qualification belongs to a different trigger")
+            if qualification.pattern_sha256 != tracker.registry.config_sha256:
+                raise ValueError("dark ROI qualification has stale pattern revision")
+            if marker_id not in tracker.registry.marker_to_board:
+                raise ValueError("dark ROI qualification references an unknown marker")
+            if tracker.registry.codebook.patterns[marker_id][phase] != 0:
+                raise ValueError("dark ROI qualification requires a marker that is OFF this phase")
+            key = (camera, track_id)
+            marker_key = (camera, marker_id)
+            if key in qualifications_by_key:
+                raise ValueError("duplicate dark ROI qualification for camera-local track")
+            if marker_key in qualified_marker_keys:
+                raise ValueError("multiple tracks claim the same qualified dark marker")
+            qualifications_by_key[key] = qualification
+            qualified_marker_keys.add(marker_key)
 
         # Make a shallow copy of immutable per-track evidence tuples and a
         # deep numeric-state clone of each bounded 2D track table.
@@ -199,12 +233,28 @@ class SynchronizedLocalLightPipeline:
             for key in tuple(stage_histories):
                 if key[0] == camera and key[1] not in active:
                     del stage_histories[key]
-            qualified = allowed_dark.get(camera, frozenset())
-            if not qualified.issubset(active):
+            camera_qualifications = {
+                track_id: qualification
+                for (qualified_camera, track_id), qualification in qualifications_by_key.items()
+                if qualified_camera == camera
+            }
+            if not set(camera_qualifications).issubset(active):
                 raise ValueError("qualified dark local track is not active")
             for point in evidence:
                 key = (camera, point.track_id)
-                motion_qualified = point.track_id in qualified
+                qualification = camera_qualifications.get(point.track_id)
+                motion_qualified = qualification is not None
+                if qualification is not None:
+                    if point.observed_xy is not None:
+                        raise ValueError("dark ROI qualification must refer to a predicted-only track")
+                    predicted = np.asarray(point.predicted_xy, dtype=np.float64)
+                    expected = np.asarray(qualification.expected_xy, dtype=np.float64)
+                    residual = float(np.linalg.norm(predicted - expected))
+                    if (
+                        not np.isfinite(residual)
+                        or residual > self.max_dark_roi_prediction_error_px
+                    ):
+                        raise ValueError("dark ROI qualification residual exceeds configured limit")
                 roi = sample_tracked_light_roi(
                     image, point,
                     predicted_roi_qualified=motion_qualified,

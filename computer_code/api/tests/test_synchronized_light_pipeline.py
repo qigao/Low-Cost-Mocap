@@ -2,14 +2,17 @@
 
 Detector centroids and FrameStamp are synthetic, not measured hardware facts.
 """
+import hashlib
+import json
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
 from board_patterns import BoardPatternRegistry
 from identity_locked_board_tracker import IdentityLockedBoardTracker
-from light_intensity import BinaryIntensityCalibration
+from light_intensity import BinaryIntensityCalibration, DarkROIQualification
 from pose_stream import pose_frame_to_dict
 from synchronized_light_pipeline import SynchronizedLocalLightPipeline
 from temporal_pattern import FrameStamp
@@ -116,17 +119,10 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             detections[camera] = points
         return frames, images, detections
 
-    def qualified_dark_track_ids(self, trigger):
-        """Synthetic ground-truth motion verifier for predicted dark ROIs.
-
-        This test oracle is deliberately separate from BoundedLightTracker:
-        it uses the known synthetic rigid-body pose to certify a prediction
-        only when it uniquely coincides with one configured marker position.
-        Production callers must supply an independently qualified map or leave
-        dark samples as erasures.
-        """
+    def qualified_dark_roi_evidence(self, trigger):
+        """Build explicit synthetic ground-truth qualification records."""
         phase = (trigger - self.epoch) % self.registry.period_triggers
-        qualified = {}
+        qualifications = []
         for camera in self.cameras:
             local = self.pipeline._local_trackers[camera]
             expected = {
@@ -141,10 +137,7 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
                     continue
                 predicted = state.last_xy + gap * state.velocity_per_trigger
                 ranked = sorted(
-                    (
-                        float(np.linalg.norm(predicted - xy)),
-                        marker,
-                    )
+                    (float(np.linalg.norm(predicted - xy)), marker)
                     for marker, xy in expected.items()
                 )
                 if not ranked or ranked[0][0] > 0.75:
@@ -154,19 +147,39 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
                 marker = ranked[0][1]
                 candidates[track_id] = marker
                 marker_claims.setdefault(marker, []).append(track_id)
-            qualified[camera] = tuple(sorted(
-                track_id
-                for track_id, marker in candidates.items()
-                if len(marker_claims[marker]) == 1
-                and self.registry.codebook.patterns[marker][phase] == 0
-            ))
-        return qualified
+            for track_id, marker in sorted(candidates.items()):
+                if (
+                    len(marker_claims[marker]) != 1
+                    or self.registry.codebook.patterns[marker][phase] != 0
+                ):
+                    continue
+                expected_xy = tuple(float(x) for x in expected[marker])
+                payload = json.dumps({
+                    "camera_id": camera,
+                    "local_track_id": track_id,
+                    "trigger_id": trigger,
+                    "marker_id": marker,
+                    "expected_xy": expected_xy,
+                    "pattern_sha256": self.registry.config_sha256,
+                    "verifier_id": "synthetic-ground-truth-v1",
+                }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                qualifications.append(DarkROIQualification(
+                    camera_id=camera,
+                    local_track_id=track_id,
+                    trigger_id=trigger,
+                    marker_id=marker,
+                    expected_xy=expected_xy,
+                    pattern_sha256=self.registry.config_sha256,
+                    verifier_id="synthetic-ground-truth-v1",
+                    reference_evidence_sha256=hashlib.sha256(payload).hexdigest(),
+                ))
+        return tuple(qualifications)
 
     def process(self, trigger, **kwargs):
         frames, images, detections = self.frames_and_pixels(trigger)
         kwargs.setdefault(
-            "independently_qualified_dark_track_ids",
-            self.qualified_dark_track_ids(trigger),
+            "dark_roi_qualifications",
+            self.qualified_dark_roi_evidence(trigger),
         )
         return self.pipeline.process(
             frames, images, detections,
@@ -526,7 +539,7 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             )
             self.pipeline.process(
                 frames, images, detections,
-                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+                dark_roi_qualifications=self.qualified_dark_roi_evidence(trigger),
             )
         self.assertTrue(all(
             lock.camera_id != 2
@@ -538,7 +551,7 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             frames, images, detections = self.frames_and_pixels(trigger)
             partial_result = self.pipeline.process(
                 frames, images, detections,
-                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+                dark_roi_qualifications=self.qualified_dark_roi_evidence(trigger),
             )
         self.assertTrue(set(self.pipeline.active_local_track_ids(2)) - initial_ids)
         # Erasures during phases 0..3 remove the distinguishing bits of
@@ -553,7 +566,7 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             frames, images, detections = self.frames_and_pixels(trigger)
             restored = self.pipeline.process(
                 frames, images, detections,
-                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+                dark_roi_qualifications=self.qualified_dark_roi_evidence(trigger),
             )
         new_camera_locks = [
             lock for lock in restored.active_locks if lock.camera_id == 2
@@ -598,6 +611,65 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
                 self.assertEqual(self.identity.last_trigger_id, 1015)
         retry = self.pipeline.process(frames, images, detections)
         self.assertEqual(retry.trigger_id, 1016)
+
+    def test_dark_roi_qualification_rejects_stale_trigger_and_pattern(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        qualifications = self.qualified_dark_roi_evidence(1016)
+        self.assertTrue(qualifications)
+        candidate = qualifications[0]
+        for bad in (
+            replace(candidate, trigger_id=1017),
+            replace(candidate, pattern_sha256="f" * 64),
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.pipeline.process(
+                    frames, images, detections,
+                    dark_roi_qualifications=(bad,),
+                    controller_config_sha256=self.registry.config_sha256,
+                )
+            self.assertEqual(self.identity.last_trigger_id, 1015)
+
+    def test_dark_roi_qualification_rejects_bad_prediction_residual(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        candidate = self.qualified_dark_roi_evidence(1016)[0]
+        bad = replace(candidate, expected_xy=(
+            candidate.expected_xy[0] + 50.0, candidate.expected_xy[1]
+        ))
+        with self.assertRaisesRegex(ValueError, "residual exceeds configured limit"):
+            self.pipeline.process(
+                frames, images, detections,
+                dark_roi_qualifications=(bad,),
+                controller_config_sha256=self.registry.config_sha256,
+            )
+        self.assertEqual(self.identity.last_trigger_id, 1015)
+
+    def test_dark_roi_qualification_rejects_on_phase_and_duplicate_claims(self):
+        self.bootstrap()
+        frames, images, detections = self.frames_and_pixels(1016)
+        qualifications = self.qualified_dark_roi_evidence(1016)
+        self.assertTrue(qualifications)
+        candidate = qualifications[0]
+        on_marker = next(
+            marker for marker, code in self.registry.codebook.patterns.items()
+            if code[(1016 - self.epoch) % self.registry.period_triggers] == 1
+        )
+        bad_on = replace(candidate, marker_id=on_marker)
+        with self.assertRaisesRegex(ValueError, "marker that is OFF"):
+            self.pipeline.process(
+                frames, images, detections,
+                dark_roi_qualifications=(bad_on,),
+                controller_config_sha256=self.registry.config_sha256,
+            )
+        duplicate = replace(candidate, local_track_id=candidate.local_track_id + 10000)
+        with self.assertRaisesRegex(ValueError, "multiple tracks claim"):
+            self.pipeline.process(
+                frames, images, detections,
+                dark_roi_qualifications=(candidate, duplicate),
+                controller_config_sha256=self.registry.config_sha256,
+            )
+        self.assertEqual(self.identity.last_trigger_id, 1015)
 
     def test_default_dark_samples_are_erasures_before_initial_code_lock(self):
         # The first phase includes known OFF LED patterns, which are not
