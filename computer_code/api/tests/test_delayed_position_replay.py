@@ -351,6 +351,24 @@ class DelayedPositionReplayTests(unittest.TestCase):
                 localization_measurement(T0 + 10_000_000, 11)
             )
 
+    def test_history_time_window_prunes_old_exact_frames(self):
+        calibration = imu_calibration()
+        owner = BoundedDelayedPositionReplay(
+            seed(), calibration, gravity(),
+            **filter_kwargs(),
+            max_history_frames=32,
+            max_history_ns=15_000_000,
+        )
+        self.ingest_frames(owner, calibration, 4)
+        self.assertEqual(
+            owner.retained_timestamp_range_ns,
+            (T0 + 20_000_000, T0 + 30_000_000),
+        )
+        with self.assertRaisesRegex(ValueError, "outside retained"):
+            owner.ingest_position_measurement(
+                localization_measurement(T0 + 10_000_000, 11)
+            )
+
     def test_failed_delayed_nis_replay_is_transactional(self):
         owner, calibration = self.build_wrapper()
         self.ingest_frames(owner, calibration, 5)
