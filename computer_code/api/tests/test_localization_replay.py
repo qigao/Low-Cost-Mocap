@@ -63,7 +63,7 @@ def replay_fixture():
 
     tag_measurement = position_measurement_from_localization(
         tag_pose(
-            timestamp=T0 + 25_000_000,
+            timestamp_ns=T0 + 25_000_000,
             sequence=11,
             position=(1.0001, 2.0, 3.0),
         ),
