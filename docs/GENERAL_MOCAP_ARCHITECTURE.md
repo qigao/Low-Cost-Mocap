@@ -170,7 +170,7 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `rtk_position_measurement.py` | Qualified RTK FIXED -> site ENU -> body-origin adapter with explicit receiver/ENU/lever-arm calibration, accuracy semantics, clock mapping and fused-attitude frame checks |
 | `translational_eskf.py` | Conditioned 9-state position/velocity/residual-accel-bias error-state estimator with full covariance, bounded IMU propagation and NIS/Joseph-form absolute-position updates |
 | `localization_state_stream.py` | Additive versioned unified localization output: same-time fused attitude + translational ESKF with strict body/map/clock/revision checks, full p/v/bias covariance, component statuses and fail-closed LOST semantics |
-| `delayed_position_replay.py` | Bounded exact-timestamp rewind/replay owner for delayed Tag/RTK position updates; explicit ESKF checkpoints, frame/time windows, per-source sequencing, canonical same-time update order, transactional replay |
+| `delayed_position_replay.py` | Bounded rewind/replay for exact-frame and between-frame delayed Tag/RTK updates; acquisition-epoch interval splitting, explicit ESKF checkpoints, frame/time windows, per-source sequencing, canonical event ordering, transactional replay |
 | `optical_imu_fusion.py` | Bounded optical attitude correction over interpolated gyro history, isotropic uncertainty, explicit TRACKING/DEGRADED/LOST states; no position/velocity |
 | `fused_attitude_stream.py` | Additive strict fused-attitude payload and state serializer; existing optical PoseStream v1 remains unchanged |
 | `fusion_replay.py` | Bounded deterministic typed-event replay, canonical digests and quaternion geodesic reference metrics |
@@ -179,7 +179,7 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `capture_bundle_manifest.py`, `bundle_gated_offline_replay.py` | Evidence integrity and gated offline qualification |
 | `index.py`, legacy serial handlers | Legacy app/controller adapter only; not core state estimation |
 
-The IMU sample contract, clock-mapping primitive, calibration contract, bounded attitude fusion, accelerometer-based position/velocity propagation, conditioned 9-state translational ESKF, bounded delayed Tag/RTK rewind/replay, unified localization-state protocol, and deterministic replay/reference-metric primitives are present. The paired optical-only-versus-fused report is tracked in Issue #50. There is still no hardware-qualified clock/trigger adapter, no joint attitude/translation covariance or full 15-state INS/factor-graph estimator, and no independently qualified optical-IMU fusion.
+The IMU sample contract, clock-mapping primitive, calibration contract, bounded attitude fusion, accelerometer-based position/velocity propagation, conditioned 9-state translational ESKF, bounded delayed Tag/RTK rewind/replay with exact-epoch interval splitting, unified localization-state protocol, and deterministic replay/reference-metric primitives are present. The paired optical-only-versus-fused report is tracked in Issue #50. There is still no hardware-qualified clock/trigger adapter, no joint attitude/translation covariance or full 15-state INS/factor-graph estimator, and no independently qualified optical-IMU fusion.
 
 ## 9. Hardware gates and scope
 
