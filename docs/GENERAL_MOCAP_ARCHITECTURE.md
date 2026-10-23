@@ -172,6 +172,7 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `localization_state_stream.py` | Additive versioned unified localization output: same-time fused attitude + translational ESKF with strict body/map/clock/revision checks, full p/v/bias covariance, component statuses and fail-closed LOST semantics |
 | `delayed_position_replay.py` | Bounded rewind/replay for exact-frame and between-frame delayed Tag/RTK updates; acquisition-epoch interval splitting, explicit ESKF checkpoints, frame/time windows, per-source sequencing, canonical event ordering, transactional replay |
 | `localization_replay.py` | Deterministic typed IMU/attitude/absolute-position event replay; canonical input/config/output SHA-256 digests, bounded event/input/output sizes, transactional no-result-on-failure semantics; hardware provenance always false |
+| `localization_replay_cli.py` | Strict versioned JSON replay loader/CLI; rejects duplicate keys, non-finite values, unknown schema fields and mismatched derived revision digests; emits a bounded deterministic summary with hardware provenance false |
 | `optical_imu_fusion.py` | Bounded optical attitude correction over interpolated gyro history, isotropic uncertainty, explicit TRACKING/DEGRADED/LOST states; no position/velocity |
 | `fused_attitude_stream.py` | Additive strict fused-attitude payload and state serializer; existing optical PoseStream v1 remains unchanged |
 | `fusion_replay.py` | Bounded deterministic typed-event replay, canonical digests and quaternion geodesic reference metrics |
