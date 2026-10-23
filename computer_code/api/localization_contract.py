@@ -30,6 +30,7 @@ class ScaleReference(str, Enum):
     SURVEYED_TAGS = "surveyed_tags"
     RTK_CONTROL_POINTS = "rtk_control_points"
     CALIBRATED_CAMERA_GEOMETRY = "calibrated_camera_geometry"
+    CALIBRATED_TAG_MAP = "calibrated_tag_map"
 
 
 def _text(value, name):
