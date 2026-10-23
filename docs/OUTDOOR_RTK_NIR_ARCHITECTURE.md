@@ -103,8 +103,8 @@ These contracts do **not** implement a vendor camera SDK or prove hardware timin
 
 1. Preserve GNSS solution status: FIXED, FLOAT, DGNSS, SINGLE or INVALID. Do not collapse these into a generic `valid=true`.
 2. Carry the receiver solution epoch and clock domain separately from host receive time.
-3. Convert the documented geodetic datum/ECEF position to the surveyed ENU/world frame.
-4. Calibrate the lever arm from the GNSS antenna phase center to the rigid-body origin. Position of the antenna is not position of the body origin.
+3. Convert the documented WGS-84 ECEF position to the surveyed ENU/world frame with the helpers in `computer_code/api/rtk_coordinates.py`; ENU axis order is East, North, Up.
+4. Calibrate the lever arm from the rigid-body origin to the GNSS antenna phase center in body coordinates. Given body-to-world rotation (R_{ENU\leftarrow body}), recover the body origin as (p_{body,ENU}=p_{antenna,ENU}-R_{ENU\leftarrow body}r_{antenna/body}). Position of the antenna is not position of the body origin.
 5. Treat reported horizontal/vertical accuracy, correction age and satellite count as inputs to predeclared gates; a FIXED flag alone is insufficient.
 6. A single antenna is a position observation, not full body orientation. Orientation comes from optical rigid-body geometry, qualified IMU fusion or a qualified multi-antenna heading baseline.
 7. Keep optical-only, RTK-only and fused results separately reportable for A/B analysis. Reject stale clock mappings and frame mismatches; never silently jump between local optical and global ENU frames.
