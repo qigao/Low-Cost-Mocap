@@ -635,7 +635,7 @@ class DelayedPositionReplayTests(unittest.TestCase):
         assert_state_close(self, actual, reference.state)
 
     def test_interior_replay_survives_pruning_of_left_endpoint(self):
-        owner, calibration = self.build_wrapper()
+        owner, calibration = self.build_wrapper(max_position_dead_reckoning_ns=1_000_000_000)
         self.ingest_frames(owner, calibration, 40)
         self.assertIsNotNone(owner._base_snapshot.last_sample)
         left_timestamp = owner._base_snapshot.last_sample.sensor_timestamp_ns
