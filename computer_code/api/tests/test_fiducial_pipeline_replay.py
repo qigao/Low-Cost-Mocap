@@ -9,7 +9,14 @@ from delayed_position_replay import BoundedDelayedPositionReplay
 from imu_calibration import CorrectedIMUVectors, IMUCalibration
 from imu_contract import ClockAnchor, fit_clock_mapping
 from localization_imu_fusion import LocalizationIMUAttitudeState
+from outdoor_sensor_contract import RTKSample, RTKSolutionStatus
 from position_measurement import position_measurement_from_localization
+from rtk_coordinates import ENUOrigin, enu_to_ecef
+from rtk_position_measurement import (
+    RTKPositionCalibration,
+    position_measurement_from_rtk,
+    position_source_contract_from_rtk,
+)
 from translational_propagation import GravityModel, translational_seed_from_localization
 from fiducial_localization import (
     CameraBodyExtrinsic,
@@ -226,6 +233,36 @@ class FiducialPipelineReplayTests(unittest.TestCase):
             accel_bias_random_walk_m_s2_per_sqrt_s=(0.002, 0.002, 0.002),
             calibration_method="synthetic-pipeline-test",
         )
+        rtk_mapping = fit_clock_mapping(
+            [
+                ClockAnchor(T0, T0 + 1_000, event_id="rtk-sync-1"),
+                ClockAnchor(T0 + 1_000_000_000, T0 + 1_000_001_000, event_id="rtk-sync-2"),
+                ClockAnchor(T0 + 2_000_000_000, T0 + 2_000_001_000, event_id="rtk-sync-3"),
+            ],
+            source_clock_domain="rtk-clock",
+            target_clock_domain="imu-clock",
+            max_drift_ppm=10,
+            max_residual_ns=10,
+            max_extrapolation_ns=100_000_000,
+            min_anchor_span_ns=100_000_000,
+        )
+        rtk_origin = ENUOrigin(0.0, 0.0, 0.0)
+        rtk_cal = RTKPositionCalibration(
+            receiver_id="rtk-1",
+            body_id="rigid-body",
+            map_frame_id="site-map",
+            enu_origin=rtk_origin,
+            antenna_lever_arm_body_m=(0.0, 0.0, 0.0),
+            horizontal_accuracy_to_axis_stddev_scale=1.0,
+            vertical_accuracy_to_stddev_scale=1.0,
+            max_correction_age_ms=1000.0,
+            max_horizontal_accuracy_m=0.1,
+            max_vertical_accuracy_m=0.2,
+            min_satellites=8,
+        )
+        rtk_contract = position_source_contract_from_rtk(
+            rtk_cal, rtk_mapping, expected_target_clock_domain="imu-clock"
+        )
         owner = BoundedDelayedPositionReplay(
             seed,
             imu_cal,
@@ -236,6 +273,7 @@ class FiducialPipelineReplayTests(unittest.TestCase):
             ),
             max_history_frames=32,
             max_history_ns=200_000_000,
+            position_source_contracts=(rtk_contract,),
         )
         seed_timestamp = camera_mapping.map_timestamp(T0)
 
