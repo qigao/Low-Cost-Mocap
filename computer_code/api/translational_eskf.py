@@ -15,6 +15,8 @@ lever-arm acceleration is not yet modeled.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 import math
 from numbers import Real
 
@@ -71,6 +73,17 @@ def _digest(value: object, name: str) -> str:
     ):
         raise ValueError(f"{name} must be lowercase SHA-256")
     return value
+
+
+def _canonical_digest(payload: dict[str, object]) -> str:
+    return sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _covariance_tuple(value: np.ndarray) -> tuple[tuple[float, ...], ...]:
@@ -189,6 +202,98 @@ class TranslationalErrorState:
         return tuple(float(math.sqrt(max(0.0, matrix[i, i]))) for i in range(6, 9))
 
 
+@dataclass(frozen=True)
+class TranslationalESKFSnapshot:
+    """Explicit in-memory rewind checkpoint for one estimator configuration."""
+
+    estimator_fingerprint_sha256: str
+    position_world_from_body_m: tuple[float, float, float]
+    velocity_world_from_body_m_s: tuple[float, float, float]
+    residual_accel_bias_body_m_s2: tuple[float, float, float]
+    covariance_p_v_bias: tuple[tuple[float, ...], ...]
+    last_sample: CorrectedIMUVectors | None
+    last_attitude: LocalizationIMUAttitudeState | None
+    state: TranslationalErrorState | None
+    expired: bool
+    last_position_update_timestamp_ns: int
+    last_position_sequences: tuple[tuple[str, int], ...]
+    last_position_measurement_source: str
+    last_position_source_revision_sha256: str
+    last_position_calibration_sha256: str
+    last_position_clock_mapping_sha256: str
+
+    def __post_init__(self) -> None:
+        _digest(self.estimator_fingerprint_sha256, "estimator_fingerprint_sha256")
+        for name in (
+            "position_world_from_body_m",
+            "velocity_world_from_body_m_s",
+            "residual_accel_bias_body_m_s2",
+        ):
+            value = _vec3(getattr(self, name), name)
+            object.__setattr__(self, name, tuple(float(v) for v in value))
+        object.__setattr__(
+            self,
+            "covariance_p_v_bias",
+            _covariance_tuple(_validated_covariance(self.covariance_p_v_bias)),
+        )
+        if self.last_sample is not None and not isinstance(
+            self.last_sample, CorrectedIMUVectors
+        ):
+            raise ValueError("last_sample must be CorrectedIMUVectors or None")
+        if self.last_attitude is not None and not isinstance(
+            self.last_attitude, LocalizationIMUAttitudeState
+        ):
+            raise ValueError("last_attitude must be LocalizationIMUAttitudeState or None")
+        if self.state is not None and not isinstance(self.state, TranslationalErrorState):
+            raise ValueError("state must be TranslationalErrorState or None")
+        if (
+            (self.last_sample is None)
+            != (self.last_attitude is None)
+            or (self.last_sample is None) != (self.state is None)
+        ):
+            raise ValueError(
+                "snapshot sample, attitude and state must be absent or present together"
+            )
+        if self.state is not None:
+            if (
+                self.last_sample.sensor_timestamp_ns != self.state.timestamp_ns
+                or self.last_attitude.timestamp_ns != self.state.timestamp_ns
+                or self.last_sample.sequence_number != self.state.imu_sequence_number
+            ):
+                raise ValueError("snapshot sample/attitude/state timestamp or sequence mismatch")
+        if type(self.expired) is not bool:
+            raise ValueError("expired must be boolean")
+        if self.state is not None and self.expired != (self.state.status == "LOST"):
+            raise ValueError("snapshot expired flag must agree with LOST state")
+        if self.state is None and self.expired:
+            raise ValueError("initial snapshot cannot be expired")
+        _i64(
+            self.last_position_update_timestamp_ns,
+            "last_position_update_timestamp_ns",
+        )
+        if not isinstance(self.last_position_sequences, tuple):
+            raise ValueError("last_position_sequences must be a tuple")
+        seen = set()
+        for source, sequence in self.last_position_sequences:
+            if source not in {
+                PositionMeasurementSource.LOCALIZATION.value,
+                PositionMeasurementSource.RTK.value,
+            }:
+                raise ValueError("snapshot contains unsupported position source")
+            if source in seen:
+                raise ValueError("snapshot contains duplicate position source")
+            seen.add(source)
+            _i64(sequence, "last position source sequence")
+        if self.last_position_measurement_source not in seen:
+            raise ValueError("snapshot current position source has no sequence")
+        for name in (
+            "last_position_source_revision_sha256",
+            "last_position_calibration_sha256",
+            "last_position_clock_mapping_sha256",
+        ):
+            _digest(getattr(self, name), name)
+
+
 class ConditionedTranslationalESKF:
     """9-state p/v/residual-accel-bias filter conditioned on fused attitude."""
 
@@ -243,6 +348,39 @@ class ConditionedTranslationalESKF:
         self.seed = seed
         self.calibration = imu_calibration
         self.gravity = gravity_model
+        self.body_origin_tolerance = _real(
+            body_origin_tolerance_m,
+            "body_origin_tolerance_m",
+            minimum=0.0,
+        )
+        self._fingerprint = _canonical_digest({
+            "body_id": seed.body_id,
+            "imu_id": seed.imu_id,
+            "map_frame_id": seed.map_frame_id,
+            "seed_timestamp_ns": seed.timestamp_ns,
+            "seed_source_sequence_number": seed.source_sequence_number,
+            "seed_clock_domain": seed.clock_domain,
+            "seed_position_world_from_body_m": list(seed.position_world_from_body_m),
+            "seed_velocity_world_from_body_m_s": list(seed.velocity_world_from_body_m_s),
+            "seed_residual_accel_bias_body_m_s2": list(seed.residual_accel_bias_body_m_s2),
+            "seed_position_stddev_m": list(seed.position_stddev_m),
+            "seed_velocity_stddev_m_s": list(seed.velocity_stddev_m_s),
+            "seed_residual_accel_bias_stddev_m_s2": list(
+                seed.residual_accel_bias_stddev_m_s2
+            ),
+            "localization_source_revision_sha256": seed.localization_source_revision_sha256,
+            "localization_calibration_sha256": seed.localization_calibration_sha256,
+            "clock_mapping_sha256": seed.clock_mapping_sha256,
+            "imu_calibration_sha256": imu_calibration.calibration_sha256,
+            "gravity_model_sha256": gravity_model.revision_sha256,
+            "max_sample_gap_ns": self.max_gap,
+            "max_step_ns": self.max_step,
+            "max_substeps": self.max_substeps,
+            "max_position_dead_reckoning_ns": self.max_dead_reckoning,
+            "max_attitude_variance_rad2": self.max_attitude_variance,
+            "max_residual_accel_bias_m_s2": self.max_bias,
+            "body_origin_tolerance_m": self.body_origin_tolerance,
+        })
         self._position = _vec3(seed.position_world_from_body_m, "seed position")
         self._velocity = _vec3(seed.velocity_world_from_body_m_s, "seed velocity")
         self._bias = _vec3(seed.residual_accel_bias_body_m_s2, "seed residual accel bias")
@@ -267,6 +405,119 @@ class ConditionedTranslationalESKF:
 
     @property
     def state(self) -> TranslationalErrorState | None:
+        return self._state
+
+    @property
+    def estimator_fingerprint_sha256(self) -> str:
+        return self._fingerprint
+
+    def snapshot(self) -> TranslationalESKFSnapshot:
+        """Capture an explicit bounded-replay checkpoint without raw object copying."""
+        sequences = tuple(sorted(
+            (source.value, sequence)
+            for source, sequence in self._last_position_sequences.items()
+        ))
+        return TranslationalESKFSnapshot(
+            estimator_fingerprint_sha256=self._fingerprint,
+            position_world_from_body_m=tuple(float(v) for v in self._position),
+            velocity_world_from_body_m_s=tuple(float(v) for v in self._velocity),
+            residual_accel_bias_body_m_s2=tuple(float(v) for v in self._bias),
+            covariance_p_v_bias=_covariance_tuple(self._covariance),
+            last_sample=self._last_sample,
+            last_attitude=self._last_attitude,
+            state=self._state,
+            expired=self._expired,
+            last_position_update_timestamp_ns=self._last_position_update_timestamp_ns,
+            last_position_sequences=sequences,
+            last_position_measurement_source=self._last_position_measurement_source.value,
+            last_position_source_revision_sha256=self._last_position_source_revision_sha256,
+            last_position_calibration_sha256=self._last_position_calibration_sha256,
+            last_position_clock_mapping_sha256=self._last_position_clock_mapping_sha256,
+        )
+
+    def restore(self, snapshot: TranslationalESKFSnapshot) -> TranslationalErrorState | None:
+        """Restore only a checkpoint produced by an equivalent estimator configuration."""
+        if not isinstance(snapshot, TranslationalESKFSnapshot):
+            raise ValueError("snapshot must be TranslationalESKFSnapshot")
+        if snapshot.estimator_fingerprint_sha256 != self._fingerprint:
+            raise ValueError("snapshot estimator fingerprint mismatch")
+        if snapshot.last_sample is not None:
+            if (
+                snapshot.last_sample.imu_id != self.seed.imu_id
+                or snapshot.last_sample.clock_domain != self.seed.clock_domain
+                or snapshot.last_sample.calibration_sha256
+                != self.calibration.calibration_sha256
+            ):
+                raise ValueError("snapshot IMU sample identity/revision mismatch")
+        if snapshot.last_attitude is not None:
+            attitude = snapshot.last_attitude
+            if (
+                attitude.body_id != self.seed.body_id
+                or attitude.imu_id != self.seed.imu_id
+                or attitude.map_frame_id != self.seed.map_frame_id
+                or attitude.clock_domain != self.seed.clock_domain
+                or attitude.imu_calibration_sha256
+                != self.calibration.calibration_sha256
+                or attitude.localization_source_revision_sha256
+                != self.seed.localization_source_revision_sha256
+                or attitude.localization_calibration_sha256
+                != self.seed.localization_calibration_sha256
+                or attitude.clock_mapping_sha256 != self.seed.clock_mapping_sha256
+            ):
+                raise ValueError("snapshot attitude identity/revision mismatch")
+        if snapshot.state is not None:
+            state = snapshot.state
+            if (
+                state.body_id != self.seed.body_id
+                or state.imu_id != self.seed.imu_id
+                or state.map_frame_id != self.seed.map_frame_id
+                or state.clock_domain != self.seed.clock_domain
+                or state.imu_calibration_sha256
+                != self.calibration.calibration_sha256
+                or state.localization_source_revision_sha256
+                != self.seed.localization_source_revision_sha256
+                or state.localization_calibration_sha256
+                != self.seed.localization_calibration_sha256
+                or state.clock_mapping_sha256 != self.seed.clock_mapping_sha256
+            ):
+                raise ValueError("snapshot state identity/revision mismatch")
+
+        position_sequences = {
+            PositionMeasurementSource(source): sequence
+            for source, sequence in snapshot.last_position_sequences
+        }
+        source = PositionMeasurementSource(snapshot.last_position_measurement_source)
+
+        self._position = np.asarray(
+            snapshot.position_world_from_body_m, dtype=np.float64
+        ).copy()
+        self._velocity = np.asarray(
+            snapshot.velocity_world_from_body_m_s, dtype=np.float64
+        ).copy()
+        self._bias = np.asarray(
+            snapshot.residual_accel_bias_body_m_s2, dtype=np.float64
+        ).copy()
+        self._covariance = _validated_covariance(
+            snapshot.covariance_p_v_bias
+        ).copy()
+        self._last_sample = snapshot.last_sample
+        self._last_attitude = snapshot.last_attitude
+        self._state = snapshot.state
+        self._expired = snapshot.expired
+        self._last_position_update_timestamp_ns = (
+            snapshot.last_position_update_timestamp_ns
+        )
+        self._last_position_sequences = position_sequences
+        self._last_position_measurement_source = source
+        self._last_position_source_revision_sha256 = (
+            snapshot.last_position_source_revision_sha256
+        )
+        self._last_position_calibration_sha256 = (
+            snapshot.last_position_calibration_sha256
+        )
+        self._last_position_clock_mapping_sha256 = (
+            snapshot.last_position_clock_mapping_sha256
+        )
         return self._state
 
     def _validate_pair(
