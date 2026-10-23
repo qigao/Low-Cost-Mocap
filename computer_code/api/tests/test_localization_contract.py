@@ -49,6 +49,7 @@ def status(**changes):
         tracked_frame_id="body-camera",
         map_frame_id="local-map-7",
         timestamp_ns=8_000_000,
+        source_sequence_number=78,
         clock_domain="capture-ptp-A",
         map_revision_sha256=H,
         calibration_sha256="b" * 64,
