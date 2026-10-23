@@ -12,6 +12,16 @@ Use one timestamped, quality-aware state-estimation architecture with separate e
 
 The initial implementation remains a **moving camera observing fixed environmental tags** (inside-out localization). The existing Outside-In mode—fixed external cameras observing a tag/marker constellation on the moving body—is a distinct profile. Environmental anchors do not replace body-mounted markers in that topology.
 
+## Sparse Tags + SLAM: avoid dense tag coverage
+
+The tag-map profiles above are anchor maps, not a requirement to cover every square metre with printed tags. The preferred extension is visual-inertial SLAM with optional sparse fiducial anchors:
+
+- **Indoor:** visual SLAM/VIO tracks natural visual features and IMU motion between anchors. Standardized Tags at entrances, corridor junctions, repetitive/texture-poor areas and relocalization points constrain map drift and provide repeatable map-frame references. Monocular-only SLAM may have unknown metric scale; stereo, depth, a calibrated baseline or independently surveyed anchors must qualify scale before metric RTK/tag fusion.
+- **Outdoor:** visual-inertial odometry/SLAM supplies local motion and map continuity; RTK supplies global position when its solution and correction age pass quality gates; sparse surveyed Tags at selected waypoints provide local pose/map corrections and checks. Under sunlight, low texture, motion blur, foliage or occlusion, SLAM quality can degrade, so the estimator must propagate uncertainty and report DEGRADED/LOST rather than assume the map remains accurate.
+- **Loop closure:** a loop closure can correct accumulated map drift, but must be checked for false data association and must not silently change the active map revision or world frame. Downstream consumers need an explicit map-alignment revision and a controlled pose correction/relocalization event.
+- **One estimator, distinct topologies:** in **inside-out**, a moving camera observes natural features and fixed environmental Tags; SLAM estimates the camera/body pose. In **outside-in**, fixed cameras observe a moving body's rigid Tag/marker constellation; this remains a Mocap problem. SLAM can help map/align the fixed camera network or support moving-camera subprofiles, but environmental SLAM alone does not recover a moving body's pose from static external cameras. Keep the sensor topology and tracked frame explicit in every observation.
+- **No tag carpet:** add Tags where they improve observability, map alignment or recovery. Do not infer that sparse Tags can guarantee localization through arbitrary textureless/featureless corridors or long outdoor stretches; the bounded unanchored travel distance must be measured for each sensor and environment.
+
 ## Map and observation contracts
 
 The new provider-neutral module is `computer_code/api/fiducial_contract.py`.
