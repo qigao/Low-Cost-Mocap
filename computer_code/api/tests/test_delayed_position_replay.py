@@ -5,6 +5,7 @@ import numpy as np
 
 from delayed_position_replay import BoundedDelayedPositionReplay
 from imu_calibration import CorrectedIMUVectors, IMUCalibration
+from imu_interval_interpolation import interpolate_imu_observation_epoch
 from localization_contract import LocalizationQuality
 from localization_imu_fusion import LocalizationIMUAttitudeState
 from position_measurement import (
@@ -414,10 +415,11 @@ class DelayedPositionReplayTests(unittest.TestCase):
         owner, calibration = self.build_wrapper()
         self.ingest_frames(owner, calibration, 5)
         before = owner.state
+        retained_before = owner.retained_frame_count
         with self.assertRaisesRegex(ValueError, "NIS"):
             owner.ingest_position_measurement(
                 localization_measurement(
-                    T0 + 20_000_000,
+                    T0 + 25_000_000,
                     11,
                     position=(100.0, 100.0, 100.0),
                     stddev=(0.001, 0.001, 0.001),
@@ -425,18 +427,20 @@ class DelayedPositionReplayTests(unittest.TestCase):
                 max_position_nis=9.0,
             )
         self.assertEqual(owner.state, before)
+        self.assertEqual(owner.retained_frame_count, retained_before)
 
-        # The rejected sequence was not committed and can be replaced by a
-        # valid measurement with the same source sequence.
+        # The rejected sequence and interior event were not committed.
         accepted = owner.ingest_position_measurement(
             localization_measurement(
-                T0 + 20_000_000,
+                T0 + 25_000_000,
                 11,
                 position=(1.0001, 2.0, 3.0),
             ),
             max_position_nis=100.0,
         )
         self.assertEqual(accepted.last_position_source_sequence_number, 11)
+        self.assertEqual(accepted.timestamp_ns, T0 + 40_000_000)
+
 
     def test_delayed_source_sequence_must_agree_with_timestamp_order(self):
         owner, calibration = self.build_wrapper()
@@ -460,7 +464,7 @@ class DelayedPositionReplayTests(unittest.TestCase):
         self.assertEqual(owner.state, before)
 
     def test_same_timestamp_localization_and_rtk_have_canonical_arrival_independent_order(self):
-        timestamp = T0 + 20_000_000
+        timestamp = T0 + 25_000_000
         localization = localization_measurement(
             timestamp, 11, position=(1.0001, 2.0, 3.0)
         )
@@ -565,13 +569,118 @@ class DelayedPositionReplayTests(unittest.TestCase):
             )
         self.assertEqual(owner.state, before)
 
-    def test_position_timestamp_must_match_retained_imu_frame_exactly(self):
+    def test_between_frame_delayed_update_matches_explicit_split_reference(self):
+        owner, calibration = self.build_wrapper()
+        self.ingest_frames(owner, calibration, 6)
+        measurement = localization_measurement(
+            T0 + 25_000_000,
+            11,
+            position=(1.001, 2.0, 3.0),
+            stddev=(0.03, 0.03, 0.03),
+        )
+        actual = owner.ingest_position_measurement(
+            measurement, max_position_nis=100.0
+        )
+
+        # Independent in-order reference: propagate to the same interior epoch,
+        # apply the acquisition-time update, then resume at the real right frame.
+        reference, ref_calibration = new_filter()
+        for sequence in range(3):
+            timestamp = T0 + sequence * 10_000_000
+            reference.advance(
+                sample(ref_calibration, sequence, timestamp),
+                attitude(ref_calibration, timestamp),
+            )
+        left_ts = T0 + 20_000_000
+        right_ts = T0 + 30_000_000
+        left_sample = sample(ref_calibration, 2, left_ts)
+        right_sample = sample(ref_calibration, 3, right_ts)
+        left_attitude = attitude(ref_calibration, left_ts)
+        right_attitude = attitude(ref_calibration, right_ts)
+        epoch = interpolate_imu_observation_epoch(
+            left_sample, left_attitude, right_sample, right_attitude,
+            T0 + 25_000_000,
+        )
+        epoch_sample = CorrectedIMUVectors(
+            imu_id=epoch.imu_id,
+            sequence_number=epoch.left_sequence_number,
+            sensor_timestamp_ns=epoch.timestamp_ns,
+            clock_domain=epoch.clock_domain,
+            calibration_revision=left_sample.calibration_revision,
+            calibration_sha256=epoch.calibration_sha256,
+            gyro_body_rad_s=epoch.gyro_body_rad_s,
+            specific_force_body_m_s2=epoch.specific_force_body_m_s2,
+        )
+        epoch_attitude = replace(
+            left_attitude,
+            timestamp_ns=epoch.timestamp_ns,
+            quaternion_world_from_body_xyzw=epoch.quaternion_world_from_body_xyzw,
+            attitude_variance_rad2=epoch.attitude_variance_rad2,
+            status="DEGRADED",
+            source="IMU_PROPAGATED",
+            localization_age_ns=epoch.timestamp_ns - left_attitude.last_localization_timestamp_ns,
+        )
+        reference.advance_interpolated_epoch(
+            epoch_sample, epoch_attitude,
+            right_sample=right_sample, right_attitude=right_attitude,
+        )
+        reference.ingest_position_measurement(measurement, max_position_nis=100.0)
+        reference.advance(right_sample, right_attitude)
+        for sequence in range(4, 6):
+            timestamp = T0 + sequence * 10_000_000
+            reference.advance(
+                sample(ref_calibration, sequence, timestamp),
+                attitude(ref_calibration, timestamp),
+            )
+        assert_state_close(self, actual, reference.state)
+
+    def test_interior_replay_survives_pruning_of_left_endpoint(self):
+        owner, calibration = self.build_wrapper(max_position_dead_reckoning_ns=1_000_000_000)
+        self.ingest_frames(owner, calibration, 40)
+        self.assertIsNotNone(owner._base_snapshot.last_sample)
+        left_timestamp = owner._base_snapshot.last_sample.sensor_timestamp_ns
+        first_timestamp = owner.retained_timestamp_range_ns[0]
+        self.assertLess(left_timestamp, first_timestamp)
+        timestamp = left_timestamp + (first_timestamp - left_timestamp) // 2
+        accepted = owner.ingest_position_measurement(
+            localization_measurement(timestamp, 11),
+            max_position_nis=100.0,
+        )
+        self.assertEqual(accepted.timestamp_ns, T0 + 390_000_000)
+        self.assertEqual(accepted.last_position_update_timestamp_ns, timestamp)
+
+    def test_multiple_interior_updates_in_one_interval_are_replayed_by_epoch(self):
+        earlier = localization_measurement(
+            T0 + 23_000_000, 11, position=(1.0001, 2.0, 3.0)
+        )
+        later = localization_measurement(
+            T0 + 27_000_000, 12, position=(1.0002, 2.0, 3.0)
+        )
+
+        first, cal1 = self.build_wrapper()
+        self.ingest_frames(first, cal1, 6)
+        first.ingest_position_measurement(later, max_position_nis=100.0)
+        state_a = first.ingest_position_measurement(
+            earlier, max_position_nis=100.0
+        )
+
+        second, cal2 = self.build_wrapper()
+        self.ingest_frames(second, cal2, 6)
+        second.ingest_position_measurement(earlier, max_position_nis=100.0)
+        state_b = second.ingest_position_measurement(
+            later, max_position_nis=100.0
+        )
+        assert_state_close(self, state_a, state_b)
+
+    def test_position_timestamp_inside_retained_interval_is_accepted(self):
         owner, calibration = self.build_wrapper()
         self.ingest_frames(owner, calibration, 4)
-        with self.assertRaisesRegex(ValueError, "exact IMU replay frames"):
-            owner.ingest_position_measurement(
-                localization_measurement(T0 + 25_000_000, 11)
-            )
+        accepted = owner.ingest_position_measurement(
+            localization_measurement(T0 + 25_000_000, 11),
+            max_position_nis=100.0,
+        )
+        self.assertEqual(accepted.timestamp_ns, T0 + 30_000_000)
+        self.assertEqual(accepted.last_position_update_timestamp_ns, T0 + 25_000_000)
 
 
 if __name__ == "__main__":

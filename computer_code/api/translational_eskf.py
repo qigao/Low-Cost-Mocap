@@ -650,6 +650,47 @@ class ConditionedTranslationalESKF:
         sample: CorrectedIMUVectors,
         attitude: LocalizationIMUAttitudeState,
     ) -> TranslationalErrorState:
+        """Advance to a real IMU sample, consuming its real sequence number."""
+        return self._advance(sample, attitude, allow_same_sequence=False)
+
+    def advance_interpolated_epoch(
+        self,
+        sample: CorrectedIMUVectors,
+        attitude: LocalizationIMUAttitudeState,
+        *,
+        right_sample: CorrectedIMUVectors,
+        right_attitude: LocalizationIMUAttitudeState,
+    ) -> TranslationalErrorState:
+        """Propagate to an interior epoch without consuming a fabricated IMU sequence.
+
+        The interpolated sample carries the left real sample's sequence number.
+        It may only advance the current state within the interval ending at the
+        supplied real right sample. The subsequent real right sample must have
+        a strictly newer sequence number and is still ingested normally.
+        """
+        if self._last_sample is None:
+            raise ValueError("interpolated epoch requires a retained left IMU sample")
+        self._validate_pair(sample, attitude)
+        self._validate_pair(right_sample, right_attitude)
+        if sample.sequence_number != self._last_sample.sequence_number:
+            raise ValueError("interpolated epoch must retain the current left IMU sequence")
+        if sample.sensor_timestamp_ns <= self._last_sample.sensor_timestamp_ns:
+            raise ValueError("interpolated epoch must be after the current propagation epoch")
+        if sample.sensor_timestamp_ns >= right_sample.sensor_timestamp_ns:
+            raise ValueError("interpolated epoch must be strictly before the real right sample")
+        if right_sample.sequence_number <= self._last_sample.sequence_number:
+            raise ValueError("real right IMU sequence must be newer than the left sequence")
+        if right_sample.sensor_timestamp_ns <= self._last_sample.sensor_timestamp_ns:
+            raise ValueError("real right IMU sample must be after the current propagation epoch")
+        return self._advance(sample, attitude, allow_same_sequence=True)
+
+    def _advance(
+        self,
+        sample: CorrectedIMUVectors,
+        attitude: LocalizationIMUAttitudeState,
+        *,
+        allow_same_sequence: bool,
+    ) -> TranslationalErrorState:
         if self._expired:
             raise ValueError("translation ESKF expired; explicit full-state reseed required")
         self._validate_pair(sample, attitude)
@@ -661,7 +702,10 @@ class ConditionedTranslationalESKF:
             self._last_sample = sample
             self._last_attitude = attitude
             return self._publish(sample.sensor_timestamp_ns, sample.sequence_number, "TRACKING", "POSITION_SEEDED")
-        if sample.sequence_number <= previous_sample.sequence_number:
+        if sample.sequence_number < previous_sample.sequence_number or (
+            sample.sequence_number == previous_sample.sequence_number
+            and not allow_same_sequence
+        ):
             raise ValueError("IMU sequence is duplicate or out of order")
         if sample.sensor_timestamp_ns <= previous_sample.sensor_timestamp_ns:
             raise ValueError("IMU timestamp is duplicate or regressed")
