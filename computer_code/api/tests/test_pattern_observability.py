@@ -25,6 +25,15 @@ class PatternObservabilityTests(unittest.TestCase):
         self.assertFalse(summary.every_phase_nominally_observable)
         self.assertEqual(summary.min_global_hamming_distance, 8)
         self.assertEqual(summary.guaranteed_erasure_budget, 5)
+        self.assertEqual(set(summary.illuminated_phases_by_marker.values()), {8})
+        self.assertEqual(set(summary.duty_cycle_by_marker.values()), {0.5})
+        self.assertEqual(
+            summary.global_illuminated_marker_count_by_phase,
+            (3, 4, 3, 3, 4, 3, 6, 3, 4, 4, 4, 4, 4, 3, 4, 8),
+        )
+        self.assertEqual(summary.min_global_illuminated_marker_count, 3)
+        self.assertEqual(summary.max_global_illuminated_marker_count, 8)
+        self.assertEqual(summary.mean_global_illuminated_marker_count, 4.0)
         self.assertFalse(summary.hardware_visibility_verified)
         self.assertEqual(summary.boards["board_A"].worst_illuminated_count, 1)
         self.assertEqual(summary.boards["board_B"].worst_illuminated_count, 1)
@@ -38,6 +47,12 @@ class PatternObservabilityTests(unittest.TestCase):
         self.assertEqual(report.all_boards_observable_phases, tuple(range(16)))
         self.assertEqual(report.min_global_hamming_distance, 4)
         self.assertEqual(report.guaranteed_erasure_budget, 1)
+        self.assertEqual(set(report.illuminated_phases_by_marker.values()), {13})
+        self.assertEqual(set(report.duty_cycle_by_marker.values()), {13 / 16})
+        self.assertEqual(report.global_illuminated_marker_count_by_phase, (6,) * 12 + (8,) * 4)
+        self.assertEqual(report.min_global_illuminated_marker_count, 6)
+        self.assertEqual(report.max_global_illuminated_marker_count, 8)
+        self.assertEqual(report.mean_global_illuminated_marker_count, 6.5)
         for board in report.boards.values():
             self.assertEqual(board.missing_pose_phases, ())
             self.assertEqual(board.worst_illuminated_count, 3)
@@ -53,6 +68,9 @@ class PatternObservabilityTests(unittest.TestCase):
         info = observability_to_dict(report)
         self.assertEqual(info["all_boards_observable_phases"], list(range(16)))
         self.assertEqual(info["guaranteed_erasure_budget"], 1)
+        self.assertEqual(info["illuminated_phases_by_marker"]["100"], 13)
+        self.assertEqual(info["duty_cycle_by_marker"]["100"], 13 / 16)
+        self.assertEqual(info["global_illuminated_marker_count_by_phase"], [6] * 12 + [8] * 4)
         self.assertFalse(info["hardware_visibility_verified"])
 
     def test_registry_rejects_collinear_three_marker_subset_before_phase_analysis(self):
