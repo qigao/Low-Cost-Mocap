@@ -3,17 +3,19 @@
 Nominal/error state:
     x = [position_world(3), velocity_world(3), residual_accel_bias_body(3)]
 
-Attitude is supplied by the existing provider-neutral fused-attitude state and
-is not estimated here. The estimator maintains the full 9x9 covariance so a
-current-time absolute position update can legitimately correct position,
-velocity and residual accelerometer bias through propagated cross-covariance.
+Attitude is supplied by the provider-neutral fused-attitude state and is not
+estimated here. The full 9x9 covariance lets absolute position updates correct
+position, velocity and residual accelerometer bias through cross-covariance.
+Every position source is pinned to an explicit source/calibration/clock contract;
+RTK is rejected unless its contract is configured for this estimator session.
 
 This remains short of a full INS/ESKF because attitude error and gyro bias are
-outside this covariance, delayed measurements are rejected, and nonzero IMU
-lever-arm acceleration is not yet modeled.
+outside this covariance, between-frame delayed measurements are not interpolated,
+and nonzero IMU lever-arm acceleration is not yet modeled.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -26,7 +28,11 @@ from scipy.spatial.transform import Rotation, Slerp
 from imu_calibration import CorrectedIMUVectors, IMUCalibration
 from localization_contract import LocalizationQuality
 from localization_imu_fusion import LocalizationIMUAttitudeState
-from position_measurement import MetricPositionMeasurement, PositionMeasurementSource
+from position_measurement import (
+    MetricPositionMeasurement,
+    PositionMeasurementSource,
+    PositionSourceContract,
+)
 from translational_propagation import GravityModel, TranslationalSeed
 
 
@@ -310,6 +316,7 @@ class ConditionedTranslationalESKF:
         max_attitude_variance_rad2: float = 0.05,
         max_residual_accel_bias_m_s2: float = 2.0,
         body_origin_tolerance_m: float = 1e-9,
+        position_source_contracts: Sequence[PositionSourceContract] = (),
     ) -> None:
         if not isinstance(seed, TranslationalSeed):
             raise ValueError("seed must be TranslationalSeed")
@@ -353,6 +360,30 @@ class ConditionedTranslationalESKF:
             "body_origin_tolerance_m",
             minimum=0.0,
         )
+        if (
+            not isinstance(position_source_contracts, Sequence)
+            or isinstance(position_source_contracts, (str, bytes))
+        ):
+            raise ValueError("position_source_contracts must be a sequence")
+        contracts = {
+            PositionMeasurementSource.LOCALIZATION: PositionSourceContract(
+                source=PositionMeasurementSource.LOCALIZATION,
+                source_revision_sha256=seed.localization_source_revision_sha256,
+                measurement_calibration_sha256=seed.localization_calibration_sha256,
+                clock_mapping_sha256=seed.clock_mapping_sha256,
+            )
+        }
+        for contract in position_source_contracts:
+            if not isinstance(contract, PositionSourceContract):
+                raise ValueError(
+                    "position_source_contracts must contain PositionSourceContract"
+                )
+            if contract.source in contracts:
+                raise ValueError(
+                    f"{contract.source.value} source contract is already pinned by estimator seed"
+                )
+            contracts[contract.source] = contract
+        self._position_source_contracts = contracts
         self._fingerprint = _canonical_digest({
             "body_id": seed.body_id,
             "imu_id": seed.imu_id,
@@ -380,6 +411,18 @@ class ConditionedTranslationalESKF:
             "max_attitude_variance_rad2": self.max_attitude_variance,
             "max_residual_accel_bias_m_s2": self.max_bias,
             "body_origin_tolerance_m": self.body_origin_tolerance,
+            "position_source_contracts": [
+                {
+                    "source": contract.source.value,
+                    "source_revision_sha256": contract.source_revision_sha256,
+                    "measurement_calibration_sha256": contract.measurement_calibration_sha256,
+                    "clock_mapping_sha256": contract.clock_mapping_sha256,
+                }
+                for contract in sorted(
+                    self._position_source_contracts.values(),
+                    key=lambda item: item.source.value,
+                )
+            ],
         })
         self._position = _vec3(seed.position_world_from_body_m, "seed position")
         self._velocity = _vec3(seed.velocity_world_from_body_m_s, "seed velocity")
@@ -751,13 +794,26 @@ class ConditionedTranslationalESKF:
             raise ValueError("position measurement clock mismatch")
         if measurement.timestamp_ns != self._state.timestamp_ns:
             raise ValueError("position measurement must align exactly with current ESKF timestamp")
-        if measurement.source is PositionMeasurementSource.LOCALIZATION:
-            if measurement.source_revision_sha256 != self.seed.localization_source_revision_sha256:
-                raise ValueError("localization position source revision mismatch")
-            if measurement.measurement_calibration_sha256 != self.seed.localization_calibration_sha256:
-                raise ValueError("localization position calibration mismatch")
-            if measurement.clock_mapping_sha256 != self.seed.clock_mapping_sha256:
-                raise ValueError("localization position clock mapping mismatch")
+        contract = self._position_source_contracts.get(measurement.source)
+        if contract is None:
+            raise ValueError(
+                f"{measurement.source.value} position source contract is not configured"
+            )
+        if measurement.source_revision_sha256 != contract.source_revision_sha256:
+            raise ValueError(
+                f"{measurement.source.value.lower()} position source revision mismatch"
+            )
+        if (
+            measurement.measurement_calibration_sha256
+            != contract.measurement_calibration_sha256
+        ):
+            raise ValueError(
+                f"{measurement.source.value.lower()} position calibration mismatch"
+            )
+        if measurement.clock_mapping_sha256 != contract.clock_mapping_sha256:
+            raise ValueError(
+                f"{measurement.source.value.lower()} position clock mapping mismatch"
+            )
         last_sequence = self._last_position_sequences.get(measurement.source)
         if last_sequence is not None and measurement.source_sequence_number <= last_sequence:
             raise ValueError("position measurement sequence is duplicate or out of order")

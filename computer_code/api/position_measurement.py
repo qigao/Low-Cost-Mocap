@@ -66,6 +66,30 @@ class PositionMeasurementSource(str, Enum):
 
 
 @dataclass(frozen=True)
+class PositionSourceContract:
+    """Configuration-pinned provenance for one absolute-position provider."""
+
+    source: PositionMeasurementSource
+    source_revision_sha256: str
+    measurement_calibration_sha256: str
+    clock_mapping_sha256: str
+
+    def __post_init__(self) -> None:
+        try:
+            object.__setattr__(
+                self, "source", PositionMeasurementSource(self.source)
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("unsupported position source contract") from exc
+        for name in (
+            "source_revision_sha256",
+            "measurement_calibration_sha256",
+            "clock_mapping_sha256",
+        ):
+            _digest(getattr(self, name), name)
+
+
+@dataclass(frozen=True)
 class MetricPositionMeasurement:
     source: PositionMeasurementSource
     body_id: str

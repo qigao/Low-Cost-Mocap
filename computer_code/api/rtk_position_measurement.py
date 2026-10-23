@@ -14,7 +14,11 @@ from imu_contract import ClockMapping
 from localization_contract import LocalizationQuality
 from localization_imu_fusion import LocalizationIMUAttitudeState
 from outdoor_sensor_contract import RTKSample
-from position_measurement import MetricPositionMeasurement, PositionMeasurementSource
+from position_measurement import (
+    MetricPositionMeasurement,
+    PositionMeasurementSource,
+    PositionSourceContract,
+)
 from rtk_coordinates import (
     ENUOrigin,
     antenna_enu_to_body_origin_enu,
@@ -119,6 +123,28 @@ class RTKPositionCalibration:
                 "min_satellites": self.min_satellites,
             }),
         )
+
+
+def position_source_contract_from_rtk(
+    calibration: RTKPositionCalibration,
+    mapping: ClockMapping,
+    *,
+    expected_target_clock_domain: str,
+) -> PositionSourceContract:
+    """Pin RTK map, receiver/lever-arm calibration and clock mapping for a session."""
+    if not isinstance(calibration, RTKPositionCalibration):
+        raise ValueError("calibration must be RTKPositionCalibration")
+    if not isinstance(mapping, ClockMapping):
+        raise ValueError("mapping must be ClockMapping")
+    target = _text(expected_target_clock_domain, "expected_target_clock_domain")
+    if mapping.target_clock_domain != target:
+        raise ValueError("RTK clock mapping target does not match estimator clock")
+    return PositionSourceContract(
+        source=PositionMeasurementSource.RTK,
+        source_revision_sha256=calibration.source_revision_sha256,
+        measurement_calibration_sha256=calibration.calibration_sha256,
+        clock_mapping_sha256=mapping.mapping_sha256,
+    )
 
 
 def position_measurement_from_rtk(

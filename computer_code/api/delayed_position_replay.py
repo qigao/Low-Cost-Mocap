@@ -16,7 +16,11 @@ from typing import Sequence
 
 from imu_calibration import CorrectedIMUVectors, IMUCalibration
 from localization_imu_fusion import LocalizationIMUAttitudeState
-from position_measurement import MetricPositionMeasurement, PositionMeasurementSource
+from position_measurement import (
+    MetricPositionMeasurement,
+    PositionMeasurementSource,
+    PositionSourceContract,
+)
 from translational_eskf import (
     ConditionedTranslationalESKF,
     TranslationalErrorState,
@@ -117,6 +121,7 @@ class BoundedDelayedPositionReplay:
         max_attitude_variance_rad2: float = 0.05,
         max_residual_accel_bias_m_s2: float = 2.0,
         body_origin_tolerance_m: float = 1e-9,
+        position_source_contracts: Sequence[PositionSourceContract] = (),
     ) -> None:
         self.max_history_frames = _positive_int(
             max_history_frames, "max_history_frames", maximum=100_000
@@ -124,6 +129,11 @@ class BoundedDelayedPositionReplay:
         self.max_history_ns = _positive_int(
             max_history_ns, "max_history_ns", maximum=_MAX_I64
         )
+        if (
+            not isinstance(position_source_contracts, Sequence)
+            or isinstance(position_source_contracts, (str, bytes))
+        ):
+            raise ValueError("position_source_contracts must be a sequence")
         self._seed = seed
         self._calibration = imu_calibration
         self._gravity = gravity_model
@@ -135,6 +145,7 @@ class BoundedDelayedPositionReplay:
             max_attitude_variance_rad2=max_attitude_variance_rad2,
             max_residual_accel_bias_m_s2=max_residual_accel_bias_m_s2,
             body_origin_tolerance_m=body_origin_tolerance_m,
+            position_source_contracts=tuple(position_source_contracts),
         )
         self._filter = self._new_filter()
         self._base_snapshot = self._filter.snapshot()
