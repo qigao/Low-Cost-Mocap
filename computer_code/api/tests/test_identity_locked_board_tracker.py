@@ -197,6 +197,28 @@ class ContinuousBoardTrackerTests(unittest.TestCase):
                 )
                 self.assertFalse(board.outcome.pose.metric_scale_validated)
 
+    def test_revalidation_rejects_unique_decode_beyond_erasure_guarantee(self):
+        frames, rois = self.samples(self.first)
+        candidates = self.validations(self.first)
+        self.assertTrue(candidates)
+        candidate = candidates[0]
+        trace = list(candidate.trace)
+        for phase in (0, 1):
+            item = trace[phase]
+            trace[phase] = replace(
+                item, roi=None, predicted_roi_qualified=True
+            )
+        candidates[0] = replace(candidate, trace=tuple(trace))
+
+        with self.assertRaisesRegex(ValueError, "guaranteed erasure budget"):
+            self.tracker.advance(
+                frames, rois,
+                revalidation_traces=candidates,
+                controller_config_sha256=self.registry.config_sha256,
+            )
+        self.assertIsNone(self.tracker.last_trigger_id)
+        self.assertEqual(self.tracker.active_identity_locks, ())
+
     def test_revalidation_after_new_cycle_resets_identity_age(self):
         self.bootstrap()
         for trigger in range(self.first + 1, self.first + 17):

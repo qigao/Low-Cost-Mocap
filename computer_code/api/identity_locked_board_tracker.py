@@ -60,6 +60,12 @@ class MarkerIdentityLock:
     marker_id: int
     confirmed_trigger_id: int
     config_sha256: str
+    valid_samples: int
+    erased_samples: int
+    bit_errors: int
+    minimum_hamming_distance: int
+    guaranteed_erasure_budget: int
+    within_guaranteed_erasure_budget: bool
 
 
 @dataclass(frozen=True)
@@ -408,6 +414,8 @@ class IdentityLockedBoardTracker:
                 target_frame=roi.frame_stamp,
                 trigger_epoch=self.trigger_epoch,
             )
+            if not admission.within_guaranteed_erasure_budget:
+                raise ValueError("revalidated identity exceeds guaranteed erasure budget")
             marker = _nonnegative_int(
                 admission.detection.marker_id, "admitted marker_id"
             )
@@ -439,7 +447,17 @@ class IdentityLockedBoardTracker:
                 if other_key != key and other_key[0] == camera and existing.marker_id == marker:
                     raise ValueError("two local tracks claim the same global marker")
             stage[key] = MarkerIdentityLock(
-                camera, local_id, marker, batch.trigger_id, self.registry.config_sha256
+                camera_id=camera,
+                local_track_id=local_id,
+                marker_id=marker,
+                confirmed_trigger_id=batch.trigger_id,
+                config_sha256=self.registry.config_sha256,
+                valid_samples=admission.valid_samples,
+                erased_samples=admission.erased_samples,
+                bit_errors=admission.bit_errors,
+                minimum_hamming_distance=admission.minimum_hamming_distance,
+                guaranteed_erasure_budget=admission.guaranteed_erasure_budget,
+                within_guaranteed_erasure_budget=admission.within_guaranteed_erasure_budget,
             )
             newly_confirmed.append(marker)
 

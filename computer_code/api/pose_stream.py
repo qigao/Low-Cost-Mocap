@@ -14,7 +14,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from board_patterns import BoardPatternRegistry
-from identity_locked_board_tracker import LockedBoardFrame
+from identity_locked_board_tracker import LockedBoardFrame, MarkerIdentityLock
 from temporal_pattern import _nonnegative_int
 
 
@@ -132,6 +132,61 @@ def pose_frame_to_dict(
         or not set(quarantined).issubset(set(cameras))
     ):
         raise ValueError("quarantined camera IDs must be unique and expected")
+
+    if not isinstance(frame.active_locks, tuple):
+        raise ValueError("active marker locks must be a tuple")
+    active_marker_tracks = []
+    seen_local_tracks = set()
+    seen_camera_markers = set()
+    for lock in frame.active_locks:
+        if not isinstance(lock, MarkerIdentityLock):
+            raise ValueError("active marker lock has invalid type")
+        camera_id = _nonnegative_int(lock.camera_id, "lock camera_id")
+        local_track_id = _nonnegative_int(lock.local_track_id, "lock local_track_id")
+        marker_id = _nonnegative_int(lock.marker_id, "lock marker_id")
+        confirmed_trigger = _nonnegative_int(lock.confirmed_trigger_id, "lock confirmed_trigger_id")
+        valid_samples = _nonnegative_int(lock.valid_samples, "lock valid_samples")
+        erased_samples = _nonnegative_int(lock.erased_samples, "lock erased_samples")
+        bit_errors = _nonnegative_int(lock.bit_errors, "lock bit_errors")
+        minimum_distance = _nonnegative_int(lock.minimum_hamming_distance, "lock minimum_hamming_distance")
+        erasure_budget = _nonnegative_int(lock.guaranteed_erasure_budget, "lock guaranteed_erasure_budget")
+        if camera_id not in cameras or camera_id in quarantined:
+            raise ValueError("active marker lock belongs to an unavailable camera")
+        if marker_id not in registry.marker_to_board:
+            raise ValueError("active marker lock is absent from the registered codebook")
+        if confirmed_trigger > trigger:
+            raise ValueError("marker identity lock cannot be confirmed in a future trigger")
+        if lock.config_sha256 != registry.config_sha256:
+            raise ValueError("marker identity lock has stale pattern revision")
+        if valid_samples < 1 or valid_samples + erased_samples != registry.period_triggers:
+            raise ValueError("marker identity lock has inconsistent code-period sample counts")
+        if minimum_distance != registry.codebook.minimum_hamming_distance:
+            raise ValueError("marker identity lock has inconsistent Hamming distance")
+        if erasure_budget != registry.codebook.guaranteed_erasure_budget:
+            raise ValueError("marker identity lock has inconsistent erasure budget")
+        if lock.within_guaranteed_erasure_budget is not True or erased_samples > erasure_budget:
+            raise ValueError("active marker identity exceeds guaranteed erasure budget")
+        if bit_errors > registry.codebook.max_bit_errors:
+            raise ValueError("marker identity lock exceeds the bit-error budget")
+        local_key = (camera_id, local_track_id)
+        marker_key = (camera_id, marker_id)
+        if local_key in seen_local_tracks or marker_key in seen_camera_markers:
+            raise ValueError("duplicate active local-track or per-camera marker identity")
+        seen_local_tracks.add(local_key)
+        seen_camera_markers.add(marker_key)
+        active_marker_tracks.append({
+            "camera_id": camera_id,
+            "local_track_id": local_track_id,
+            "marker_id": marker_id,
+            "confirmed_trigger_id": confirmed_trigger,
+            "valid_samples": valid_samples,
+            "erased_samples": erased_samples,
+            "bit_errors": bit_errors,
+            "minimum_hamming_distance": minimum_distance,
+            "guaranteed_erasure_budget": erasure_budget,
+            "within_guaranteed_erasure_budget": True,
+        })
+    active_marker_tracks.sort(key=lambda item: (item["camera_id"], item["marker_id"], item["local_track_id"]))
 
     bodies = []
     for board_id in sorted(registry.boards):
@@ -273,6 +328,7 @@ def pose_frame_to_dict(
         "exposure_skew_ns": skew_ns,
         "camera_ids": list(cameras),
         "quarantined_camera_ids": sorted(quarantined),
+        "active_marker_tracks": active_marker_tracks,
         "pattern_sha256": frame.pattern_sha256,
         "calibration_sha256": frame.calibration_sha256,
         "hardware_provenance_verified": False,

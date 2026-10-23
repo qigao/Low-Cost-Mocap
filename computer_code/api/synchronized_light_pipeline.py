@@ -248,14 +248,17 @@ class SynchronizedLocalLightPipeline:
                         # Prequalify here to skip undecodable local histories
                         # without aborting healthy board IDs. The downstream
                         # tracker MUST independently re-decode this trace.
-                        admit_track_marker_at_frame(
+                        admission = admit_track_marker_at_frame(
                             history, tracker.registry.codebook,
                             tracker.brightness_calibration_by_camera_id[camera],
                             camera_id=camera, local_track_id=point.track_id,
                             target_frame=stamp,
                             trigger_epoch=tracker.trigger_epoch,
                             min_valid_samples=self._min_decode_observations,
+                            allow_degraded_erasure_decode=True,
                         )
+                        if not admission.within_guaranteed_erasure_budget:
+                            continue
                     except ValueError:
                         continue
                     candidates.append(LocalTrackCycle(

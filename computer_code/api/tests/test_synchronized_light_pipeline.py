@@ -116,8 +116,58 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             detections[camera] = points
         return frames, images, detections
 
+    def qualified_dark_track_ids(self, trigger):
+        """Synthetic ground-truth motion verifier for predicted dark ROIs.
+
+        This test oracle is deliberately separate from BoundedLightTracker:
+        it uses the known synthetic rigid-body pose to certify a prediction
+        only when it uniquely coincides with one configured marker position.
+        Production callers must supply an independently qualified map or leave
+        dark samples as erasures.
+        """
+        phase = (trigger - self.epoch) % self.registry.period_triggers
+        qualified = {}
+        for camera in self.cameras:
+            local = self.pipeline._local_trackers[camera]
+            expected = {
+                marker: np.asarray(self.project(camera, marker, trigger))
+                for marker in self.registry.marker_to_board
+            }
+            candidates = {}
+            marker_claims = {}
+            for track_id, state in local._tracks.items():
+                gap = trigger - state.last_observed_trigger
+                if gap < 1 or gap > local.max_missing_triggers:
+                    continue
+                predicted = state.last_xy + gap * state.velocity_per_trigger
+                ranked = sorted(
+                    (
+                        float(np.linalg.norm(predicted - xy)),
+                        marker,
+                    )
+                    for marker, xy in expected.items()
+                )
+                if not ranked or ranked[0][0] > 0.75:
+                    continue
+                if len(ranked) > 1 and ranked[1][0] - ranked[0][0] <= 0.5:
+                    continue
+                marker = ranked[0][1]
+                candidates[track_id] = marker
+                marker_claims.setdefault(marker, []).append(track_id)
+            qualified[camera] = tuple(sorted(
+                track_id
+                for track_id, marker in candidates.items()
+                if len(marker_claims[marker]) == 1
+                and self.registry.codebook.patterns[marker][phase] == 0
+            ))
+        return qualified
+
     def process(self, trigger, **kwargs):
         frames, images, detections = self.frames_and_pixels(trigger)
+        kwargs.setdefault(
+            "independently_qualified_dark_track_ids",
+            self.qualified_dark_track_ids(trigger),
+        )
         return self.pipeline.process(
             frames, images, detections,
             controller_config_sha256=self.registry.config_sha256,
@@ -474,7 +524,10 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
             frames, images, detections = self.frames_and_pixels(
                 trigger, empty_cameras=frozenset((2,))
             )
-            self.pipeline.process(frames, images, detections)
+            self.pipeline.process(
+                frames, images, detections,
+                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+            )
         self.assertTrue(all(
             lock.camera_id != 2
             for lock in self.identity.active_identity_locks
@@ -483,7 +536,10 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
         partial_result = None
         for trigger in range(1020, 1032):
             frames, images, detections = self.frames_and_pixels(trigger)
-            partial_result = self.pipeline.process(frames, images, detections)
+            partial_result = self.pipeline.process(
+                frames, images, detections,
+                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+            )
         self.assertTrue(set(self.pipeline.active_local_track_ids(2)) - initial_ids)
         # Erasures during phases 0..3 remove the distinguishing bits of
         # some codewords. A partial-code ID is NOT transferred to the new
@@ -495,7 +551,10 @@ class SynchronizedLightPipelineTests(unittest.TestCase):
         restored = None
         for trigger in range(1032, 1048):
             frames, images, detections = self.frames_and_pixels(trigger)
-            restored = self.pipeline.process(frames, images, detections)
+            restored = self.pipeline.process(
+                frames, images, detections,
+                independently_qualified_dark_track_ids=self.qualified_dark_track_ids(trigger),
+            )
         new_camera_locks = [
             lock for lock in restored.active_locks if lock.camera_id == 2
         ]

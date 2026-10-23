@@ -182,6 +182,8 @@ class DecodedMarker:
     erased_samples: int
     bit_errors: int
     competing_error_margin: int
+    guaranteed_erasure_budget: int
+    within_guaranteed_erasure_budget: bool
 
 
 def decode_temporal_marker(
@@ -260,6 +262,11 @@ def decode_temporal_marker(
         erased_samples=codebook.period - len(observed),
         bit_errors=best,
         competing_error_margin=difference,
+        guaranteed_erasure_budget=codebook.guaranteed_erasure_budget,
+        within_guaranteed_erasure_budget=(
+            codebook.period - len(observed)
+            <= codebook.guaranteed_erasure_budget
+        ),
     )
 
 

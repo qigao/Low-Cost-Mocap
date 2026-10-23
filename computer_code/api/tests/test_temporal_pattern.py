@@ -112,6 +112,33 @@ class TemporalIdentityTests(unittest.TestCase):
         self.assertEqual(self.codes.minimum_hamming_distance, 4)
         self.assertEqual(self.codes.guaranteed_erasure_budget, 1)
 
+    def test_decode_reports_when_unique_result_exceeds_guaranteed_erasure_budget(self):
+        truth = self.patterns[12]
+        samples = [
+            LightSample(150 + phase, None if phase in (0, 1) else bit)
+            for phase, bit in enumerate(truth)
+        ]
+        decoded = decode_temporal_marker(
+            samples, self.codes, trigger_epoch=150, min_valid_samples=6
+        )
+        self.assertEqual(decoded.marker_id, 12)
+        self.assertEqual(decoded.erased_samples, 2)
+        self.assertEqual(decoded.guaranteed_erasure_budget, 1)
+        self.assertFalse(decoded.within_guaranteed_erasure_budget)
+
+    def test_complete_cycle_reports_guaranteed_erasure_budget_satisfied(self):
+        truth = self.patterns[12]
+        samples = [
+            LightSample(180 + phase, bit)
+            for phase, bit in enumerate(truth)
+        ]
+        decoded = decode_temporal_marker(
+            samples, self.codes, trigger_epoch=180
+        )
+        self.assertEqual(decoded.erased_samples, 0)
+        self.assertEqual(decoded.guaranteed_erasure_budget, 1)
+        self.assertTrue(decoded.within_guaranteed_erasure_budget)
+
     def test_decode_with_occlusion_noise_and_out_of_order_arrivals(self):
         truth = self.patterns[12]
         samples = [
@@ -125,6 +152,8 @@ class TemporalIdentityTests(unittest.TestCase):
         self.assertEqual(decoded.marker_id, 12)
         self.assertEqual(decoded.valid_samples, 6)
         self.assertEqual(decoded.erased_samples, 2)
+        self.assertEqual(decoded.guaranteed_erasure_budget, 1)
+        self.assertFalse(decoded.within_guaranteed_erasure_budget)
         self.assertEqual(decoded.bit_errors, 1)
         self.assertGreaterEqual(decoded.competing_error_margin, 1)
 
@@ -192,6 +221,11 @@ class TemporalIdentityTests(unittest.TestCase):
             decode_temporal_marker(samples, self.codes,
                                    trigger_epoch=200).marker_id, 11
         )
+        full = decode_temporal_marker(
+            samples, self.codes, trigger_epoch=200
+        )
+        self.assertEqual(full.erased_samples, 0)
+        self.assertTrue(full.within_guaranteed_erasure_budget)
         with self.assertRaisesRegex(ValueError, "different code cycles"):
             decode_temporal_marker(samples, self.codes, trigger_epoch=199)
         with self.assertRaisesRegex(ValueError, "precedes"):
