@@ -147,7 +147,7 @@ class LocalizationAccuracyReportTests(unittest.TestCase):
 
     def test_rejects_mixed_state_calibration_and_unbounded_sample_count(self):
         states, references, _latency = sample_report_inputs()
-        changed_state = replace(states[-1], imu_calibration_sha256="a" * 64)
+        changed_state = replace(states[-1], imu_calibration_sha256="9" * 64)
         with self.assertRaisesRegex(ValueError, "mix body, frame, clock or calibration"):
             evaluate_localization_accuracy(
                 states[:-1] + (changed_state,), references, max_match_delta_ns=0
