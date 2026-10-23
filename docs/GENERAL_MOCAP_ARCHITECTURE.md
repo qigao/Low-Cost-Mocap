@@ -164,6 +164,7 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `imu_propagation.py` | Bounded gyro-only attitude propagation; no global position/velocity or optical fusion |
 | `translational_propagation.py` | Bounded accelerometer position/velocity dead reckoning from an explicit metric seed, gravity model and fused attitude; residual accel bias state/uncertainty retained; nonzero IMU lever arm rejected until compensation exists |
 | `position_measurement.py` | Provider-neutral clock-aligned metric position correction boundary for localization and RTK; current implementation adapts MapPoseObservation and carries diagonal position uncertainty/source revisions |
+| `rtk_position_measurement.py` | Qualified RTK FIXED -> site ENU -> body-origin adapter with explicit receiver/ENU/lever-arm calibration, accuracy semantics, clock mapping and fused-attitude frame checks |
 | `optical_imu_fusion.py` | Bounded optical attitude correction over interpolated gyro history, isotropic uncertainty, explicit TRACKING/DEGRADED/LOST states; no position/velocity |
 | `fused_attitude_stream.py` | Additive strict fused-attitude payload and state serializer; existing optical PoseStream v1 remains unchanged |
 | `fusion_replay.py` | Bounded deterministic typed-event replay, canonical digests and quaternion geodesic reference metrics |
