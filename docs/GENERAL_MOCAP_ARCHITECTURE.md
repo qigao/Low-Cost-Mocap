@@ -79,6 +79,15 @@ Reuse the current modules in this order:
 
 When a board declares `min_visible_markers=3`, the registry checks every three-marker subset using a scale-normalized triangle-quality threshold. A board whose full point cloud is non-collinear can still be rejected if an occlusion leaves a collinear or nearly collinear triple. Track continuity proposes camera-local associations; the temporal code must admit global marker IDs; rigid geometry validates pose observability and rejects ambiguity. Geometry never overrides an unresolved temporal identity.
 
+For a predicted dark ROI, the pipeline accepts only a `DarkROIQualification`
+record bound to the current camera-local Track, trigger, registered marker ID,
+pattern SHA-256, and an external expected image position. The residual from
+the Track prediction must remain below the configured pixel limit, and the
+registered marker must be OFF at that exact trigger phase. A verifier ID and
+reference-evidence digest are retained for audit; the digest is not a signature
+and does not make an untrusted verifier trustworthy. If the external motion
+model or reference is unavailable, leave the sample as an erasure.
+
 No proximity-only reassignment, inferred trigger phase, stale pose reuse, or silent metric-scale assumption is allowed.
 
 ### IMU path
