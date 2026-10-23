@@ -107,6 +107,7 @@ No proximity-only reassignment, inferred trigger phase, stale pose reuse, or sil
 4. Reset/reinitialize on clock reset, invalid calibration, saturation or excessive gaps rather than integrating across unknown time. Translational dead reckoning has a separate bounded horizon; after expiry position/velocity are hidden and an explicit position reseed is required. A nonzero IMU-to-body lever arm is rejected in this first primitive because rotational lever-arm acceleration compensation is not yet modeled.
 
 IMU translation drifts when acceleration is integrated twice. It cannot provide indefinitely stable global position without optical/other independent constraints. Optical measurements correct accumulated drift; IMU samples provide high-rate propagation between optical updates. Gravity does not by itself make yaw or global position observable.
+The first position correction layer uses a common `MetricPositionMeasurement` and a current-time diagonal innovation update. It reduces position uncertainty and resets the bounded dead-reckoning age, but deliberately leaves velocity and residual accelerometer bias unchanged because the current primitive does not carry position–velocity–bias cross-covariance. Measurements outside the current estimator timestamp fail closed instead of rewinding state. A configurable normalized-innovation-squared gate rejects inconsistent position updates atomically.
 
 ### Fusion choice
 
@@ -162,6 +163,7 @@ Report optical-only and fused metrics separately. Do not tune thresholds on the 
 | `imu_calibration.py` | Immutable IMU-to-body extrinsics, bias/noise/correction calibration and bias-corrected vector transforms |
 | `imu_propagation.py` | Bounded gyro-only attitude propagation; no global position/velocity or optical fusion |
 | `translational_propagation.py` | Bounded accelerometer position/velocity dead reckoning from an explicit metric seed, gravity model and fused attitude; residual accel bias state/uncertainty retained; nonzero IMU lever arm rejected until compensation exists |
+| `position_measurement.py` | Provider-neutral clock-aligned metric position correction boundary for localization and RTK; current implementation adapts MapPoseObservation and carries diagonal position uncertainty/source revisions |
 | `optical_imu_fusion.py` | Bounded optical attitude correction over interpolated gyro history, isotropic uncertainty, explicit TRACKING/DEGRADED/LOST states; no position/velocity |
 | `fused_attitude_stream.py` | Additive strict fused-attitude payload and state serializer; existing optical PoseStream v1 remains unchanged |
 | `fusion_replay.py` | Bounded deterministic typed-event replay, canonical digests and quaternion geodesic reference metrics |
