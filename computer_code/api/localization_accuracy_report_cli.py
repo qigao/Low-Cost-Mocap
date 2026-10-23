@@ -21,9 +21,8 @@ from localization_replay_cli import (
     _pairs,
     _require_list,
 )
-from imu_calibration import CorrectedIMUVectors, IMUCalibration
-from localization_imu_fusion import LocalizationIMUAttitudeState
-from position_measurement import PositionSourceContract
+from imu_calibration import IMUCalibration
+from position_measurement import PositionMeasurementSource, PositionSourceContract
 from translational_eskf import TranslationalSeed
 from translational_propagation import GravityModel
 
@@ -52,7 +51,7 @@ def evaluate_document(document: object, *, max_output_bytes: int = DEFAULT_MAX_B
         "imu_calibration": lambda value: _build(IMUCalibration, value),
         "gravity_model": lambda value: _build(GravityModel, value),
         "position_source_contracts": lambda value: tuple(
-            _build(PositionSourceContract, item, enums={})
+            _build(PositionSourceContract, item, enums={"source": PositionMeasurementSource})
             for item in _require_list(value, "position_source_contracts")
         ),
     })
