@@ -122,6 +122,7 @@ class MapPoseObservation:
     tracked_frame_id: str
     map_frame_id: str
     timestamp_ns: int
+    source_sequence_number: int
     clock_domain: str
     position_xyz: tuple[float, float, float]
     position_unit: str
@@ -148,6 +149,7 @@ class MapPoseObservation:
         for name in ("tracked_frame_id", "map_frame_id", "clock_domain"):
             object.__setattr__(self, name, _text(getattr(self, name), name))
         _int(self.timestamp_ns, "timestamp_ns")
+        _int(self.source_sequence_number, "source_sequence_number")
         unit = _text(self.position_unit, "position_unit")
         if unit not in {"meters", "map_units"}:
             raise ValueError("position_unit must be meters or map_units")
@@ -185,6 +187,7 @@ class LocalizationStatus:
     tracked_frame_id: str
     map_frame_id: str
     timestamp_ns: int
+    source_sequence_number: int
     clock_domain: str
     map_revision_sha256: str
     calibration_sha256: str
@@ -200,6 +203,7 @@ class LocalizationStatus:
         for name in ("tracked_frame_id", "map_frame_id", "clock_domain", "reason"):
             object.__setattr__(self, name, _text(getattr(self, name), name))
         timestamp = _int(self.timestamp_ns, "timestamp_ns")
+        _int(self.source_sequence_number, "source_sequence_number")
         _digest(self.map_revision_sha256, "map_revision_sha256")
         _digest(self.calibration_sha256, "calibration_sha256")
         if self.last_pose_timestamp_ns is not None:
