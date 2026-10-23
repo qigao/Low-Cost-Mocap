@@ -271,6 +271,29 @@ class TranslationalESKFSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fingerprint mismatch"):
             other.restore(checkpoint)
 
+    def test_snapshot_fingerprint_includes_position_source_contracts(self):
+        estimator, calibration = new_filter()
+        estimator.advance(
+            sample(calibration, 0, T0),
+            attitude(calibration, T0),
+        )
+        checkpoint = estimator.snapshot()
+        other_contract = PositionSourceContract(
+            source=PositionMeasurementSource.RTK,
+            source_revision_sha256=RTK_SOURCE_SHA,
+            measurement_calibration_sha256="0" * 64,
+            clock_mapping_sha256=RTK_CLOCK_SHA,
+        )
+        other = ConditionedTranslationalESKF(
+            seed(),
+            calibration,
+            gravity(),
+            **filter_kwargs(),
+            position_source_contracts=(other_contract,),
+        )
+        with self.assertRaisesRegex(ValueError, "fingerprint mismatch"):
+            other.restore(checkpoint)
+
     def test_snapshot_lifecycle_invariants_fail_closed(self):
         estimator, calibration = new_filter()
         estimator.advance(sample(calibration, 0, T0), attitude(calibration, T0))
