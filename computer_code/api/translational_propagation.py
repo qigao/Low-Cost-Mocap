@@ -259,6 +259,7 @@ class TranslationalPropagationState:
     last_position_source_sequence_number: int
     last_position_source_revision_sha256: str
     last_position_calibration_sha256: str
+    last_position_clock_mapping_sha256: str
     localization_source_revision_sha256: str
     localization_calibration_sha256: str
     imu_calibration_sha256: str
@@ -346,6 +347,7 @@ class TranslationalPropagationState:
         for name in (
             "last_position_source_revision_sha256",
             "last_position_calibration_sha256",
+            "last_position_clock_mapping_sha256",
             "localization_source_revision_sha256",
             "localization_calibration_sha256",
             "imu_calibration_sha256",
@@ -428,6 +430,7 @@ class BoundedIMUTranslationPropagator:
         self._last_position_measurement_source = PositionMeasurementSource.LOCALIZATION
         self._last_position_source_revision_sha256 = seed.localization_source_revision_sha256
         self._last_position_calibration_sha256 = seed.localization_calibration_sha256
+        self._last_position_clock_mapping_sha256 = seed.clock_mapping_sha256
 
     @property
     def state(self) -> TranslationalPropagationState | None:
@@ -446,6 +449,8 @@ class BoundedIMUTranslationPropagator:
             raise ValueError("IMU identity mismatch")
         if attitude.body_id != self.seed.body_id:
             raise ValueError("attitude body does not match translation seed")
+        if attitude.map_frame_id != self.seed.map_frame_id:
+            raise ValueError("attitude map frame does not match translation seed")
         if (
             sample.clock_domain != self.seed.clock_domain
             or attitude.clock_domain != self.seed.clock_domain
@@ -556,6 +561,7 @@ class BoundedIMUTranslationPropagator:
             ],
             last_position_source_revision_sha256=self._last_position_source_revision_sha256,
             last_position_calibration_sha256=self._last_position_calibration_sha256,
+            last_position_clock_mapping_sha256=self._last_position_clock_mapping_sha256,
             localization_source_revision_sha256=self.seed.localization_source_revision_sha256,
             localization_calibration_sha256=self.seed.localization_calibration_sha256,
             imu_calibration_sha256=self.calibration.calibration_sha256,
@@ -592,8 +598,11 @@ class BoundedIMUTranslationPropagator:
             raise ValueError("position measurement map frame does not match translation state")
         if measurement.clock_domain != self.seed.clock_domain:
             raise ValueError("position measurement clock does not match translation state")
-        if measurement.clock_mapping_sha256 != self.seed.clock_mapping_sha256:
-            raise ValueError("position measurement clock mapping revision mismatch")
+        if (
+            measurement.source is PositionMeasurementSource.LOCALIZATION
+            and measurement.clock_mapping_sha256 != self.seed.clock_mapping_sha256
+        ):
+            raise ValueError("localization position clock mapping revision mismatch")
         if measurement.timestamp_ns != self._state.timestamp_ns:
             raise ValueError(
                 "position measurement must align exactly with current translation timestamp"
@@ -666,6 +675,7 @@ class BoundedIMUTranslationPropagator:
         self._last_position_calibration_sha256 = (
             measurement.measurement_calibration_sha256
         )
+        self._last_position_clock_mapping_sha256 = measurement.clock_mapping_sha256
         status = (
             "TRACKING"
             if measurement.quality is LocalizationQuality.TRACKING
