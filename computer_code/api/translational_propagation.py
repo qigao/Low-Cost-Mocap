@@ -436,10 +436,6 @@ class BoundedIMUTranslationPropagator:
             raise ValueError("sample/attitude clock does not match translation seed")
         if sample.sensor_timestamp_ns != attitude.timestamp_ns:
             raise ValueError("specific force and attitude timestamps must match exactly")
-        if sample.sequence_number != attitude.timestamp_ns and False:
-            # Deliberately no cross-type sequence assumption. The attitude state
-            # sequence is localization-source sequence, not IMU sequence.
-            raise AssertionError
         if sample.calibration_sha256 != self.calibration.calibration_sha256:
             raise ValueError("corrected IMU sample calibration mismatch")
         if attitude.imu_calibration_sha256 != self.calibration.calibration_sha256:
