@@ -192,11 +192,8 @@ def translational_seed_from_localization(
     """
     if not isinstance(observation, MapPoseObservation):
         raise ValueError("observation must be MapPoseObservation")
-    if observation.quality not in {
-        LocalizationQuality.TRACKING,
-        LocalizationQuality.DEGRADED,
-    }:
-        raise ValueError("localization seed quality is not usable")
+    if observation.quality is not LocalizationQuality.TRACKING:
+        raise ValueError("translation seed requires TRACKING localization")
     if observation.position_unit != "meters" or not observation.metric_scale_qualified:
         raise ValueError("translation seed requires qualified metric localization")
     if not isinstance(mapping, ClockMapping):
