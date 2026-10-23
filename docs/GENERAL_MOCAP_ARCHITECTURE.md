@@ -79,6 +79,15 @@ Reuse the current modules in this order:
 
 When a board declares `min_visible_markers=3`, the registry checks every three-marker subset using a scale-normalized triangle-quality threshold. A board whose full point cloud is non-collinear can still be rejected if an occlusion leaves a collinear or nearly collinear triple. Track continuity proposes camera-local associations; the temporal code must admit global marker IDs; rigid geometry validates pose observability and rejects ambiguity. Geometry never overrides an unresolved temporal identity.
 
+The pattern-observability report also exposes codeword duty cycle and global LED load
+per trigger phase. The current balanced example uses 8 ON phases per marker
+(duty cycle 0.5), minimum Hamming distance 8 and a five-erasure worst-case
+budget, but its configured geometry supports a nominal pose for both boards
+only at phase 15. The high-visibility example uses 13 ON phases per marker
+(duty cycle 13/16), minimum distance 4 and a one-erasure budget; its model
+geometry supports a nominal pose at every phase. These are a software design
+trade-off in synthetic configurations, not measured hardware performance.
+
 For a predicted dark ROI, the pipeline accepts only a `DarkROIQualification`
 record bound to the current camera-local Track, trigger, registered marker ID,
 pattern SHA-256, and an external expected image position. The residual from
