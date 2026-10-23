@@ -89,9 +89,9 @@ class MapPoseObservationTests(unittest.TestCase):
 
     def test_rejects_invalid_pose_and_uncertainty(self):
         cases = (
-            ({"position_xyz_m": (0.0, float("nan"), 0.0)}, "finite"),
+            ({"position_xyz": (0.0, float("nan"), 0.0)}, "finite"),
             ({"orientation_xyzw": (0.0, 0.0, 0.0, 0.0)}, "norm is zero"),
-            ({"position_stddev_m": (-0.1, 0.0, 0.0)}, "nonnegative"),
+            ({"position_stddev": (-0.1, 0.0, 0.0)}, "nonnegative"),
             ({"orientation_stddev_rad": (0.0, float("inf"), 0.0)}, "finite"),
             ({"reprojection_rms_px": -0.1}, "nonnegative"),
         )
