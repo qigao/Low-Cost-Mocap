@@ -294,30 +294,31 @@ class BoundedDelayedPositionReplay:
 
     def _interpolated_pair(
         self,
-        left: TranslationalReplayFrame,
+        left_sample: CorrectedIMUVectors,
+        left_attitude: LocalizationIMUAttitudeState,
         right: TranslationalReplayFrame,
         timestamp_ns: int,
     ) -> tuple[CorrectedIMUVectors, LocalizationIMUAttitudeState]:
         epoch = interpolate_imu_observation_epoch(
-            left.sample, left.attitude, right.sample, right.attitude, timestamp_ns
+            left_sample, left_attitude, right.sample, right.attitude, timestamp_ns
         )
         sample = CorrectedIMUVectors(
             imu_id=epoch.imu_id,
             sequence_number=epoch.left_sequence_number,
             sensor_timestamp_ns=epoch.timestamp_ns,
             clock_domain=epoch.clock_domain,
-            calibration_revision=left.sample.calibration_revision,
+            calibration_revision=left_sample.calibration_revision,
             calibration_sha256=epoch.calibration_sha256,
             gyro_body_rad_s=epoch.gyro_body_rad_s,
             specific_force_body_m_s2=epoch.specific_force_body_m_s2,
         )
-        last_localization_timestamp = left.attitude.last_localization_timestamp_ns
+        last_localization_timestamp = left_attitude.last_localization_timestamp_ns
         localization_age = (
             None if last_localization_timestamp is None
             else timestamp_ns - last_localization_timestamp
         )
         attitude = replace(
-            left.attitude,
+            left_attitude,
             timestamp_ns=timestamp_ns,
             quaternion_world_from_body_xyzw=epoch.quaternion_world_from_body_xyzw,
             attitude_variance_rad2=epoch.attitude_variance_rad2,
@@ -340,13 +341,20 @@ class BoundedDelayedPositionReplay:
         for index, frame in enumerate(frames):
             if frame.interior_position_updates:
                 if index == 0:
-                    raise ValueError("interior position update has no retained left IMU frame")
-                left = frames[index - 1]
+                    left_sample = self._base_snapshot.last_sample
+                    left_attitude = self._base_snapshot.last_attitude
+                else:
+                    left_sample = frames[index - 1].sample
+                    left_attitude = frames[index - 1].attitude
+                if left_sample is None or left_attitude is None:
+                    raise ValueError("interior position update has no retained left IMU sample")
                 grouped: dict[int, list[ReplayPositionUpdate]] = {}
                 for update in frame.interior_position_updates:
                     grouped.setdefault(update.measurement.timestamp_ns, []).append(update)
                 for timestamp_ns in sorted(grouped):
-                    sample, attitude = self._interpolated_pair(left, frame, timestamp_ns)
+                    sample, attitude = self._interpolated_pair(
+                        left_sample, left_attitude, frame, timestamp_ns
+                    )
                     candidate.advance_interpolated_epoch(
                         sample,
                         attitude,
@@ -396,12 +404,21 @@ class BoundedDelayedPositionReplay:
         )
         interior_index = None
         if exact_index is None:
-            for index in range(1, len(self._frames)):
-                left = self._frames[index - 1]
-                right = self._frames[index]
-                if left.timestamp_ns < measurement.timestamp_ns < right.timestamp_ns:
-                    interior_index = index
-                    break
+            base_sample = self._base_snapshot.last_sample
+            if (
+                self._frames
+                and base_sample is not None
+                and base_sample.sensor_timestamp_ns < measurement.timestamp_ns
+                < self._frames[0].timestamp_ns
+            ):
+                interior_index = 0
+            else:
+                for index in range(1, len(self._frames)):
+                    left = self._frames[index - 1]
+                    right = self._frames[index]
+                    if left.timestamp_ns < measurement.timestamp_ns < right.timestamp_ns:
+                        interior_index = index
+                        break
             if interior_index is None:
                 raise ValueError(
                     "position measurement timestamp is outside retained IMU replay intervals"
