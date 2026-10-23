@@ -51,13 +51,13 @@ class CameraSyncProfile:
     def __post_init__(self) -> None:
         _integer(self.camera_id, "camera_id")
         object.__setattr__(self, "device_serial", _text(self.device_serial, "device_serial"))
-        if self.transport not in {"gige_vision", "usb3_vision", "other"}:
+        if not isinstance(self.transport, str) or self.transport not in {"gige_vision", "usb3_vision", "other"}:
             raise ValueError("unsupported camera transport")
-        if self.shutter_type not in {"global", "rolling", "unknown"}:
+        if not isinstance(self.shutter_type, str) or self.shutter_type not in {"global", "rolling", "unknown"}:
             raise ValueError("unsupported shutter_type")
-        if self.trigger_mode not in {"external_line", "ptp_scheduled", "free_run"}:
+        if not isinstance(self.trigger_mode, str) or self.trigger_mode not in {"external_line", "ptp_scheduled", "free_run"}:
             raise ValueError("unsupported trigger_mode")
-        if self.timestamp_semantics not in {"exposure_start", "exposure_midpoint", "exposure_end"}:
+        if not isinstance(self.timestamp_semantics, str) or self.timestamp_semantics not in {"exposure_start", "exposure_midpoint", "exposure_end"}:
             raise ValueError("timestamp semantics must describe sensor exposure")
         object.__setattr__(self, "clock_domain", _text(self.clock_domain, "clock_domain"))
         _integer(self.max_exposure_skew_ns, "max_exposure_skew_ns")
@@ -147,6 +147,10 @@ def validate_camera_batch(frames: Sequence[CameraFrameMetadata],
         raise ValueError("frames must be a sequence")
     if not isinstance(profiles, Sequence) or isinstance(profiles, (str, bytes)) or not profiles:
         raise ValueError("profiles must be a nonempty sequence")
+    if any(not isinstance(profile, CameraSyncProfile) for profile in profiles):
+        raise ValueError("profiles must contain CameraSyncProfile records")
+    if any(not isinstance(frame, CameraFrameMetadata) for frame in frames):
+        raise ValueError("frames must contain CameraFrameMetadata records")
     by_id = {p.camera_id: p for p in profiles}
     if len(by_id) != len(profiles):
         raise ValueError("camera profiles must have unique IDs")
