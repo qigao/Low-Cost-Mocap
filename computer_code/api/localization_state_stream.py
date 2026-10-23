@@ -11,6 +11,7 @@ on attitude and does not carry a joint attitude-translation covariance.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 from numbers import Real
 from typing import Any
@@ -421,5 +422,5 @@ class LocalizationStateConsumer:
             setattr(self, name, value)
         self.last_timestamp_ns = checked["timestamp_ns"]
         self.last_imu_sequence_number = checked["imu_sequence_number"]
-        self.state = checked
-        return dict(checked)
+        self.state = deepcopy(checked)
+        return deepcopy(checked)
