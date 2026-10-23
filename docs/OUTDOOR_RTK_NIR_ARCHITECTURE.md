@@ -54,6 +54,12 @@ The existing pattern report now exposes per-marker duty cycle, global LED load p
 
 ## 4. Wired camera synchronization daemon
 
+Each accepted batch exposes a tuple of the existing `FrameStamp` contract
+and an immutable camera-ID-to-image-payload mapping, so downstream optical
+detection can consume the batch without reconstructing timestamps from host
+arrival time. The daemon validates the full batch before creating these
+pipeline inputs.
+
 The provider-neutral lifecycle orchestrator is implemented in
 `computer_code/api/camera_sync_daemon.py`. Hardware vendors supply a
 `CameraAdapter` for each physical camera and a `TriggerController` for the
