@@ -162,33 +162,38 @@ class CameraSyncDaemon:
         if self._trigger_armed:
             try:
                 self._trigger.disarm()
+                self._trigger_armed = False
             except Exception as exc:
                 errors.append(f"trigger disarm: {exc}")
-            self._trigger_armed = False
-        for camera_id in sorted(self._started, reverse=True):
+        for camera_id in sorted(tuple(self._started), reverse=True):
             try:
                 self._adapters[camera_id].stop_acquisition()
+                self._started.discard(camera_id)
             except Exception as exc:
                 errors.append(f"camera {camera_id} stop: {exc}")
-        self._started.clear()
-        for camera_id in sorted(self._armed, reverse=True):
+        for camera_id in sorted(tuple(self._armed), reverse=True):
             try:
                 self._adapters[camera_id].disarm()
+                self._armed.discard(camera_id)
             except Exception as exc:
                 errors.append(f"camera {camera_id} disarm: {exc}")
-        self._armed.clear()
-        for camera_id in sorted(self._opened, reverse=True):
+        for camera_id in sorted(tuple(self._opened), reverse=True):
             try:
                 self._adapters[camera_id].close()
+                self._opened.discard(camera_id)
+                # A successful close retires any partially initialized
+                # acquisition/arm state even if its preceding cleanup call failed.
+                self._started.discard(camera_id)
+                self._armed.discard(camera_id)
             except Exception as exc:
                 errors.append(f"camera {camera_id} close: {exc}")
-        self._opened.clear()
         if self._trigger_open:
             try:
                 self._trigger.close()
+                self._trigger_open = False
+                self._trigger_armed = False
             except Exception as exc:
                 errors.append(f"trigger close: {exc}")
-            self._trigger_open = False
         return errors
 
     def start(self) -> None:
