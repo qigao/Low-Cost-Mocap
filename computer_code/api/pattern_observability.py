@@ -40,6 +40,12 @@ class PatternObservability:
     period_triggers: int
     min_global_hamming_distance: int
     guaranteed_erasure_budget: int
+    illuminated_phases_by_marker: Mapping[int, int]
+    duty_cycle_by_marker: Mapping[int, float]
+    global_illuminated_marker_count_by_phase: tuple[int, ...]
+    min_global_illuminated_marker_count: int
+    max_global_illuminated_marker_count: int
+    mean_global_illuminated_marker_count: float
     max_consecutive_dark_phases_by_marker: Mapping[int, int]
     boards: Mapping[str, BoardObservability]
     all_boards_observable_phases: tuple[int, ...]
@@ -98,6 +104,16 @@ def analyze_pattern_observability(
         marker: _max_dark_span_cyclic(tuple(patterns[marker]))
         for marker in marker_ids
     })
+    illuminated_phases = MappingProxyType({
+        marker: sum(patterns[marker]) for marker in marker_ids
+    })
+    duty_cycles = MappingProxyType({
+        marker: illuminated_phases[marker] / period for marker in marker_ids
+    })
+    global_load = tuple(
+        sum(patterns[marker][phase] for marker in marker_ids)
+        for phase in range(period)
+    )
     boards = {}
     for board_id, board in registry.boards.items():
         observations = []
@@ -136,6 +152,12 @@ def analyze_pattern_observability(
         period_triggers=period,
         min_global_hamming_distance=min_distance,
         guaranteed_erasure_budget=registry.codebook.guaranteed_erasure_budget,
+        illuminated_phases_by_marker=illuminated_phases,
+        duty_cycle_by_marker=duty_cycles,
+        global_illuminated_marker_count_by_phase=global_load,
+        min_global_illuminated_marker_count=min(global_load),
+        max_global_illuminated_marker_count=max(global_load),
+        mean_global_illuminated_marker_count=sum(global_load) / period,
         max_consecutive_dark_phases_by_marker=dark_spans,
         boards=MappingProxyType(boards),
         all_boards_observable_phases=all_full_phases,
@@ -169,6 +191,20 @@ def observability_to_dict(report: PatternObservability) -> dict:
         "period_triggers": report.period_triggers,
         "min_global_hamming_distance": report.min_global_hamming_distance,
         "guaranteed_erasure_budget": report.guaranteed_erasure_budget,
+        "illuminated_phases_by_marker": {
+            str(marker): count
+            for marker, count in report.illuminated_phases_by_marker.items()
+        },
+        "duty_cycle_by_marker": {
+            str(marker): duty
+            for marker, duty in report.duty_cycle_by_marker.items()
+        },
+        "global_illuminated_marker_count_by_phase": list(
+            report.global_illuminated_marker_count_by_phase
+        ),
+        "min_global_illuminated_marker_count": report.min_global_illuminated_marker_count,
+        "max_global_illuminated_marker_count": report.max_global_illuminated_marker_count,
+        "mean_global_illuminated_marker_count": report.mean_global_illuminated_marker_count,
         "max_consecutive_dark_phases_by_marker": {
             str(marker): span for marker, span
             in report.max_consecutive_dark_phases_by_marker.items()
