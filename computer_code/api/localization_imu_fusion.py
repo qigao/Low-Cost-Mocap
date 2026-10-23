@@ -48,6 +48,7 @@ def _real(value: object, name: str, *, minimum: float | None = None) -> float:
 @dataclass(frozen=True)
 class LocalizationIMUAttitudeState:
     body_id: str
+    map_frame_id: str
     imu_id: str
     timestamp_ns: int
     clock_domain: str
@@ -68,6 +69,7 @@ class LocalizationIMUAttitudeState:
 
     def __post_init__(self) -> None:
         _text(self.body_id, "body_id")
+        _text(self.map_frame_id, "map_frame_id")
         _text(self.imu_id, "imu_id")
         _text(self.clock_domain, "clock_domain")
         if type(self.timestamp_ns) is not int or self.timestamp_ns < 0:
@@ -184,6 +186,7 @@ class LocalizationIMUAttitudeFusion:
         self,
         *,
         body_id: str,
+        map_frame_id: str,
         imu_id: str,
         imu_clock_domain: str,
         imu_calibration_revision: str,
@@ -199,6 +202,7 @@ class LocalizationIMUAttitudeFusion:
         history_capacity: int = 256,
     ) -> None:
         self.body_id = _text(body_id, "body_id")
+        self.map_frame_id = _text(map_frame_id, "map_frame_id")
         self.imu_id = _text(imu_id, "imu_id")
         self.source_revision = _digest(
             localization_source_revision_sha256,
@@ -237,6 +241,7 @@ class LocalizationIMUAttitudeFusion:
             raise ValueError("attitude core localization revision mismatch")
         wrapped = LocalizationIMUAttitudeState(
             body_id=state.body_id,
+            map_frame_id=self.map_frame_id,
             imu_id=state.imu_id,
             timestamp_ns=state.timestamp_ns,
             clock_domain=state.clock_domain,
