@@ -41,7 +41,12 @@ K = np.asarray(((500.0, 0.0, 320.0), (0.0, 510.0, 240.0), (0.0, 0.0, 1.0)))
 SIZE_M = 0.16
 
 
-def make_map(*, moved_tag_id=None, moved_by=(0.0, 0.0, 0.0)):
+def make_map(
+    *,
+    moved_tag_id=None,
+    moved_by=(0.0, 0.0, 0.0),
+    global_offset=(0.0, 0.0, 0.0),
+):
     anchors = []
     positions = {
         1: (0.0, 0.0, 0.0),
@@ -49,8 +54,9 @@ def make_map(*, moved_tag_id=None, moved_by=(0.0, 0.0, 0.0)):
         3: (0.0, 0.6, 0.0),
         4: (0.6, 0.6, 0.0),
     }
+    global_offset = np.asarray(global_offset, dtype=float)
     for tag_id, position in positions.items():
-        xyz = np.asarray(position, dtype=float)
+        xyz = np.asarray(position, dtype=float) + global_offset
         if tag_id == moved_tag_id:
             xyz = xyz + np.asarray(moved_by, dtype=float)
         anchors.append(TagAnchor(
