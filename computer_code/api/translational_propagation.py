@@ -458,7 +458,7 @@ class BoundedIMUTranslationPropagator:
         self,
         sample: CorrectedIMUVectors,
         attitude: LocalizationIMUAttitudeState,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         rotation = Rotation.from_quat(
             attitude.quaternion_world_from_body_xyzw
         ).as_matrix()
@@ -479,14 +479,22 @@ class BoundedIMUTranslationPropagator:
         noise_world_density = np.diag(
             rotation @ np.diag(noise_body_var_density) @ rotation.T
         )
-        attitude_term = (
+        # Attitude uncertainty is an instantaneous acceleration variance,
+        # not a white-noise density. Keep it dimensionally separate from the
+        # accelerometer noise density so the integration powers of dt remain
+        # correct.
+        attitude_accel_variance = np.full(
+            3,
             float(np.dot(specific_force_body, specific_force_body))
-            * attitude.attitude_variance_rad2
+            * attitude.attitude_variance_rad2,
+            dtype=np.float64,
         )
-        acceleration_variance_density = noise_world_density + attitude_term
-        if not np.isfinite(acceleration_variance_density).all():
+        if not (
+            np.isfinite(noise_world_density).all()
+            and np.isfinite(attitude_accel_variance).all()
+        ):
             raise ValueError("acceleration uncertainty is non-finite")
-        return acceleration, acceleration_variance_density
+        return acceleration, noise_world_density, attitude_accel_variance
 
     def _publish(
         self,
@@ -568,14 +576,21 @@ class BoundedIMUTranslationPropagator:
         if substeps > self.max_substeps:
             raise ValueError("translation interval exceeds bounded substep capacity")
 
-        previous_acceleration, previous_noise = self._world_acceleration(
-            previous_sample, previous_attitude
-        )
-        current_acceleration, current_noise = self._world_acceleration(
-            sample, attitude
-        )
+        (
+            previous_acceleration,
+            previous_noise,
+            previous_attitude_accel_var,
+        ) = self._world_acceleration(previous_sample, previous_attitude)
+        (
+            current_acceleration,
+            current_noise,
+            current_attitude_accel_var,
+        ) = self._world_acceleration(sample, attitude)
         mean_acceleration = 0.5 * (previous_acceleration + current_acceleration)
         mean_noise_density = 0.5 * (previous_noise + current_noise)
+        mean_attitude_accel_var = 0.5 * (
+            previous_attitude_accel_var + current_attitude_accel_var
+        )
         if not np.isfinite(mean_acceleration).all():
             raise ValueError("mean world acceleration is non-finite")
 
@@ -607,16 +622,19 @@ class BoundedIMUTranslationPropagator:
             # Diagonal conservative process model. We intentionally do not call
             # this a full covariance/ESKF because cross-covariances are absent.
             world_bias_var = np.max(candidate_bias_var)
+            bounded_accel_state_var = (
+                mean_attitude_accel_var + world_bias_var
+            )
             candidate_position_var = (
                 candidate_position_var
                 + candidate_velocity_var * dt * dt
                 + mean_noise_density * (dt ** 3) / 3.0
-                + 0.25 * world_bias_var * (dt ** 4)
+                + 0.25 * bounded_accel_state_var * (dt ** 4)
             )
             candidate_velocity_var = (
                 candidate_velocity_var
                 + mean_noise_density * dt
-                + world_bias_var * dt * dt
+                + bounded_accel_state_var * dt * dt
             )
             candidate_bias_var = candidate_bias_var + np.square(bias_rw) * dt
 
