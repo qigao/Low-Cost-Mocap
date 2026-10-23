@@ -42,11 +42,12 @@ def envelope(camera_id, serial, counter, trigger, timestamp, payload=None):
 
 
 class FakeCamera:
-    def __init__(self, serial, frames, *, reported_serial=None, supports_trigger=True):
+    def __init__(self, serial, frames, *, reported_serial=None, supports_trigger=True, fail_arm=False):
         self.serial = serial
         self.reported_serial = reported_serial or serial
         self.frames = list(frames)
         self.supports_trigger = supports_trigger
+        self.fail_arm = fail_arm
         self.opened = False
         self.configured = False
         self.armed = False
@@ -70,6 +71,8 @@ class FakeCamera:
 
     def arm(self):
         self.armed = True
+        if self.fail_arm:
+            raise RuntimeError("fake arm failure")
 
     def start_acquisition(self):
         self.started = True
@@ -162,6 +165,21 @@ class CameraSyncDaemonTests(unittest.TestCase):
             daemon.start()
         daemon.reset_fault()
         self.assertEqual(daemon.state, CameraSyncState.STOPPED)
+
+    def test_partial_camera_arm_failure_rolls_back_all_opened_resources(self):
+        profiles = (profile(2, "CAM-02"), profile(5, "CAM-05"))
+        cameras = {
+            2: FakeCamera("CAM-02", []),
+            5: FakeCamera("CAM-05", [], fail_arm=True),
+        }
+        trigger = FakeTrigger()
+        daemon = CameraSyncDaemon(profiles, cameras, trigger)
+        with self.assertRaisesRegex(CameraSyncFault, "fake arm failure"):
+            daemon.start()
+        self.assertEqual(daemon.state, CameraSyncState.FAULT)
+        self.assertTrue(all(camera.closed for camera in cameras.values()))
+        self.assertTrue(trigger.closed)
+        self.assertFalse(trigger.armed)
 
     def test_trigger_mismatch_fails_closed_without_emitting_partial_batch(self):
         daemon, cameras, trigger = self.make_daemon(
