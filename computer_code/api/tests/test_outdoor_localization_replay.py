@@ -14,7 +14,6 @@ from localization_imu_fusion import LocalizationIMUAttitudeState
 from outdoor_sensor_contract import RTKSample, RTKSolutionStatus
 from position_measurement import (
     PositionMeasurementSource,
-    PositionSourceContract,
     position_measurement_from_localization,
 )
 from rtk_coordinates import ENUOrigin, enu_to_ecef
@@ -190,12 +189,6 @@ def build_replay():
     )
     calibration = imu_calibration()
     rtk_cal = rtk_calibration()
-    localization_contract = PositionSourceContract(
-        source=PositionMeasurementSource.LOCALIZATION,
-        source_revision_sha256=MAP_SHA,
-        measurement_calibration_sha256=LOC_CAL_SHA,
-        clock_mapping_sha256=camera_clock.mapping_sha256,
-    )
     rtk_contract = position_source_contract_from_rtk(
         rtk_cal, rtk_clock, expected_target_clock_domain="imu-clock"
     )
@@ -205,7 +198,7 @@ def build_replay():
         gravity(),
         max_history_frames=32,
         max_history_ns=200_000_000,
-        position_source_contracts=(localization_contract, rtk_contract),
+        position_source_contracts=(rtk_contract,),
     )
     for sequence in range(6):
         source_timestamp = T0 + sequence * 10_000_000
