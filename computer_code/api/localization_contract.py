@@ -71,9 +71,10 @@ class MapPoseObservation:
     map_frame_id: str
     timestamp_ns: int
     clock_domain: str
-    position_xyz_m: tuple[float, float, float]
+    position_xyz: tuple[float, float, float]
+    position_unit: str
     orientation_xyzw: tuple[float, float, float, float]
-    position_stddev_m: tuple[float, float, float]
+    position_stddev: tuple[float, float, float]
     orientation_stddev_rad: tuple[float, float, float]
     map_revision_sha256: str
     calibration_sha256: str
@@ -97,9 +98,13 @@ class MapPoseObservation:
         for name in ("tracked_frame_id", "map_frame_id", "clock_domain"):
             object.__setattr__(self, name, _text(getattr(self, name), name))
         _int(self.timestamp_ns, "timestamp_ns")
-        object.__setattr__(self, "position_xyz_m", _vector(self.position_xyz_m, 3, "position_xyz_m"))
+        unit = _text(self.position_unit, "position_unit")
+        if unit not in {"meters", "map_units"}:
+            raise ValueError("position_unit must be meters or map_units")
+        object.__setattr__(self, "position_unit", unit)
+        object.__setattr__(self, "position_xyz", _vector(self.position_xyz, 3, "position_xyz"))
         object.__setattr__(self, "orientation_xyzw", _quaternion(self.orientation_xyzw, "orientation_xyzw"))
-        object.__setattr__(self, "position_stddev_m", _vector(self.position_stddev_m, 3, "position_stddev_m", nonnegative=True))
+        object.__setattr__(self, "position_stddev", _vector(self.position_stddev, 3, "position_stddev", nonnegative=True))
         object.__setattr__(self, "orientation_stddev_rad", _vector(self.orientation_stddev_rad, 3, "orientation_stddev_rad", nonnegative=True))
         _digest(self.map_revision_sha256, "map_revision_sha256")
         _digest(self.calibration_sha256, "calibration_sha256")
