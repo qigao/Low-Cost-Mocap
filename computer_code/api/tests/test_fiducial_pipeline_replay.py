@@ -1,11 +1,13 @@
+import json
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from fiducial_contract import FiducialObservation, FiducialTagMap, TagAnchor
-from delayed_position_replay import BoundedDelayedPositionReplay
+from localization_replay import LocalizationReplayConfig, LocalizationReplayEvent, replay_localization_events
+from localization_replay_cli import load_replay_document
 from imu_calibration import CorrectedIMUVectors, IMUCalibration
 from imu_contract import ClockAnchor, fit_clock_mapping
 from localization_imu_fusion import LocalizationIMUAttitudeState
@@ -263,18 +265,19 @@ class FiducialPipelineReplayTests(unittest.TestCase):
         rtk_contract = position_source_contract_from_rtk(
             rtk_cal, rtk_mapping, expected_target_clock_domain="imu-clock"
         )
-        owner = BoundedDelayedPositionReplay(
-            seed,
-            imu_cal,
-            GravityModel(
+        config = LocalizationReplayConfig(
+            seed=seed,
+            imu_calibration=imu_cal,
+            gravity_model=GravityModel(
                 frame_id="site-map",
                 gravity_world_m_s2=(0.0, 0.0, -9.80665),
                 model_id="site-gravity-v1",
             ),
+            position_source_contracts=(rtk_contract,),
             max_history_frames=32,
             max_history_ns=200_000_000,
-            position_source_contracts=(rtk_contract,),
         )
+        events = []
         seed_timestamp = camera_mapping.map_timestamp(T0)
 
         def attitude_at(timestamp_ns, *, tracking=False, sequence=900):
@@ -310,10 +313,12 @@ class FiducialPipelineReplayTests(unittest.TestCase):
                 gyro_body_rad_s=(0.0, 0.0, 0.0),
                 specific_force_body_m_s2=(0.0, 0.0, 9.80665),
             )
-            owner.ingest_imu(
-                sample,
-                attitude_at(timestamp, tracking=(sequence == 0)),
-            )
+            events.append(LocalizationReplayEvent(
+                event_index=len(events),
+                kind="imu",
+                sample=sample,
+                attitude=attitude_at(timestamp, tracking=(sequence == 0)),
+            ))
 
         # Build a real synthetic image observation at an epoch between IMU
         # frames; only the image corners reach the PnP/consensus pipeline.
