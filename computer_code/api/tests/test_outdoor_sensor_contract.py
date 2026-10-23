@@ -102,6 +102,23 @@ class CameraSyncContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PTP clock is not locked"):
             validate_camera_frame(frame, profile, expected_trigger_id=42)
 
+    def test_batch_rejects_untyped_frame_or_profile_without_attribute_errors(self):
+        with self.assertRaisesRegex(ValueError, "frames must contain"):
+            validate_camera_batch(
+                (object(), self.frames[1]), self.profiles, expected_trigger_id=42
+            )
+        with self.assertRaisesRegex(ValueError, "profiles must contain"):
+            validate_camera_batch(
+                self.frames, (self.profiles[0], object()), expected_trigger_id=42
+            )
+        with self.assertRaisesRegex(ValueError, "unsupported camera transport"):
+            CameraSyncProfile(
+                camera_id=3, device_serial="CAM-03", transport=[],
+                shutter_type="global", trigger_mode="external_line",
+                timestamp_semantics="exposure_start", clock_domain="ptp-A",
+                max_exposure_skew_ns=1000,
+            )
+
     def test_profile_rejects_free_run_when_hardware_trigger_is_required(self):
         with self.assertRaisesRegex(ValueError, "free_run"):
             CameraSyncProfile(
