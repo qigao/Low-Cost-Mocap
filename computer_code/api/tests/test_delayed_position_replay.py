@@ -649,6 +649,29 @@ class DelayedPositionReplayTests(unittest.TestCase):
         self.assertEqual(accepted.timestamp_ns, T0 + 390_000_000)
         self.assertEqual(accepted.last_position_update_timestamp_ns, timestamp)
 
+    def test_multiple_interior_updates_in_one_interval_are_replayed_by_epoch(self):
+        earlier = localization_measurement(
+            T0 + 23_000_000, 11, position=(1.0001, 2.0, 3.0)
+        )
+        later = localization_measurement(
+            T0 + 27_000_000, 12, position=(1.0002, 2.0, 3.0)
+        )
+
+        first, cal1 = self.build_wrapper()
+        self.ingest_frames(first, cal1, 6)
+        first.ingest_position_measurement(later, max_position_nis=100.0)
+        state_a = first.ingest_position_measurement(
+            earlier, max_position_nis=100.0
+        )
+
+        second, cal2 = self.build_wrapper()
+        self.ingest_frames(second, cal2, 6)
+        second.ingest_position_measurement(earlier, max_position_nis=100.0)
+        state_b = second.ingest_position_measurement(
+            later, max_position_nis=100.0
+        )
+        assert_state_close(self, state_a, state_b)
+
     def test_position_timestamp_inside_retained_interval_is_accepted(self):
         owner, calibration = self.build_wrapper()
         self.ingest_frames(owner, calibration, 4)
