@@ -214,6 +214,28 @@ class CameraSyncDaemonTests(unittest.TestCase):
         self.assertEqual(daemon.state, CameraSyncState.FAULT)
         self.assertTrue(all(camera.closed for camera in cameras.values()))
 
+    def test_external_trigger_with_unlocked_ptp_clock_is_rejected(self):
+        profiles = tuple(
+            CameraSyncProfile(
+                camera_id=camera, device_serial=serial, transport="gige_vision",
+                shutter_type="global", trigger_mode="external_line",
+                timestamp_semantics="exposure_midpoint", clock_domain="rig-clock-A",
+                max_exposure_skew_ns=1000, require_ptp_lock=True,
+            )
+            for camera, serial in ((2, "CAM-02"), (5, "CAM-05"))
+        )
+        cameras = {
+            2: FakeCamera("CAM-02", [envelope(2, "CAM-02", 1, 42, 8_000_000)]),
+            5: FakeCamera("CAM-05", [envelope(5, "CAM-05", 1, 42, 8_000_010)]),
+        }
+        trigger = FakeTrigger()
+        daemon = CameraSyncDaemon(profiles, cameras, trigger, first_trigger_id=42)
+        daemon.start()
+        with self.assertRaisesRegex(CameraSyncFault, "PTP clock is not locked"):
+            daemon.capture_batch()
+        self.assertEqual(daemon.state, CameraSyncState.FAULT)
+        self.assertTrue(all(camera.closed for camera in cameras.values()))
+
     def test_daemon_rejects_ptp_scheduled_profile_until_supported_by_adapter(self):
         p = profile(2, "CAM-02")
         p = CameraSyncProfile(
