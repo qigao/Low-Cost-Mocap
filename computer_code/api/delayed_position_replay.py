@@ -11,10 +11,11 @@ historical LocalizationIMUAttitudeState records at the same IMU timestamps.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Sequence
 
 from imu_calibration import CorrectedIMUVectors, IMUCalibration
+from imu_interval_interpolation import interpolate_imu_observation_epoch
 from localization_imu_fusion import LocalizationIMUAttitudeState
 from position_measurement import (
     MetricPositionMeasurement,
@@ -68,6 +69,7 @@ class TranslationalReplayFrame:
     attitude: LocalizationIMUAttitudeState
     position_updates: tuple[ReplayPositionUpdate, ...]
     snapshot_after_frame: TranslationalESKFSnapshot
+    interior_position_updates: tuple[ReplayPositionUpdate, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.sample, CorrectedIMUVectors):
@@ -83,8 +85,26 @@ class TranslationalReplayFrame:
             for update in self.position_updates
         ):
             raise ValueError("position_updates must contain ReplayPositionUpdate")
+        if any(
+            update.measurement.timestamp_ns != self.sample.sensor_timestamp_ns
+            for update in self.position_updates
+        ):
+            raise ValueError("frame position updates must match the real IMU timestamp")
+        if not isinstance(self.interior_position_updates, tuple):
+            raise ValueError("interior_position_updates must be a tuple")
+        if any(
+            not isinstance(update, ReplayPositionUpdate)
+            for update in self.interior_position_updates
+        ):
+            raise ValueError("interior_position_updates must contain ReplayPositionUpdate")
+        if any(
+            update.measurement.timestamp_ns == self.sample.sensor_timestamp_ns
+            for update in self.interior_position_updates
+        ):
+            raise ValueError("interior position updates must not match the right IMU timestamp")
         if not isinstance(self.snapshot_after_frame, TranslationalESKFSnapshot):
             raise ValueError("snapshot_after_frame must be TranslationalESKFSnapshot")
+
         sources = [update.measurement.source for update in self.position_updates]
         if len(set(sources)) != len(sources):
             raise ValueError("one replay frame may contain at most one update per source")
@@ -97,6 +117,23 @@ class TranslationalReplayFrame:
         ))
         if canonical != self.position_updates:
             raise ValueError("position_updates must use canonical source ordering")
+
+        interior_canonical = tuple(sorted(
+            self.interior_position_updates,
+            key=lambda update: (
+                update.measurement.timestamp_ns,
+                update.measurement.source.value,
+                update.measurement.source_sequence_number,
+            ),
+        ))
+        if interior_canonical != self.interior_position_updates:
+            raise ValueError("interior position updates must use canonical timestamp/source ordering")
+        interior_keys = [
+            (update.measurement.timestamp_ns, update.measurement.source)
+            for update in self.interior_position_updates
+        ]
+        if len(set(interior_keys)) != len(interior_keys):
+            raise ValueError("one interior replay timestamp may contain only one update per source")
 
     @property
     def timestamp_ns(self) -> int:
@@ -214,7 +251,6 @@ class BoundedDelayedPositionReplay:
     def _validate_position_sequence(
         self,
         measurement: MetricPositionMeasurement,
-        target_index: int,
     ) -> None:
         source = measurement.source
         base_sequences = {
@@ -230,33 +266,66 @@ class BoundedDelayedPositionReplay:
                 "delayed position measurement sequence predates replay checkpoint"
             )
 
-        for frame_index, frame in enumerate(self._frames):
-            for update in frame.position_updates:
-                existing = update.measurement
-                if existing.source is not source:
-                    continue
-                if existing.source_sequence_number == measurement.source_sequence_number:
-                    raise ValueError("delayed position measurement sequence is duplicate")
-                if frame.timestamp_ns == measurement.timestamp_ns:
-                    raise ValueError(
-                        "one replay timestamp may contain only one update per source"
-                    )
-                if (
-                    frame_index < target_index
-                    and existing.source_sequence_number
-                    >= measurement.source_sequence_number
-                ):
-                    raise ValueError(
-                        "delayed position source sequence disagrees with timestamp order"
-                    )
-                if (
-                    frame_index > target_index
-                    and existing.source_sequence_number
-                    <= measurement.source_sequence_number
-                ):
-                    raise ValueError(
-                        "delayed position source sequence disagrees with timestamp order"
-                    )
+        existing_updates = (
+            update
+            for frame in self._frames
+            for update in frame.position_updates + frame.interior_position_updates
+        )
+        for update in existing_updates:
+            existing = update.measurement
+            if existing.source is not source:
+                continue
+            if existing.timestamp_ns == measurement.timestamp_ns:
+                raise ValueError("one replay timestamp may contain only one update per source")
+            if (
+                existing.timestamp_ns < measurement.timestamp_ns
+                and existing.source_sequence_number >= measurement.source_sequence_number
+            ):
+                raise ValueError(
+                    "delayed position source sequence disagrees with timestamp order"
+                )
+            if (
+                existing.timestamp_ns > measurement.timestamp_ns
+                and existing.source_sequence_number <= measurement.source_sequence_number
+            ):
+                raise ValueError(
+                    "delayed position source sequence disagrees with timestamp order"
+                )
+
+    def _interpolated_pair(
+        self,
+        left: TranslationalReplayFrame,
+        right: TranslationalReplayFrame,
+        timestamp_ns: int,
+    ) -> tuple[CorrectedIMUVectors, LocalizationIMUAttitudeState]:
+        epoch = interpolate_imu_observation_epoch(
+            left.sample, left.attitude, right.sample, right.attitude, timestamp_ns
+        )
+        sample = CorrectedIMUVectors(
+            imu_id=epoch.imu_id,
+            sequence_number=epoch.left_sequence_number,
+            sensor_timestamp_ns=epoch.timestamp_ns,
+            clock_domain=epoch.clock_domain,
+            calibration_revision=left.sample.calibration_revision,
+            calibration_sha256=epoch.calibration_sha256,
+            gyro_body_rad_s=epoch.gyro_body_rad_s,
+            specific_force_body_m_s2=epoch.specific_force_body_m_s2,
+        )
+        last_localization_timestamp = left.attitude.last_localization_timestamp_ns
+        localization_age = (
+            None if last_localization_timestamp is None
+            else timestamp_ns - last_localization_timestamp
+        )
+        attitude = replace(
+            left.attitude,
+            timestamp_ns=timestamp_ns,
+            quaternion_world_from_body_xyzw=epoch.quaternion_world_from_body_xyzw,
+            attitude_variance_rad2=epoch.attitude_variance_rad2,
+            status="DEGRADED",
+            source="IMU_PROPAGATED",
+            localization_age_ns=localization_age,
+        )
+        return sample, attitude
 
     def _replay(
         self,
@@ -268,7 +337,33 @@ class BoundedDelayedPositionReplay:
         candidate = self._new_filter()
         candidate.restore(self._base_snapshot)
         rebuilt: list[TranslationalReplayFrame] = []
-        for frame in frames:
+        for index, frame in enumerate(frames):
+            if frame.interior_position_updates:
+                if index == 0:
+                    raise ValueError("interior position update has no retained left IMU frame")
+                left = frames[index - 1]
+                grouped: dict[int, list[ReplayPositionUpdate]] = {}
+                for update in frame.interior_position_updates:
+                    grouped.setdefault(update.measurement.timestamp_ns, []).append(update)
+                for timestamp_ns in sorted(grouped):
+                    sample, attitude = self._interpolated_pair(left, frame, timestamp_ns)
+                    candidate.advance_interpolated_epoch(
+                        sample,
+                        attitude,
+                        right_sample=frame.sample,
+                        right_attitude=frame.attitude,
+                    )
+                    for update in sorted(
+                        grouped[timestamp_ns],
+                        key=lambda item: (
+                            item.measurement.source.value,
+                            item.measurement.source_sequence_number,
+                        ),
+                    ):
+                        candidate.ingest_position_measurement(
+                            update.measurement,
+                            max_position_nis=update.max_position_nis,
+                        )
             candidate.advance(frame.sample, frame.attitude)
             for update in frame.position_updates:
                 candidate.ingest_position_measurement(
@@ -279,6 +374,7 @@ class BoundedDelayedPositionReplay:
                 sample=frame.sample,
                 attitude=frame.attitude,
                 position_updates=frame.position_updates,
+                interior_position_updates=frame.interior_position_updates,
                 snapshot_after_frame=candidate.snapshot(),
             ))
         return candidate, rebuilt
@@ -289,40 +385,66 @@ class BoundedDelayedPositionReplay:
         *,
         max_position_nis: float = 16.0,
     ) -> TranslationalErrorState:
-        """Insert a current or delayed exact-timestamp position update and replay."""
+        """Insert a current or delayed position update at its acquisition epoch."""
         update = ReplayPositionUpdate(measurement, max_position_nis)
-        target_index = next(
+        exact_index = next(
             (
-                index
-                for index, frame in enumerate(self._frames)
+                index for index, frame in enumerate(self._frames)
                 if frame.timestamp_ns == measurement.timestamp_ns
             ),
             None,
         )
-        if target_index is None:
-            raise ValueError(
-                "position measurement timestamp is outside retained exact IMU replay frames"
-            )
-        self._validate_position_sequence(measurement, target_index)
+        interior_index = None
+        if exact_index is None:
+            for index in range(1, len(self._frames)):
+                left = self._frames[index - 1]
+                right = self._frames[index]
+                if left.timestamp_ns < measurement.timestamp_ns < right.timestamp_ns:
+                    interior_index = index
+                    break
+            if interior_index is None:
+                raise ValueError(
+                    "position measurement timestamp is outside retained IMU replay intervals"
+                )
 
+        self._validate_position_sequence(measurement)
         candidate_frames = list(self._frames)
-        target = candidate_frames[target_index]
-        updates = tuple(sorted(
-            target.position_updates + (update,),
-            key=lambda item: (
-                item.measurement.source.value,
-                item.measurement.source_sequence_number,
-            ),
-        ))
-        candidate_frames[target_index] = TranslationalReplayFrame(
-            sample=target.sample,
-            attitude=target.attitude,
-            position_updates=updates,
-            snapshot_after_frame=target.snapshot_after_frame,
-        )
+        if exact_index is not None:
+            target = candidate_frames[exact_index]
+            updates = tuple(sorted(
+                target.position_updates + (update,),
+                key=lambda item: (
+                    item.measurement.source.value,
+                    item.measurement.source_sequence_number,
+                ),
+            ))
+            candidate_frames[exact_index] = TranslationalReplayFrame(
+                sample=target.sample,
+                attitude=target.attitude,
+                position_updates=updates,
+                interior_position_updates=target.interior_position_updates,
+                snapshot_after_frame=target.snapshot_after_frame,
+            )
+        else:
+            target = candidate_frames[interior_index]
+            interior_updates = tuple(sorted(
+                target.interior_position_updates + (update,),
+                key=lambda item: (
+                    item.measurement.timestamp_ns,
+                    item.measurement.source.value,
+                    item.measurement.source_sequence_number,
+                ),
+            ))
+            candidate_frames[interior_index] = TranslationalReplayFrame(
+                sample=target.sample,
+                attitude=target.attitude,
+                position_updates=target.position_updates,
+                interior_position_updates=interior_updates,
+                snapshot_after_frame=target.snapshot_after_frame,
+            )
 
-        # Transactional: replay into a fresh estimator and only replace the
-        # live owner after every historical and subsequent event passes again.
+        # Transactional: do not mutate live history/filter until all replayed
+        # propagation and corrections succeed.
         candidate_filter, rebuilt = self._replay(candidate_frames)
         self._filter = candidate_filter
         self._frames = rebuilt
